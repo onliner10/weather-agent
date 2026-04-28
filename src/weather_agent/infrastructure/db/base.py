@@ -60,7 +60,7 @@ class Location(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("authorized_users.id"))
     name: Mapped[str] = mapped_column(String(200))
-    aliases: Mapped[dict[str, object]] = mapped_column(default=dict)
+    aliases: Mapped[list[str]] = mapped_column(JSONBVariant, default=list)
     latitude: Mapped[float] = mapped_column()
     longitude: Mapped[float] = mapped_column()
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
