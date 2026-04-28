@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     ForeignKey,
     Index,
@@ -41,7 +42,7 @@ class AuthorizedUser(Base):
     __tablename__ = "authorized_users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(unique=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     role: Mapped[str] = mapped_column(String(50), default="user")
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -58,7 +59,7 @@ class Location(Base):
     __tablename__ = "locations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("authorized_users.id"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("authorized_users.id"))
     name: Mapped[str] = mapped_column(String(200))
     aliases: Mapped[list[str]] = mapped_column(JSONBVariant, default=list)
     latitude: Mapped[float] = mapped_column()
@@ -103,8 +104,8 @@ class TelegramContext(Base):
     __tablename__ = "telegram_contexts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    chat_id: Mapped[int] = mapped_column()
-    message_thread_id: Mapped[int | None] = mapped_column(nullable=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    message_thread_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     context_key: Mapped[str] = mapped_column(String(100), unique=True)
     metadata_: Mapped[dict[str, object]] = mapped_column("metadata", default=dict)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
@@ -256,8 +257,8 @@ class NotificationRule(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     short_id: Mapped[str] = mapped_column(String(10), unique=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("authorized_users.id"))
-    telegram_chat_id: Mapped[int] = mapped_column()
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("authorized_users.id"))
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
     telegram_message_thread_id: Mapped[int | None] = mapped_column(
         nullable=True
     )
@@ -309,8 +310,9 @@ class NotificationEvent(Base):
     evaluation_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("rule_evaluation_runs.id"), nullable=True
     )
-    telegram_chat_id: Mapped[int] = mapped_column()
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
     telegram_message_thread_id: Mapped[int | None] = mapped_column(
+        BigInteger,
         nullable=True
     )
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -355,7 +357,7 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     event_type: Mapped[str] = mapped_column(String(100))
-    user_id: Mapped[int | None] = mapped_column(nullable=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     context_key: Mapped[str | None] = mapped_column(
         String(100), nullable=True
     )
