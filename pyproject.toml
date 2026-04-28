@@ -15,6 +15,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.14.0",
     "psycopg[binary]>=3.2.0",
+    "python-telegram-bot[all]>=21.0",
 ]
 
 [dependency-groups]
@@ -39,6 +40,10 @@ packages = ["src/weather_agent"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+addopts = "-m 'not smoke'"
+markers = [
+    "smoke: tests that call real external APIs (skipped by default)",
+]
 
 [tool.ruff]
 target-version = "py312"
