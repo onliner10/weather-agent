@@ -102,6 +102,15 @@ class NotificationRuleService:
         result = await self._session.execute(stmt)
         return [_orm_to_domain(r) for r in result.scalars().all()]
 
+    async def list_all_enabled_rules(self) -> list[NotificationRule]:
+        stmt = (
+            select(NotificationRuleORM)
+            .where(NotificationRuleORM.enabled.is_(True))
+            .order_by(NotificationRuleORM.id)
+        )
+        result = await self._session.execute(stmt)
+        return [_orm_to_domain(r) for r in result.scalars().all()]
+
     async def get_rule(
         self, rule_id: int | None = None, short_id: str | None = None
     ) -> NotificationRule | None:
