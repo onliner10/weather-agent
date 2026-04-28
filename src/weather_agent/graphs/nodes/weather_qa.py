@@ -250,8 +250,9 @@ def _format_forecast_summary(
 
 async def resolve_location_node(
     state: ConversationState,
-    location_service: LocationService,
+    location_service: LocationService | None,
     user_id: int,
+    geocoder: Any | None = None,
 ) -> dict[str, Any]:
     message = state.get("user_message") or ""
     location_ref = state.get("resolved_location")
@@ -261,41 +262,42 @@ async def resolve_location_node(
 
     extracted = _extract_location_reference(message)
     if extracted:
-        resolved = await location_service.resolve_location(extracted, user_id)
-        if resolved is not None:
-            return {"resolved_location": resolved}
+        if location_service is not None:
+            resolved = await location_service.resolve_location(extracted, user_id)
+            if resolved is not None:
+                return {"resolved_location": resolved}
+
+        if geocoder is not None:
+            resolved = await geocoder.geocode(extracted)
+            if resolved is not None:
+                return {"resolved_location": resolved}
+
         return {
             "error": (
                 f"Nie udało się rozpoznać lokalizacji \u201e{extracted}\u201d."
-                " Podaj lokalizację jawnie."
+                " Podaj lokalizację jawnie (np. w Gdańsku)."
             ),
             "resolved_location": None,
         }
 
-    locations = await location_service.list_locations(user_id)
-    if len(locations) == 1:
-        loc = locations[0]
-        return {
-            "resolved_location": LocationRef(
-                id=str(loc.id),
-                name=loc.name,
-                latitude=loc.latitude,
-                longitude=loc.longitude,
-            ),
-        }
+    if location_service is not None:
+        locations = await location_service.list_locations(user_id)
+        if len(locations) == 1:
+            loc = locations[0]
+            return {
+                "resolved_location": LocationRef(
+                    id=str(loc.id),
+                    name=loc.name,
+                    latitude=loc.latitude,
+                    longitude=loc.longitude,
+                ),
+            }
 
-    if len(locations) == 0:
-        return {
-            "error": (
-                "Nie masz jeszcze żadnej zapisanej lokalizacji."
-                " Dodaj lokalizację, aby korzystać z prognozy."
-            ),
-            "resolved_location": None,
-        }
-
-    names = ", ".join(loc.name for loc in locations)
     return {
-        "error": f"Masz kilka lokalizacji ({names}). Podaj, o którą chodzi.",
+        "error": (
+            "Nie podałeś lokalizacji. Napisz np. „jaka pogoda w Gdańsku jutro\""
+            " lub ustaw lokalizację domową komendą /dodaj_lok."
+        ),
         "resolved_location": None,
     }
 

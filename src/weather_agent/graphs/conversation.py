@@ -22,6 +22,7 @@ from weather_agent.graphs.nodes.weather_qa import (
     resolve_time_range_node,
 )
 from weather_agent.graphs.state import ConversationState
+from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
 from weather_agent.observability.langsmith_tracing import configure_tracing
 from weather_agent.settings import LangSmithSettings
@@ -106,6 +107,7 @@ class ConversationDeps:
         model_factory: ModelFactory | None = None,
         cel_evaluator: CELEvaluator | None = None,
         rule_service: NotificationRuleService | None = None,
+        geocoder: Geocoder | None = None,
         user_id: int = 0,
     ) -> None:
         self.location_service = location_service
@@ -115,6 +117,7 @@ class ConversationDeps:
         self.model_factory = model_factory
         self.cel_evaluator = cel_evaluator
         self.rule_service = rule_service
+        self.geocoder = geocoder
         self.user_id = user_id
 
     @property
@@ -122,7 +125,6 @@ class ConversationDeps:
         return all(
             v is not None
             for v in (
-                self.location_service,
                 self.date_resolver,
                 self.forecast_provider,
             )
@@ -136,7 +138,6 @@ class ConversationDeps:
                 self.model_factory,
                 self.cel_evaluator,
                 self.rule_service,
-                self.location_service,
             )
         )
 
@@ -149,6 +150,7 @@ class ConversationDeps:
             model_factory=other.model_factory or self.model_factory,
             cel_evaluator=other.cel_evaluator or self.cel_evaluator,
             rule_service=other.rule_service or self.rule_service,
+            geocoder=other.geocoder or self.geocoder,
             user_id=other.user_id or self.user_id,
         )
 
@@ -207,7 +209,6 @@ def build_conversation_graph(
 
     if deps is not None and deps.has_weather_deps:
         ls = deps.location_service
-        assert ls is not None
         dr = deps.date_resolver
         assert dr is not None
         fp = deps.forecast_provider
@@ -215,9 +216,10 @@ def build_conversation_graph(
         uid = deps.user_id
         op = deps.observation_provider
         mf = deps.model_factory
+        gc = deps.geocoder
 
         async def _resolve_location(state: ConversationState) -> dict[str, Any]:
-            return await resolve_location_node(state, ls, uid)
+            return await resolve_location_node(state, ls, uid, geocoder=gc)
 
         async def _resolve_time_range(state: ConversationState) -> dict[str, Any]:
             return await resolve_time_range_node(state, dr)

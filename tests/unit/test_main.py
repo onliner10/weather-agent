@@ -255,32 +255,29 @@ class TestCreateEngine:
         assert factory is not None
 
 
-class TestSessionContext:
+class TestSessionFactory:
     @pytest.mark.asyncio
-    async def test_session_context_commits_on_success(self) -> None:
-        from weather_agent.__main__ import _session_context
+    async def test_session_factory_creates_working_session(self) -> None:
+        from weather_agent.__main__ import _create_engine, _create_session_factory
 
-        engine = create_async_engine("sqlite+aiosqlite:///test.db")
-        factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False,
-        )
+        engine = _create_engine("sqlite+aiosqlite:///test.db")
+        factory = _create_session_factory(engine)
 
-        async with _session_context(factory) as session:
+        async with factory() as session:
             assert session is not None
+            await session.commit()
 
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_session_context_rolls_back_on_error(self) -> None:
-        from weather_agent.__main__ import _session_context
+    async def test_session_rollback_on_error(self) -> None:
+        from weather_agent.__main__ import _create_engine, _create_session_factory
 
-        engine = create_async_engine("sqlite+aiosqlite:///test.db")
-        factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False,
-        )
+        engine = _create_engine("sqlite+aiosqlite:///test.db")
+        factory = _create_session_factory(engine)
 
         with pytest.raises(ValueError):
-            async with _session_context(factory) as session:
+            async with factory() as session:
                 assert session is not None
                 raise ValueError("test error")
 

@@ -4,8 +4,6 @@ import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy.ext.asyncio import (
@@ -16,6 +14,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from telegram import Update
 from telegram.ext import ContextTypes
+
+from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.date_resolver import DateResolver
+from weather_agent.domain.holidays import CachedHolidayProvider
+from weather_agent.infrastructure.geocoder import Geocoder
+from weather_agent.llm.model_factory import ModelFactory
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +56,6 @@ def _create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSess
     )
 
 
-@asynccontextmanager
-async def _session_context(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[AsyncSession, None]:
-    async with session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-
-
 class _BotServices:
     def __init__(self) -> None:
         from weather_agent.observability.langsmith_tracing import configure_tracing
@@ -89,65 +80,51 @@ class _BotServices:
         self.engine = _create_engine(settings.database_url)
         self.session_factory = _create_session_factory(self.engine)
 
-
-async def _make_message_handler(services: _BotServices) -> Any:
-    from weather_agent.adapters.imgw.synop_provider import ImgwSynopProvider
-    from weather_agent.adapters.open_meteo.forecast_provider import OpenMeteoDwdIconProvider
-    from weather_agent.adapters.telegram.context import TelegramContextService
-    from weather_agent.domain.auth import AuthorizationService
-    from weather_agent.domain.cel.evaluator import CELEvaluator
-    from weather_agent.domain.date_resolver import DateResolver
-    from weather_agent.domain.holidays import CachedHolidayProvider
-    from weather_agent.domain.locations import LocationService
-    from weather_agent.domain.rules.service import NotificationRuleService
-    from weather_agent.graphs.conversation import ConversationDeps, compile_conversation_graph
-    from weather_agent.infrastructure.db.repos import SqlAlchemyAuthorizedUserRepo
-    from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
-    from weather_agent.llm.model_factory import ModelFactory
-    from weather_agent.observability.logging import AuditLogger
-
-    session_factory = services.session_factory
-    settings = services.settings
-
-    async with _session_context(session_factory) as session:
-        auth_repo = SqlAlchemyAuthorizedUserRepo(session)
-        AuthorizationService(
-            allowed_user_ids=list(settings.telegram.allowed_user_ids),
-            repo=auth_repo,
+    def init_services(self) -> None:
+        from weather_agent.adapters.imgw.synop_provider import ImgwSynopProvider
+        from weather_agent.adapters.open_meteo.forecast_provider import (
+            OpenMeteoDwdIconProvider,
         )
-        cel_evaluator = CELEvaluator()
 
-        holiday_provider = CachedHolidayProvider(
-            base_url=settings.nager_date.base_url,
-            timeout_seconds=settings.nager_date.timeout_seconds,
+        self.cel_evaluator = CELEvaluator()
+        self.holiday_provider = CachedHolidayProvider(
+            base_url=self.settings.nager_date.base_url,
+            timeout_seconds=self.settings.nager_date.timeout_seconds,
         )
-        date_resolver = DateResolver(holiday_provider=holiday_provider)
+        self.date_resolver = DateResolver(holiday_provider=self.holiday_provider)
+        self.forecast_provider = OpenMeteoDwdIconProvider(settings=self.settings.open_meteo)
+        self.observation_provider = ImgwSynopProvider(settings=self.settings.imgw)
+        self.model_factory = ModelFactory(settings=self.settings.model)
+        self.geocoder = Geocoder(model_factory=self.model_factory)
+        logger.info("Application services initialized")
 
-        location_service = LocationService(session)
-        rule_service = NotificationRuleService(session=session, cel_evaluator=cel_evaluator)
-
-        forecast_provider = OpenMeteoDwdIconProvider(settings=settings.open_meteo)
-        observation_provider = ImgwSynopProvider(settings=settings.imgw)
-        model_factory = ModelFactory(settings=settings.model)
-
-        context_service = TelegramContextService(session)
-        ThreadMemoryService(
-            context_service=context_service,
-            default_ttl_days=settings.retention.thread_memory_days,
-        )
-        AuditLogger(session)
+    def compile_graph(
+        self,
+        location_service: Any = None,
+        rule_service: Any = None,
+        user_id: int = 0,
+    ) -> Any:
+        from weather_agent.graphs.conversation import ConversationDeps, compile_conversation_graph
 
         deps = ConversationDeps(
             location_service=location_service,
-            date_resolver=date_resolver,
-            forecast_provider=forecast_provider,
-            observation_provider=observation_provider,
-            model_factory=model_factory,
-            cel_evaluator=cel_evaluator,
+            date_resolver=self.date_resolver,
+            forecast_provider=self.forecast_provider,
+            observation_provider=self.observation_provider,
+            model_factory=self.model_factory,
+            cel_evaluator=self.cel_evaluator,
             rule_service=rule_service,
-            user_id=0,
+            geocoder=self.geocoder,
+            user_id=user_id,
         )
-        graph = compile_conversation_graph(deps)
+        return compile_conversation_graph(deps)
+
+
+async def _make_message_handler(services: _BotServices) -> Any:
+    services.init_services()
+    logger.info("Application services ready, compiling base graph...")
+    services.compile_graph()
+    logger.info("Base graph compiled")
 
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.effective_user is None:
@@ -167,60 +144,80 @@ async def _make_message_handler(services: _BotServices) -> Any:
 
         context_key = f"{chat_id}:{thread_id}" if thread_id else str(chat_id)
 
+        from weather_agent.domain.auth import AuthorizationService
+        from weather_agent.domain.locations import LocationService
+        from weather_agent.domain.rules.service import NotificationRuleService
         from weather_agent.graphs.state import ConversationState
+        from weather_agent.infrastructure.db.repos import SqlAlchemyAuthorizedUserRepo
 
-        state: ConversationState = {
-            "authorized_user_id": user_id,
-            "chat_id": chat_id,
-            "message_thread_id": thread_id,
-            "context_key": context_key,
-            "user_message": text,
-        }
+        async with services.session_factory() as session:
+            auth_repo = SqlAlchemyAuthorizedUserRepo(session)
+            auth_service = AuthorizationService(
+                allowed_user_ids=list(services.settings.telegram.allowed_user_ids),
+                repo=auth_repo,
+            )
+            if not auth_service.is_authorized(user_id):
+                await update.message.reply_text("Brak uprawnień do korzystania z tego bota.")
+                return
 
-        try:
-            result = await graph.ainvoke(state)
-            answer = result.get("answer", "Przepraszam, nie udało się przetworzyć zapytania.")
-        except Exception as exc:
-            logger.exception("conversation graph failed")
-            answer = f"Przepraszam, wystąpił błąd: {exc}"
+            location_service = LocationService(session)
+            rule_service = NotificationRuleService(
+                session=session,
+                cel_evaluator=services.cel_evaluator,
+            )
+
+            graph = services.compile_graph(
+                location_service=location_service,
+                rule_service=rule_service,
+                user_id=user_id,
+            )
+
+            state: ConversationState = {
+                "authorized_user_id": user_id,
+                "chat_id": chat_id,
+                "message_thread_id": thread_id,
+                "context_key": context_key,
+                "user_message": text,
+            }
+
+            try:
+                result_state = await graph.ainvoke(state)
+                answer = result_state.get(
+                    "answer",
+                    "Przepraszam, nie udało się przetworzyć zapytania.",
+                )
+            except Exception as exc:
+                logger.exception("conversation graph failed")
+                answer = f"Przepraszam, wystąpił błąd: {exc}"
+            await session.commit()
 
         try:
             await update.message.reply_text(answer)
         except Exception:
             logger.exception("failed to send reply")
 
+    logger.info("Message handler ready")
     return message_handler
 
 
 def cmd_bot(_args: argparse.Namespace) -> None:
+    print("Initializing bot services...")
     services = _BotServices()
 
+    print("Running database migrations...")
     try:
-        logger.info("Running database migrations...")
         run_migrations()
     except Exception as exc:
-        logger.warning("Migration failed: %s", exc)
+        logger.warning("Migration failed (tables may already exist): %s", exc)
 
     from weather_agent.adapters.telegram.bot import TelegramBot
     from weather_agent.domain.auth import AuthorizationService
-    from weather_agent.infrastructure.db.repos import SqlAlchemyAuthorizedUserRepo
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        message_handler = loop.run_until_complete(_make_message_handler(services))
-    finally:
-        loop.close()
+    message_handler = asyncio.run(_make_message_handler(services))
 
-    async def _get_auth_service() -> AuthorizationService:
-        async with _session_context(services.session_factory) as session:
-            auth_repo = SqlAlchemyAuthorizedUserRepo(session)
-            return AuthorizationService(
-                allowed_user_ids=list(services.settings.telegram.allowed_user_ids),
-                repo=auth_repo,
-            )
-
-    auth_service = asyncio.run(_get_auth_service())
+    auth_service = AuthorizationService(
+        allowed_user_ids=list(services.settings.telegram.allowed_user_ids),
+    )
 
     bot = TelegramBot(
         settings=services.settings.telegram,
@@ -228,26 +225,28 @@ def cmd_bot(_args: argparse.Namespace) -> None:
         message_handler=message_handler,
     )
     bot.setup()
-    logger.info("Starting Telegram bot...")
+    print("Starting Telegram bot polling...")
+    logger.info("Starting Telegram bot polling...")
     bot.run()
 
 
 def cmd_worker(_args: argparse.Namespace) -> None:
     services = _BotServices()
 
+    print("Running database migrations...")
     try:
-        logger.info("Running database migrations...")
         run_migrations()
     except Exception as exc:
-        logger.warning("Migration failed: %s", exc)
+        logger.warning("Migration failed (tables may already exist): %s", exc)
 
     async def _run_worker() -> None:
-        from weather_agent.domain.cel.evaluator import CELEvaluator
         from weather_agent.domain.rules.service import NotificationRuleService
-        from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
+        from weather_agent.infrastructure.repositories.forecast_repository import (
+            ForecastRepository,
+        )
         from weather_agent.infrastructure.worker.rule_evaluator import RuleEvaluationWorker
 
-        async with _session_context(services.session_factory) as session:
+        async with services.session_factory() as session:
             cel_evaluator = CELEvaluator()
             rule_service = NotificationRuleService(
                 session=session,
