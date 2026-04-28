@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from weather_agent.domain.rules.models import NotificationEvent, NotificationRule
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
 
 if TYPE_CHECKING:
     from telegram.ext import Application
+
+    _AppType = Application[Any, Any, Any, Any, Any, Any]
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ def format_notification_message(
 
 
 class TelegramNotificationSender:
-    def __init__(self, bot: Application) -> None:
+    def __init__(self, bot: _AppType) -> None:
         self._bot = bot
 
     async def send_notification(

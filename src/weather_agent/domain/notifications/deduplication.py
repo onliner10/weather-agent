@@ -113,8 +113,9 @@ class NotificationDeduplicator:
         result = await self._session.execute(stmt)
         recent_event = result.scalar_one_or_none()
         if recent_event is not None:
+            sent_at = recent_event.sent_at
             reason = (
-                f"cooldown: last sent at {recent_event.sent_at.isoformat()}, "
+                f"cooldown: last sent at {sent_at.isoformat() if sent_at is not None else 'N/A'}, "
                 f"cooldown {rule.cooldown_minutes}min"
             )
             logger.info("suppressing notification for rule %d: %s", rule.id, reason)

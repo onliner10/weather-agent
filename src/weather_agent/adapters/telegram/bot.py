@@ -13,6 +13,7 @@ from weather_agent.settings import TelegramSettings
 logger = logging.getLogger(__name__)
 
 MessageHandlerCallback = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[Any]]
+_AppType = Application[Any, Any, Any, Any, Any, Any]
 
 
 class TelegramBot:
@@ -25,7 +26,7 @@ class TelegramBot:
         self._settings = settings
         self._auth_service = auth_service
         self._message_handler = message_handler or _default_message_handler
-        self._app: Application | None = None
+        self._app: _AppType | None = None
 
     def setup(self) -> None:
         token = self._settings.bot_token.get_secret_value()
@@ -47,11 +48,13 @@ class TelegramBot:
             raise RuntimeError("TelegramBot.setup() must be called before start()")
         await self._app.initialize()
         await self._app.start()
+        assert self._app.updater is not None
         await self._app.updater.start_polling()
 
     async def stop(self) -> None:
         if self._app is None:
             return
+        assert self._app.updater is not None
         await self._app.updater.stop()
         await self._app.stop()
         await self._app.shutdown()
@@ -74,10 +77,11 @@ class TelegramBot:
             )
             await _send_denial(update, context)
             return
-        await update.message.reply_text(
-            "Cześć! Jestem botem pogodowym. \U0001f326\n"
-            'Zapytaj mnie o pogodę – np. "jaka pogoda w Warszawie jutro?".'
-        )
+        if update.message is not None:
+            await update.message.reply_text(
+                "Cześć! Jestem botem pogodowym. \U0001f326\n"
+                'Zapytaj mnie o pogodę – np. "jaka pogoda w Warszawie jutro?".'
+            )
 
     async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -92,13 +96,14 @@ class TelegramBot:
             )
             await _send_denial(update, context)
             return
-        await update.message.reply_text(
-            "Dostępne komendy:\n"
-            "/start — przywitanie\n"
-            "/help — ta pomoc\n"
-            "/status — status bota\n\n"
-            "Możesz też po prostu napisać pytanie o pogodę."
-        )
+        if update.message is not None:
+            await update.message.reply_text(
+                "Dostępne komendy:\n"
+                "/start — przywitanie\n"
+                "/help — ta pomoc\n"
+                "/status — status bota\n\n"
+                "Możesz też po prostu napisać pytanie o pogodę."
+            )
 
     async def _status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -113,7 +118,8 @@ class TelegramBot:
             )
             await _send_denial(update, context)
             return
-        await update.message.reply_text("✅ Bot działa poprawnie.")
+        if update.message is not None:
+            await update.message.reply_text("✅ Bot działa poprawnie.")
 
     async def _auth_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
@@ -143,5 +149,5 @@ async def _send_denial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Brak uprawnień do korzystania z tego bota.")
 
 
-async def _post_init(application: Application) -> None:
+async def _post_init(application: _AppType) -> None:
     logger.info("Telegram bot application initialized")

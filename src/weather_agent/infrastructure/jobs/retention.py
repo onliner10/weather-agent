@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import structlog
 from sqlalchemy import delete, func, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.infrastructure.db.base import (
@@ -48,8 +50,11 @@ class RetentionService:
             logger.info("dry_run_cleanup_thread_memory", days=days, would_delete=count)
             return count
 
-        result = await self._session.execute(
-            delete(TelegramContext).where(TelegramContext.updated_at < cutoff)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(TelegramContext).where(TelegramContext.updated_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = result.rowcount
@@ -82,8 +87,11 @@ class RetentionService:
                 ForecastPoint.snapshot_id.in_(snapshot_ids_stmt)
             )
         )
-        snapshots_result = await self._session.execute(
-            delete(ForecastSnapshot).where(ForecastSnapshot.fetched_at < cutoff)
+        snapshots_result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(ForecastSnapshot).where(ForecastSnapshot.fetched_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = snapshots_result.rowcount
@@ -111,8 +119,11 @@ class RetentionService:
             logger.info("dry_run_cleanup_aggregated_weather", days=days, would_delete=count)
             return count
 
-        result = await self._session.execute(
-            delete(Observation).where(Observation.observed_at < cutoff)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(Observation).where(Observation.observed_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = result.rowcount
@@ -140,8 +151,11 @@ class RetentionService:
             logger.info("dry_run_cleanup_notification_log", days=days, would_delete=count)
             return count
 
-        result = await self._session.execute(
-            delete(NotificationEvent).where(NotificationEvent.created_at < cutoff)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(NotificationEvent).where(NotificationEvent.created_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = result.rowcount
@@ -165,8 +179,11 @@ class RetentionService:
             logger.info("dry_run_cleanup_audit_log", days=days, would_delete=count)
             return count
 
-        result = await self._session.execute(
-            delete(AuditLog).where(AuditLog.created_at < cutoff)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(AuditLog).where(AuditLog.created_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = result.rowcount
@@ -190,8 +207,11 @@ class RetentionService:
             logger.info("dry_run_cleanup_trace_data", days=days, would_delete=count)
             return count
 
-        result = await self._session.execute(
-            delete(RuleEvaluationRun).where(RuleEvaluationRun.created_at < cutoff)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(RuleEvaluationRun).where(RuleEvaluationRun.created_at < cutoff)
+            ),
         )
         await self._session.flush()
         deleted = result.rowcount

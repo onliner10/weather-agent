@@ -60,7 +60,9 @@ class OpenMeteoDwdIconProvider:
         resolution: ForecastResolution,
     ) -> ForecastResult:
         api_vars = self._map_variables(variables)
-        params = self._build_params(location, time_range, api_vars, resolution)
+        params: dict[str, str | int | float] = self._build_params(
+            location, time_range, api_vars, resolution
+        )
         raw_payload = await self._request_with_retry(params)
         fetched_at = datetime.now(UTC)
         points = self._parse_response(raw_payload, location, fetched_at)
@@ -73,7 +75,7 @@ class OpenMeteoDwdIconProvider:
             raw_payload=raw_payload,
         )
 
-    async def _request_with_retry(self, params: dict[str, object]) -> dict[str, object]:
+    async def _request_with_retry(self, params: dict[str, str | int | float]) -> dict[str, object]:
         last_error: Exception | None = None
         for attempt in range(_MAX_RETRIES):
             try:
@@ -89,7 +91,7 @@ class OpenMeteoDwdIconProvider:
                 await asyncio.sleep(backoff)
         raise last_error  # type: ignore[misc]
 
-    async def _make_request(self, params: dict[str, object]) -> dict[str, object]:
+    async def _make_request(self, params: dict[str, str | int | float]) -> dict[str, object]:
         timeout = httpx.Timeout(self._timeout_seconds)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -142,10 +144,10 @@ class OpenMeteoDwdIconProvider:
         time_range: TimeRange,
         api_vars: list[str],
         resolution: ForecastResolution,
-    ) -> dict[str, object]:
+    ) -> dict[str, str | int | float]:
         start_date = time_range.start.strftime("%Y-%m-%d")
         end_date = time_range.end.strftime("%Y-%m-%d")
-        params: dict[str, object] = {
+        params: dict[str, str | int | float] = {
             "latitude": location.latitude,
             "longitude": location.longitude,
             "start_date": start_date,
@@ -170,13 +172,13 @@ class OpenMeteoDwdIconProvider:
         data_arrays: dict[str, list[object]] = {}
 
         if isinstance(hourly, dict):
-            time_data = hourly.get("time")  # type: ignore[assignment]
+            time_data = hourly.get("time")
             for api_field, _normalized in _FIELD_TO_NORMALIZED.items():
                 values = hourly.get(api_field)
                 if isinstance(values, list):
                     data_arrays[api_field] = values
         elif isinstance(minutely_15, dict):
-            time_data = minutely_15.get("time")  # type: ignore[assignment]
+            time_data = minutely_15.get("time")
             for api_field, _normalized in _FIELD_TO_NORMALIZED.items():
                 values = minutely_15.get(api_field)
                 if isinstance(values, list):
@@ -202,11 +204,11 @@ class OpenMeteoDwdIconProvider:
                     if raw_val is not None:
                         point_data[api_field] = raw_val
                         if api_field == "weather_code":
-                            normalized[norm_field] = str(int(raw_val))
+                            normalized[norm_field] = str(int(raw_val))  # type: ignore[call-overload]
                         elif api_field == "snowfall":
-                            normalized[norm_field] = float(raw_val)
+                            normalized[norm_field] = float(raw_val)  # type: ignore[arg-type]
                         else:
-                            normalized[norm_field] = float(raw_val)
+                            normalized[norm_field] = float(raw_val)  # type: ignore[arg-type]
 
             points.append(
                 ForecastPoint(
