@@ -9,8 +9,8 @@ from weather_agent.domain.locations import (
     LocationNameConflictError,
     LocationService,
     LocationUpdate,
-    _normalize_for_matching,
 )
+from weather_agent.domain.polish_utils import normalize_for_matching as _normalize_for_matching
 from weather_agent.infrastructure.db.base import Base
 
 

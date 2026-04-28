@@ -64,8 +64,11 @@ def _build_system_prompt() -> str:
 async def propose_cel_rule_node(
     state: ConversationState,
     model_factory: Any,
-    cel_evaluator: CELEvaluator,
+    cel_evaluator: CELEvaluator | None,
 ) -> dict[str, Any]:
+    if model_factory is None or cel_evaluator is None:
+        return {"error": "Reguły powiadomień są niedostępne bez pełnej konfiguracji."}
+
     user_message = state.get("user_message") or ""
     if not user_message:
         return {"error": "Brak wiadomości użytkownika do przetworzenia"}
@@ -163,9 +166,12 @@ async def require_user_confirmation_node(state: ConversationState) -> dict[str, 
 
 async def persist_rule_change_node(
     state: ConversationState,
-    rule_service: NotificationRuleService,
-    location_service: LocationService,
+    rule_service: NotificationRuleService | None,
+    location_service: LocationService | None,
 ) -> dict[str, Any]:
+    if rule_service is None or location_service is None:
+        return {"error": "Reguły powiadomień są niedostępne bez pełnej konfiguracji."}
+
     pending = state.get("pending_confirmation")
     if pending is None:
         return {"error": "Brak danych do zapisania reguły"}

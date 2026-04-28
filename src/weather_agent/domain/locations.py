@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import unicodedata
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from weather_agent.domain.polish_utils import normalize_for_matching
 from weather_agent.domain.weather import LocationRef
 from weather_agent.infrastructure.db.base import Location as LocationORM
 
@@ -64,33 +64,7 @@ class LocationNameConflictError(Exception):
         )
 
 
-_POLISH_ASCII: dict[str, str] = {
-    "ą": "a",
-    "ć": "c",
-    "ę": "e",
-    "ł": "l",
-    "ń": "n",
-    "ó": "o",
-    "ś": "s",
-    "ź": "z",
-    "ż": "z",
-    "Ą": "a",
-    "Ć": "c",
-    "Ę": "e",
-    "Ł": "l",
-    "Ń": "n",
-    "Ó": "o",
-    "Ś": "s",
-    "Ź": "z",
-    "Ż": "z",
-}
 
-
-def _normalize_for_matching(s: str) -> str:
-    normalized = unicodedata.normalize("NFKD", s)
-    stripped = "".join(c for c in normalized if not unicodedata.combining(c))
-    ascii_friendly = "".join(_POLISH_ASCII.get(ch, ch) for ch in stripped)
-    return ascii_friendly.lower().strip()
 
 
 def _orm_to_domain(orm: LocationORM) -> Location:
@@ -126,11 +100,11 @@ class LocationService:
         )
         result = await self._session.execute(stmt)
         existing = result.scalars().all()
-        name_norm = _normalize_for_matching(name)
+        name_norm = normalize_for_matching(name)
         for loc in existing:
             if exclude_id is not None and loc.id == exclude_id:
                 continue
-            if _normalize_for_matching(loc.name) == name_norm:
+            if normalize_for_matching(loc.name) == name_norm:
                 raise LocationNameConflictError(name, loc.id)
 
     async def _check_alias_conflicts(
@@ -144,14 +118,14 @@ class LocationService:
         )
         result = await self._session.execute(stmt)
         existing = result.scalars().all()
-        new_norms = {_normalize_for_matching(a) for a in aliases}
+        new_norms = {normalize_for_matching(a) for a in aliases}
         for loc in existing:
             if exclude_id is not None and loc.id == exclude_id:
                 continue
-            loc_name_norm = _normalize_for_matching(loc.name)
+            loc_name_norm = normalize_for_matching(loc.name)
             if loc_name_norm in new_norms:
                 matching_alias = next(
-                    a for a in aliases if _normalize_for_matching(a) == loc_name_norm
+                    a for a in aliases if normalize_for_matching(a) == loc_name_norm
                 )
                 raise LocationAliasConflictError(matching_alias, loc.id)
             loc_aliases_raw = loc.aliases
@@ -162,12 +136,12 @@ class LocationService:
             else:
                 loc_aliases = []
             for existing_alias in loc_aliases:
-                existing_norm = _normalize_for_matching(existing_alias)
+                existing_norm = normalize_for_matching(existing_alias)
                 if existing_norm in new_norms:
                     matching_alias = next(
                         a
                         for a in aliases
-                        if _normalize_for_matching(a) == existing_norm
+                        if normalize_for_matching(a) == existing_norm
                     )
                     raise LocationAliasConflictError(matching_alias, loc.id)
 
@@ -270,10 +244,10 @@ class LocationService:
         )
         result = await self._session.execute(stmt)
         locations = result.scalars().all()
-        query_norm = _normalize_for_matching(query)
+        query_norm = normalize_for_matching(query)
         matched = None
         for loc in locations:
-            if _normalize_for_matching(loc.name) == query_norm:
+            if normalize_for_matching(loc.name) == query_norm:
                 matched = loc
                 break
         if matched is None:
@@ -286,7 +260,7 @@ class LocationService:
                 else:
                     loc_aliases = []
                 for alias in loc_aliases:
-                    if _normalize_for_matching(alias) == query_norm:
+                    if normalize_for_matching(alias) == query_norm:
                         matched = loc
                         break
                 if matched is not None:

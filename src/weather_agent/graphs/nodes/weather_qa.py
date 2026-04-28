@@ -3,18 +3,17 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from weather_agent.domain.date_resolver import DateResolver
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import LocationService
+from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
     ForecastResolution,
-    ForecastResult,
     LocationRef,
-    ObservationResult,
     WeatherVariable,
 )
 from weather_agent.graphs.state import ConversationState
@@ -22,27 +21,6 @@ from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
 
 logger = logging.getLogger(__name__)
-
-
-@runtime_checkable
-class ForecastProvider(Protocol):
-    async def get_forecast(
-        self,
-        location: LocationRef,
-        time_range: Any,
-        variables: list[WeatherVariable],
-        resolution: ForecastResolution,
-    ) -> ForecastResult: ...
-
-
-@runtime_checkable
-class ObservationProvider(Protocol):
-    async def get_observations(
-        self,
-        location: LocationRef,
-        radius_km: float,
-        variables: list[WeatherVariable],
-    ) -> ObservationResult: ...
 
 
 _WEATHER_CODE_MAP: dict[int, str] = {
@@ -585,8 +563,11 @@ async def resolve_location_node(
 
 async def resolve_time_range_node(
     state: ConversationState,
-    date_resolver: DateResolver,
+    date_resolver: DateResolver | None,
 ) -> dict[str, Any]:
+    if date_resolver is None:
+        return {"resolved_time_range": state.get("resolved_time_range")}
+
     existing_time_range = state.get("resolved_time_range")
     if existing_time_range is not None:
         return {"resolved_time_range": existing_time_range}

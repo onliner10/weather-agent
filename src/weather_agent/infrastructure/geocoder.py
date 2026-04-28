@@ -5,6 +5,7 @@ import logging
 import httpx
 from pydantic import BaseModel, Field
 
+from weather_agent.domain.polish_utils import normalize_polish
 from weather_agent.domain.weather import LocationRef
 from weather_agent.llm.model_factory import ModelFactory
 
@@ -85,7 +86,7 @@ class Geocoder:
         return None
 
     async def _try_geocode(self, name: str) -> LocationRef | None:
-        normalized = _normalize_polish(name)
+        normalized = normalize_polish(name)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             try:
                 r = await client.get(
@@ -115,11 +116,3 @@ class Geocoder:
         )
 
 
-_POLISH_ASCII: dict[str, str] = {
-    "ą": "a", "ć": "c", "ę": "e", "ł": "l", "ń": "n",
-    "ó": "o", "ś": "s", "ź": "z", "ż": "z",
-}
-
-
-def _normalize_polish(text: str) -> str:
-    return "".join(_POLISH_ASCII.get(c, c) for c in text.lower())
