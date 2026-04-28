@@ -1,11 +1,13 @@
 """Domain package for core application contracts."""
 
+from weather_agent.domain.auth import AuthorizationService, AuthorizedUserRepo, UnauthorizedError
 from weather_agent.domain.errors import (
     WeatherProviderError,
     WeatherProviderResponseError,
     WeatherProviderTimeoutError,
     WeatherProviderUnavailableError,
 )
+from weather_agent.domain.global_settings import GlobalSettingsService, GlobalUnits, SettingsRepo
 from weather_agent.domain.providers import (
     ForecastProvider,
     ObservationProvider,
@@ -26,15 +28,21 @@ from weather_agent.domain.weather import (
 )
 
 __all__ = [
+    "AuthorizationService",
+    "AuthorizedUserRepo",
     "ForecastPoint",
     "ForecastProvider",
     "ForecastResolution",
     "ForecastResult",
+    "GlobalSettingsService",
+    "GlobalUnits",
+    "SettingsRepo",
     "LocationRef",
     "ObservationPoint",
     "ObservationProvider",
     "ObservationResult",
     "TimeRange",
+    "UnauthorizedError",
     "WarningCategory",
     "WarningSeverity",
     "WeatherProviderError",
