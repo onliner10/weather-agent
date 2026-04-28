@@ -1,0 +1,55 @@
+services:
+  weather-agent-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "weather_agent", "bot"]
+    depends_on:
+      postgres-timescaledb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from weather_agent import __version__; print(__version__)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  weather-agent-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "weather_agent", "worker"]
+    depends_on:
+      postgres-timescaledb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
+    restart: unless-stopped
+
+  postgres-timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: weather_agent
+      POSTGRES_USER: weather_agent
+      POSTGRES_PASSWORD: weather_agent
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weather_agent -d weather_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:

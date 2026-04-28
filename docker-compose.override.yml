@@ -1,0 +1,8 @@
+services:
+  weather-agent-bot:
+    volumes:
+      - ./src:/app/src:ro
+
+  weather-agent-worker:
+    volumes:
+      - ./src:/app/src:ro

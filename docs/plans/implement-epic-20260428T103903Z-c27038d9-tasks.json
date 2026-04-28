@@ -1,0 +1,391 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-04-28T10:45:00Z",
+  "source_plan": "docs/plans/implement-epic-20260428T103903Z-c27038d9-plan.md",
+  "tasks": [
+    {
+      "id": "weather-agent-01",
+      "title": "Foundation and contracts",
+      "goal": "Bootstrap the repository, typed settings, architectural references, and fresh-session workflow so later implementation slices share the same contracts and operating assumptions.",
+      "scope": [
+        "WA-001",
+        "WA-002",
+        "WA-003",
+        "WA-035"
+      ],
+      "files": [
+        "pyproject.toml",
+        "uv.lock",
+        "src/weather_agent/__init__.py",
+        "src/weather_agent/settings.py",
+        "README.md",
+        ".env.example",
+        "docs/adr/",
+        "docs/domain-vocabulary.md",
+        "AGENTS.md"
+      ],
+      "dependencies": [],
+      "skills": [],
+      "acceptance_criteria": [
+        "A uv-managed Python package exists under src/weather_agent with baseline tooling and placeholder tests.",
+        "Typed configuration loads required secrets and settings without logging sensitive values.",
+        "Architecture ADRs and domain vocabulary document the MVP boundaries and core contracts.",
+        "Agent workflow guidance is explicit about Beads, fresh sessions, testing, and deterministic rule evaluation."
+      ],
+      "tests": [
+        "uv sync",
+        "uv run pytest",
+        "uv run ruff check ."
+      ],
+      "docs": [
+        "README.md",
+        "docs/adr/",
+        "docs/domain-vocabulary.md",
+        "AGENTS.md"
+      ],
+      "rollout": "Land this slice first and keep later work blocked until package layout, settings, and ADR vocabulary are stable.",
+      "observability": "Baseline logging should avoid secrets and make configuration failures obvious during local startup.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps directly to WA-001, WA-002, WA-003, and WA-035; assumes the repository can adopt a fresh src-layout without preserving legacy runtime code."
+    },
+    {
+      "id": "weather-agent-02",
+      "title": "Deployment and persistence base",
+      "goal": "Create the runnable local stack and database migration baseline needed by all stateful services.",
+      "scope": [
+        "WA-004",
+        "WA-005"
+      ],
+      "files": [
+        "docker-compose.yml",
+        "Dockerfile",
+        "alembic.ini",
+        "alembic/",
+        "src/weather_agent/infrastructure/db/",
+        "tests/integration/test_migrations.py"
+      ],
+      "dependencies": [
+        "weather-agent-01"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "Docker Compose config defines the bot or API service, worker service, and Postgres TimescaleDB service with viable health checks.",
+        "Initial migrations create the relational and time-series tables needed by the epic with indexes and JSON payload support.",
+        "Local startup instructions cover first-run configuration and database bring-up."
+      ],
+      "tests": [
+        "docker compose config",
+        "docker compose up postgres-timescaledb",
+        "migration smoke test against a disposable database"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/"
+      ],
+      "rollout": "Treat migrations and Compose as a stable base; later slices should extend rather than rewrite these contracts.",
+      "observability": "Startup and migration logs should clearly expose connection failures, invalid env vars, and schema drift.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-004 and WA-005 and should finish before any DB-backed domain or provider work is considered stable."
+    },
+    {
+      "id": "weather-agent-03",
+      "title": "Core domain services",
+      "goal": "Implement authorization, settings, locations, deterministic time resolution, and normalized weather contracts that the application and adapters can share.",
+      "scope": [
+        "WA-006",
+        "WA-007",
+        "WA-008",
+        "WA-009"
+      ],
+      "files": [
+        "src/weather_agent/domain/authorization.py",
+        "src/weather_agent/domain/settings.py",
+        "src/weather_agent/domain/locations.py",
+        "src/weather_agent/domain/date_resolution.py",
+        "src/weather_agent/domain/weather_models.py",
+        "src/weather_agent/domain/provider_contracts.py",
+        "tests/domain/"
+      ],
+      "dependencies": [
+        "weather-agent-01",
+        "weather-agent-02"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "Authorization and global settings services are independent of Telegram library types.",
+        "Locations support aliases, coordinates, lifecycle flags, and duplicate-conflict protection.",
+        "DateResolver deterministically maps Polish time phrases into explicit Europe/Warsaw ranges with explanation text.",
+        "Forecast, observation, and warning contracts use normalized unit-qualified fields and preserve raw provider payloads."
+      ],
+      "tests": [
+        "unit tests for authorization and global settings",
+        "unit tests for location CRUD and alias resolution",
+        "frozen-clock tests for DateResolver",
+        "model serialization tests for normalized weather contracts"
+      ],
+      "docs": [
+        "docs/domain-vocabulary.md",
+        "README.md"
+      ],
+      "rollout": "Freeze these contracts before writing adapters or graph nodes so later implementation can treat them as durable boundaries.",
+      "observability": "Domain-level validation errors should be typed and surfaced without stack traces leaking into user-facing flows.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-006 through WA-009 and assumes Polish-only language plus Europe/Warsaw timezone remain hard MVP constraints."
+    },
+    {
+      "id": "weather-agent-04",
+      "title": "Weather ingestion and storage",
+      "goal": "Add provider adapters, normalized persistence, and snapshot utilities so the system can fetch, store, and compare forecast and warning data deterministically.",
+      "scope": [
+        "WA-010",
+        "WA-011",
+        "WA-012",
+        "WA-013",
+        "WA-014"
+      ],
+      "files": [
+        "src/weather_agent/adapters/weather/open_meteo.py",
+        "src/weather_agent/adapters/weather/imgw_synop.py",
+        "src/weather_agent/adapters/weather/imgw_warnings.py",
+        "src/weather_agent/repositories/weather_data.py",
+        "src/weather_agent/services/forecast_snapshots.py",
+        "tests/adapters/weather/",
+        "tests/repositories/"
+      ],
+      "dependencies": [
+        "weather-agent-01",
+        "weather-agent-02",
+        "weather-agent-03"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "Open-Meteo DWD ICON forecasts normalize into shared contracts with typed timeout and retry behavior.",
+        "IMGW synop and official-warning adapters parse source payloads without fabricating missing values.",
+        "Forecasts, observations, warnings, and raw payloads persist with queryable normalized fields.",
+        "Snapshot comparison utilities provide typed delta outputs suitable for later rule evaluation."
+      ],
+      "tests": [
+        "mocked HTTP tests for Open-Meteo and IMGW adapters",
+        "integration tests for weather-data repositories",
+        "unit tests for forecast snapshot comparison behavior"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/"
+      ],
+      "rollout": "Keep provider interfaces independent from Telegram and LangGraph so failures stay isolated to adapter boundaries.",
+      "observability": "Provider calls should emit structured success and failure metadata with enough detail to diagnose drift or throttling.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-010 through WA-014 and assumes Open-Meteo DWD ICON plus IMGW remain the only required MVP providers."
+    },
+    {
+      "id": "weather-agent-05",
+      "title": "Rule runtime",
+      "goal": "Implement deterministic CEL-backed rule creation, evaluation, cooldown handling, and persisted explanation evidence without depending on the LLM at runtime.",
+      "scope": [
+        "WA-015",
+        "WA-016",
+        "WA-017",
+        "WA-018",
+        "WA-019"
+      ],
+      "files": [
+        "src/weather_agent/domain/rules.py",
+        "src/weather_agent/services/cel_engine.py",
+        "src/weather_agent/services/rule_crud.py",
+        "src/weather_agent/workers/rule_evaluator.py",
+        "src/weather_agent/repositories/notifications.py",
+        "tests/rules/"
+      ],
+      "dependencies": [
+        "weather-agent-03",
+        "weather-agent-04"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "CEL validation enforces a strict allowlist of functions, variables, and metrics.",
+        "Rules persist with short IDs, lifecycle metadata, and validated expressions only.",
+        "Evaluation worker runs deterministically against persisted weather snapshots and produces explainable events.",
+        "Cooldown, dedupe, snooze, and audit behavior prevent noisy or duplicated notifications."
+      ],
+      "tests": [
+        "unit tests for CEL validation and evaluation",
+        "repository tests for rule CRUD and event persistence",
+        "worker tests for cooldown, dedupe, and explanation data"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/"
+      ],
+      "rollout": "Do not expose user-facing rule flows until deterministic validation, persistence, and worker execution all pass.",
+      "observability": "Every evaluation run and emitted notification candidate should be traceable through durable IDs and structured audit records.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-015 through WA-019 and preserves the non-negotiable constraint that LLM output may propose rules but never execute them."
+    },
+    {
+      "id": "weather-agent-06",
+      "title": "Telegram channel",
+      "goal": "Build the Telegram ingress and egress layer, including authorization, thread context isolation, deterministic commands, and delivery plumbing.",
+      "scope": [
+        "WA-020",
+        "WA-021",
+        "WA-022",
+        "WA-023"
+      ],
+      "files": [
+        "src/weather_agent/adapters/telegram/bot.py",
+        "src/weather_agent/adapters/telegram/context.py",
+        "src/weather_agent/adapters/telegram/commands.py",
+        "src/weather_agent/adapters/telegram/sender.py",
+        "tests/telegram/"
+      ],
+      "dependencies": [
+        "weather-agent-02",
+        "weather-agent-03",
+        "weather-agent-05"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "Authorized Telegram messages enter the application layer while unauthorized traffic is denied or ignored safely.",
+        "Thread context keys isolate state by chat and topic and route notifications back to the origin thread by default.",
+        "Deterministic commands for locations and rules work without requiring the LLM.",
+        "Notification sending preserves short IDs and avoids leaking secrets or internal errors."
+      ],
+      "tests": [
+        "unit tests for unauthorized message handling",
+        "tests covering topic and non-topic context mapping",
+        "command-handler tests for location and rule operations",
+        "sender tests for formatted notification delivery"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/"
+      ],
+      "rollout": "Enable Telegram flows only after the rule runtime and core domain services can back them with deterministic behavior.",
+      "observability": "Inbound updates, authorization denials, command routing, and outbound sends should all leave structured traces and audit markers.",
+      "status": "todo",
+      "priority": 1,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-020 through WA-023 and assumes Telegram private supergroup plus Topics remains the recommended operating environment."
+    },
+    {
+      "id": "weather-agent-07",
+      "title": "LangGraph orchestration and observability",
+      "goal": "Wire provider-agnostic model selection, typed conversational state, graph flows, thread-scoped memory, tracing, logging, health surfaces, retention jobs, and production-like stack finishing work.",
+      "scope": [
+        "WA-024",
+        "WA-025",
+        "WA-026",
+        "WA-027",
+        "WA-028",
+        "WA-029",
+        "WA-031",
+        "WA-032",
+        "WA-033",
+        "WA-034"
+      ],
+      "files": [
+        "src/weather_agent/llm/model_factory.py",
+        "src/weather_agent/graphs/state.py",
+        "src/weather_agent/graphs/conversation.py",
+        "src/weather_agent/services/thread_memory.py",
+        "src/weather_agent/observability/logging.py",
+        "src/weather_agent/observability/langsmith.py",
+        "src/weather_agent/api/health.py",
+        "docker-compose.yml",
+        "tests/graphs/",
+        "tests/observability/"
+      ],
+      "dependencies": [
+        "weather-agent-03",
+        "weather-agent-04",
+        "weather-agent-05",
+        "weather-agent-06"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "Model configuration is provider-agnostic and defaults to gpt-5-mini without hard-coding a single vendor throughout the app.",
+        "LangGraph state and graph skeleton support weather and rule-confirmation paths with typed state objects.",
+        "Weather Q\u0026A, rule proposal, pending confirmations, tracing, logging, and status flows work together without making correctness depend on LangSmith availability.",
+        "Retention jobs, health surfaces, and production-like Compose wiring support operating the stack in a homelab environment."
+      ],
+      "tests": [
+        "graph-path tests for weather and rule-confirmation routes",
+        "tests for pending confirmation persistence and retrieval",
+        "LangSmith wiring tests or smoke checks with tracing toggled on",
+        "status and cleanup job tests",
+        "docker compose config for the production-like stack"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/",
+        "docs/agents/"
+      ],
+      "rollout": "Land graph and observability slices behind stable provider, domain, and Telegram seams so orchestration bugs do not force contract rewrites.",
+      "observability": "Graph path, tool calls, evaluation IDs, cleanup activity, and status surfaces should make it possible to debug failures without replaying user conversations manually.",
+      "status": "todo",
+      "priority": 1,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-024 through WA-034 except eval and release tasks; LangSmith is required for learning visibility but not for deterministic runtime correctness."
+    },
+    {
+      "id": "weather-agent-08",
+      "title": "Verification and release",
+      "goal": "Prove the MVP end to end with eval assets, mocked integration coverage, real-provider smoke checks, and deployment-ready documentation.",
+      "scope": [
+        "WA-030",
+        "WA-036",
+        "WA-037",
+        "WA-038"
+      ],
+      "files": [
+        "tests/evals/",
+        "tests/e2e/test_mvp_flow.py",
+        "tests/smoke/test_real_providers.py",
+        "README.md",
+        "docs/runbooks/",
+        "docs/release/"
+      ],
+      "dependencies": [
+        "weather-agent-04",
+        "weather-agent-05",
+        "weather-agent-06",
+        "weather-agent-07"
+      ],
+      "skills": [],
+      "acceptance_criteria": [
+        "A mocked end-to-end test covers location creation, weather Q\u0026A, rule proposal and confirmation, evaluation, notification delivery, and later explanation.",
+        "Eval assets exercise intent classification and CEL generation quality for the main Polish-language flows.",
+        "Real-provider smoke checks confirm Open-Meteo and IMGW integrations against live services within safe limits.",
+        "Final documentation enables a new developer to deploy, configure, operate, back up, and verify the MVP from scratch."
+      ],
+      "tests": [
+        "mocked end-to-end MVP test",
+        "LangSmith or pytest eval run",
+        "real-provider smoke test",
+        "documentation walkthrough against docker compose up"
+      ],
+      "docs": [
+        "README.md",
+        "docs/runbooks/",
+        "docs/release/"
+      ],
+      "rollout": "Treat this as the release gate; if mocked E2E or real-provider smoke checks fail, roll back to the latest passing phase and repair the underlying slice before shipping.",
+      "observability": "Verification artifacts should link failures back to graph traces, provider logs, and persisted evaluation or notification records.",
+      "status": "todo",
+      "priority": 0,
+      "owner": "Mateusz Urban",
+      "notes": "Maps to WA-030, WA-036, WA-037, and WA-038 and assumes the Beads child backlog remains the execution source of truth below this release gate."
+    }
+  ]
+}
