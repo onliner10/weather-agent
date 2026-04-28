@@ -16,6 +16,7 @@ class ConversationState(TypedDict, total=False):
     resolved_intent: str | None
     resolved_location: LocationRef | None
     resolved_time_range: ResolvedTimeRange | None
+    user_focus: str | None
     forecast_result: ForecastResult | None
     observation_result: ObservationResult | None
     pending_confirmation: dict[str, Any] | None

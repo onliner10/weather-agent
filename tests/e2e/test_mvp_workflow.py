@@ -63,6 +63,7 @@ from weather_agent.infrastructure.db.base import (
 from weather_agent.infrastructure.db.base import (
     ForecastPoint as ForecastPointORM,
 )
+from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.infrastructure.repositories.forecast_repository import (
     ForecastRepository,
 )
@@ -166,22 +167,47 @@ class MockObservationProvider:
 class MockModelFactory(ModelFactory):
     """Returns canned LLM responses for weather Q&A and rule proposals."""
 
-    def __init__(self, responses: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str] | None = None,
+        location_name: str | None = "Chwarzno",
+    ) -> None:
         super().__init__()
         self._responses = responses or []
+        self._location_name = location_name
         self._call_count = 0
 
     def create_chat_model(self) -> MagicMock:
+        from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
+
         mock_response = MagicMock()
         idx = min(self._call_count, len(self._responses) - 1)
         mock_response.content = (
             self._responses[idx] if self._responses else "Brak danych"
         )
+        mock_response.tool_calls = []
         self._call_count += 1
 
         mock_chat = AsyncMock()
         mock_chat.ainvoke = AsyncMock(return_value=mock_response)
+
+        extraction = _LocationExtraction(
+            location_name=self._location_name, focus=None,
+        )
+        structured = AsyncMock()
+        structured.ainvoke = AsyncMock(return_value=extraction)
+        mock_chat.with_structured_output = MagicMock(return_value=structured)
         return mock_chat
+
+
+class MockGeocoder(Geocoder):
+    """Returns a fixed location for any geocode request."""
+
+    def __init__(self, location: LocationRef) -> None:
+        self._location = location
+
+    async def geocode(self, name: str) -> LocationRef | None:
+        return self._location
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +373,14 @@ class TestMVPWorkflow:
                 )
             ]
         )
+        mock_geocoder = MockGeocoder(location_ref_for_forecast)
         deps = ConversationDeps(
             location_service=location_service,
             date_resolver=date_resolver,
             forecast_provider=forecast_provider,
             observation_provider=observation_provider,
             model_factory=mock_model,
+            geocoder=mock_geocoder,
             user_id=USER_ID,
         )
         compiled_graph = compile_conversation_graph(deps)
@@ -436,6 +464,7 @@ class TestMVPWorkflow:
             date_resolver=date_resolver,
             forecast_provider=forecast_provider,
             model_factory=mock_rule_model,
+            geocoder=mock_geocoder,
             cel_evaluator=cel_evaluator,
             rule_service=rule_service,
             user_id=USER_ID,

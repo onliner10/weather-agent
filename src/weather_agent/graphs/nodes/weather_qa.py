@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from typing import Any, Protocol, runtime_checkable
 
-from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
+from pydantic import BaseModel, Field
+
+from weather_agent.domain.date_resolver import DateResolver
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.weather import (
@@ -14,32 +18,10 @@ from weather_agent.domain.weather import (
     WeatherVariable,
 )
 from weather_agent.graphs.state import ConversationState
+from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
 
-_DEFAULT_VARIABLES = [
-    WeatherVariable.temperature_2m_c,
-    WeatherVariable.apparent_temperature_c,
-    WeatherVariable.precipitation_mm,
-    WeatherVariable.precipitation_probability_pct,
-    WeatherVariable.wind_speed_10m_ms,
-    WeatherVariable.wind_gusts_10m_ms,
-    WeatherVariable.cloud_cover_pct,
-    WeatherVariable.weather_code,
-    WeatherVariable.relative_humidity_2m_pct,
-]
-
-_WIND_VARIABLES = [
-    WeatherVariable.wind_speed_10m_ms,
-    WeatherVariable.wind_gusts_10m_ms,
-    WeatherVariable.wind_direction_10m_deg,
-]
-
-_FULL_VARIABLES = list(dict.fromkeys(_DEFAULT_VARIABLES + _WIND_VARIABLES + [
-    WeatherVariable.apparent_temperature_c,
-    WeatherVariable.pressure_msl_hpa,
-    WeatherVariable.snowfall_cm,
-    WeatherVariable.rain_mm,
-]))
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -63,61 +45,7 @@ class ObservationProvider(Protocol):
     ) -> ObservationResult: ...
 
 
-def _extract_location_reference(message: str) -> str | None:
-    patterns = [
-        r"w\s+([A-Z\u00c0-\u017e][\w\u00c0-\u017e]+)",
-        r"w\s+([a-z\u00c0-\u017e][\w\u00c0-\u017e]+)",
-        r"w\s+(\w+)",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, message, re.IGNORECASE)
-        if m:
-            return m.group(1)
-    return None
-
-
-def _select_variables(message: str) -> list[WeatherVariable]:
-    msg_lower = message.lower()
-    if any(kw in msg_lower for kw in ("wiatr", "wietrzn", "wiew", "poryw")):
-        return _FULL_VARIABLES
-    if any(kw in msg_lower for kw in ("deszcz", "opad", "pada", "padać", "śnieg")):
-        return _FULL_VARIABLES
-    if any(kw in msg_lower for kw in ("ubr", "ubierz", "odież", "odzież", "ubiór")):
-        return _FULL_VARIABLES
-    return _DEFAULT_VARIABLES
-
-
-def _extract_time_reference(message: str) -> str | None:
-    time_patterns = [
-        r"dziś\s+wiecz(?:orem|ór)",
-        r"dzisiaj\s+wiecz(?:orem|ór)",
-        r"jutro\s+rano",
-        r"jutro\s+po\s+południu",
-        r"jutro\s+po\s+poludniu",
-        r"jutro\s+wiecz(?:orem|ór)",
-        r"następne\s+\d+\s+dni",
-        r"nastepne\s+\d+\s+dni",
-        r"następny\s+weekend",
-        r"nastepny\s+weekend",
-        r"ten\s+weekend",
-        r"weekend",
-        r"majówk[aeę]",
-        r"majowk[aeę]",
-        r"jutro",
-        r"dziś",
-        r"dzisiaj",
-    ]
-    for pattern in time_patterns:
-        m = re.search(pattern, message, re.IGNORECASE)
-        if m:
-            return m.group(0).lower()
-    date_match = re.search(r"\d{4}-\d{2}-\d{2}", message)
-    if date_match:
-        return date_match.group(0)
-    return None
-
-
-_WEAther_CODE_MAP: dict[int, str] = {
+_WEATHER_CODE_MAP: dict[int, str] = {
     0: "bezchmurnie",
     1: "przeważnie czysto",
     2: "częściowe zachmurzenie",
@@ -153,99 +81,456 @@ def _weather_code_description(code: str | None) -> str | None:
     if code is None:
         return None
     try:
-        return _WEAther_CODE_MAP.get(int(code))
+        return _WEATHER_CODE_MAP.get(int(code))
     except (ValueError, TypeError):
         return None
 
 
-def _format_forecast_summary(
-    location: LocationRef,
-    time_range: ResolvedTimeRange,
-    forecast: ForecastResult,
-    observation: ObservationResult | None = None,
-) -> str:
-    lines: list[str] = []
-    lines.append(f"Pogoda dla {location.name} ({time_range.explanation}):")
+def _format_point(p: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {"time": str(p.target_time)}
+    for attr in (
+        "temperature_2m_c",
+        "apparent_temperature_c",
+        "precipitation_mm",
+        "precipitation_probability_pct",
+        "rain_mm",
+        "snowfall_cm",
+        "cloud_cover_pct",
+        "wind_speed_10m_ms",
+        "wind_gusts_10m_ms",
+        "wind_direction_10m_deg",
+        "pressure_msl_hpa",
+        "relative_humidity_2m_pct",
+        "weather_code",
+    ):
+        v = getattr(p, attr, None)
+        if v is not None:
+            d[attr] = v
+    return d
 
-    points = forecast.points
-    if not points:
-        lines.append("Brak danych prognozy dla wskazanego zakresu.")
-        return "\n".join(lines)
 
-    temps = [p for p in points if p.temperature_2m_c is not None]
-    if temps:
-        t_min = min(p.temperature_2m_c for p in temps)  # type: ignore[type-var]
-        t_max = max(p.temperature_2m_c for p in temps)  # type: ignore[type-var]
-        t_avg = sum(p.temperature_2m_c for p in temps) / len(temps)  # type: ignore[misc]
-        lines.append(f"Temperatura: {t_min:.0f}°C – {t_max:.0f}°C (średnia {t_avg:.1f}°C)")
+def _format_observation_point(p: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {}
+    for attr in (
+        "observed_at",
+        "station_name",
+        "distance_km",
+        "temperature_c",
+        "wind_speed_ms",
+        "wind_direction_deg",
+        "pressure_hpa",
+        "humidity_pct",
+        "precipitation_mm",
+    ):
+        v = getattr(p, attr, None)
+        if v is not None:
+            d[attr] = str(v) if hasattr(v, "isoformat") else v
+    return d
 
-    feels = [p for p in points if p.apparent_temperature_c is not None]
-    if feels:
-        f_min = min(p.apparent_temperature_c for p in feels)  # type: ignore[type-var]
-        f_max = max(p.apparent_temperature_c for p in feels)  # type: ignore[type-var]
-        lines.append(f"Temperatura odczuwalna: {f_min:.0f}°C – {f_max:.0f}°C")
 
-    precip = [p for p in points if p.precipitation_mm is not None]
-    if precip:
-        total = sum(p.precipitation_mm for p in precip)  # type: ignore[misc]
-        max_prob = max(
-            (
-                p.precipitation_probability_pct
-                for p in points
-                if p.precipitation_probability_pct is not None
-            ),
-            default=None,
+def _extract_time_reference(message: str) -> str | None:
+    time_patterns = [
+        r"dziś\s+wiecz(?:orem|ór)",
+        r"dzisiaj\s+wiecz(?:orem|ór)",
+        r"jutro\s+rano",
+        r"jutro\s+po\s+południu",
+        r"jutro\s+po\s+poludniu",
+        r"jutro\s+wiecz(?:orem|ór)",
+        r"następne\s+\d+\s+dni",
+        r"nastepne\s+\d+\s+dni",
+        r"następny\s+weekend",
+        r"nastepny\s+weekend",
+        r"ten\s+weekend",
+        r"weekend",
+        r"majówk[aeę]",
+        r"majowk[aeę]",
+        r"jutro",
+        r"dziś",
+        r"dzisiaj",
+    ]
+    for pattern in time_patterns:
+        m = re.search(pattern, message, re.IGNORECASE)
+        if m:
+            return m.group(0).lower()
+    date_match = re.search(r"\d{4}-\d{2}-\d{2}", message)
+    if date_match:
+        return date_match.group(0)
+    return None
+
+
+class _LocationExtraction(BaseModel):
+    location_name: str | None = Field(
+        default=None,
+        description="Place name in nominative case, or null if none",
+    )
+    focus: str | None = Field(
+        default=None,
+        description="What user asks about e.g. wiatr, temperatura. Null if general.",
+    )
+
+
+async def _extract_location_and_focus(
+    message: str,
+    model_factory: ModelFactory | None,
+) -> _LocationExtraction:
+    if model_factory is None:
+        return _LocationExtraction(location_name=None, focus=None)
+    try:
+        chat = model_factory.create_chat_model()
+        structured = chat.with_structured_output(_LocationExtraction)
+        result = await structured.ainvoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Wyciągnij z wiadomości użytkownika:\n"
+                        "1. location_name — nazwa miejscowości w mianowniku"
+                        ' (np. „w Gdańsku" → „Gdańsk",'
+                        ' „w Chwarznie" → „Chwarzno").'
+                        " Zwróć null jeśli nie ma nazwy miejsca.\n"
+                        "2. focus — o co użytkownik pyta szczegółowo"
+                        " (np. wiatr, porywy, temperatura, opady, ciśnienie)."
+                        " Zwróć null jeśli ogólne pytanie.\n\n"
+                        'UWAGA: „w weekend", „w majówkę",'
+                        ' „w poniedziałek" to CZAS, nie lokalizacja.'
+                        " Nie myl przyimków czasowych z miejscowymi."
+                    ),
+                },
+                {"role": "user", "content": message},
+            ],
         )
-        prob_str = f", prawdopodobieństwo {max_prob:.0f}%" if max_prob is not None else ""
-        lines.append(f"Opady łącznie: {total:.1f} mm{prob_str}")
+        if isinstance(result, _LocationExtraction):
+            return result
+    except Exception:
+        logger.warning("LLM location extraction failed", exc_info=True)
+    return _LocationExtraction(location_name=None, focus=None)
 
-    wind = [p for p in points if p.wind_speed_10m_ms is not None]
-    if wind:
-        w_max = max(p.wind_speed_10m_ms for p in wind)  # type: ignore[type-var]
-        w_avg = sum(p.wind_speed_10m_ms for p in wind) / len(wind)  # type: ignore[misc]
-        gusts = [p for p in points if p.wind_gusts_10m_ms is not None]
-        gust_str = ""
-        if gusts:
-            g_max = max(p.wind_gusts_10m_ms for p in gusts)  # type: ignore[type-var]
-            gust_str = f", porywy do {g_max:.0f} m/s"
-        lines.append(f"Wiatr: średnio {w_avg:.1f} m/s, maks. {w_max:.0f} m/s{gust_str}")
 
-    cloud = [p for p in points if p.cloud_cover_pct is not None]
-    if cloud:
-        c_avg = sum(p.cloud_cover_pct for p in cloud) / len(cloud)  # type: ignore[misc]
-        lines.append(f"Zachmurzenie: średnio {c_avg:.0f}%")
+def _build_tools(
+    forecast_provider: ForecastProvider,
+    observation_provider: ObservationProvider | None,
+    geocoder: Geocoder,
+    date_resolver: DateResolver,
+    location_service: LocationService | None,
+    user_id: int,
+) -> list[dict[str, Any]]:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_forecast",
+                "description": (
+                    "Pobierz prognozę pogody dla lokalizacji i zakresu czasu."
+                    " Zwraca godzinowe dane: temperatura, opady, wiatr, zachmurzenie itp."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location_name": {
+                            "type": "string",
+                            "description": "Nazwa miejscowości (np. Gdańsk, Chwarzno)",
+                        },
+                        "time_expression": {
+                            "type": "string",
+                            "description": "Wyrażenie czasowe (np. jutro, weekend, dziś wieczorem)",
+                        },
+                        "variables": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Lista zmiennych pogodowych do pobrania."
+                                " Dostępne: temperature_2m_c, apparent_temperature_c,"
+                                " precipitation_mm, precipitation_probability_pct,"
+                                " rain_mm, snowfall_cm, cloud_cover_pct,"
+                                " wind_speed_10m_ms, wind_gusts_10m_ms,"
+                                " wind_direction_10m_deg, pressure_msl_hpa,"
+                                " relative_humidity_2m_pct, weather_code"
+                            ),
+                        },
+                    },
+                    "required": ["location_name", "time_expression"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_observations",
+                "description": (
+                    "Pobierz aktualne obserwacje ze stacji meteorologicznych"
+                    " wokół lokalizacji (ostatni pomiar)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location_name": {
+                            "type": "string",
+                            "description": "Nazwa miejscowości",
+                        },
+                    },
+                    "required": ["location_name"],
+                },
+            },
+        },
+    ]
+    return tools
 
-    humidity = [p for p in points if p.relative_humidity_2m_pct is not None]
-    if humidity:
-        h_avg = sum(p.relative_humidity_2m_pct for p in humidity) / len(humidity)  # type: ignore[misc]
-        lines.append(f"Wilgotność: średnio {h_avg:.0f}%")
 
-    codes = [p for p in points if p.weather_code is not None]
-    if codes:
-        unique_codes: set[str] = set()
-        for p in codes:
-            if p.weather_code is not None:
-                unique_codes.add(p.weather_code)
-        descriptions = []
-        for code in sorted(unique_codes, key=lambda c: int(c)):
-            desc = _weather_code_description(code)
-            if desc:
-                descriptions.append(desc)
-        if descriptions:
-            lines.append("Warunki: " + ", ".join(descriptions))
+async def _execute_tool_call(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    forecast_provider: ForecastProvider,
+    observation_provider: ObservationProvider | None,
+    geocoder: Geocoder,
+    date_resolver: DateResolver,
+    location_service: LocationService | None,
+    user_id: int,
+) -> str:
+    if tool_name == "get_forecast":
+        return await _execute_get_forecast(
+            tool_args,
+            forecast_provider,
+            geocoder,
+            date_resolver,
+            location_service,
+            user_id,
+        )
+    if tool_name == "get_observations":
+        return await _execute_get_observations(
+            tool_args,
+            observation_provider,
+            geocoder,
+            location_service,
+            user_id,
+        )
+    return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
-    if observation and observation.points:
-        obs = observation.points[0]
-        lines.append(f"\nObecnie ({obs.station_name or 'najbliższa stacja'}):")
-        if obs.temperature_c is not None:
-            lines.append(f"  Temperatura: {obs.temperature_c:.1f}°C")
-        if obs.wind_speed_ms is not None:
-            lines.append(f"  Wiatr: {obs.wind_speed_ms:.1f} m/s")
-        if obs.humidity_pct is not None:
-            lines.append(f"  Wilgotność: {obs.humidity_pct:.0f}%")
 
-    lines.append(f"\n(Prognoza: {forecast.provider}, model: {forecast.model or 'N/A'})")
-    return "\n".join(lines)
+async def _resolve_location(
+    name: str,
+    geocoder: Geocoder,
+    location_service: LocationService | None,
+    user_id: int,
+) -> LocationRef | None:
+    if location_service is not None:
+        resolved = await location_service.resolve_location(name, user_id)
+        if resolved is not None:
+            return resolved
+    return await geocoder.geocode(name)
+
+
+async def _execute_get_forecast(
+    args: dict[str, Any],
+    forecast_provider: ForecastProvider,
+    geocoder: Geocoder,
+    date_resolver: DateResolver,
+    location_service: LocationService | None,
+    user_id: int,
+) -> str:
+    location_name = args.get("location_name", "")
+    time_expr = args.get("time_expression", "dziś")
+    variable_names = args.get("variables", [])
+
+    location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    if location is None:
+        err_msg = f"Nie znaleziono lokalizacji: {location_name}"
+        return json.dumps({"error": err_msg}, ensure_ascii=False)
+
+    time_range = await date_resolver.resolve(time_expr)
+    if time_range is None:
+        time_range = await date_resolver.resolve("dziś")
+    assert time_range is not None
+
+    variables = []
+    for vn in variable_names:
+        try:
+            variables.append(WeatherVariable(vn))
+        except ValueError:
+            pass
+    if not variables:
+        variables = list(WeatherVariable)
+
+    from weather_agent.domain.weather import TimeRange
+
+    tr = TimeRange(start=time_range.start, end=time_range.end)
+    try:
+        forecast = await forecast_provider.get_forecast(
+            location=location,
+            time_range=tr,
+            variables=variables,
+            resolution=ForecastResolution.hourly,
+        )
+    except WeatherProviderError as exc:
+        err_msg = f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}"
+        return json.dumps({"error": err_msg}, ensure_ascii=False)
+
+    points_data = [_format_point(p) for p in forecast.points]
+    result = {
+        "location": location.name,
+        "time_range": time_range.explanation,
+        "forecast_points": points_data,
+        "provider": forecast.provider,
+        "model": forecast.model,
+    }
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+async def _execute_get_observations(
+    args: dict[str, Any],
+    observation_provider: ObservationProvider | None,
+    geocoder: Geocoder,
+    location_service: LocationService | None,
+    user_id: int,
+) -> str:
+    if observation_provider is None:
+        return json.dumps({"error": "Obserwacje niedostępne"})
+
+    location_name = args.get("location_name", "")
+    location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    if location is None:
+        err_msg = f"Nie znaleziono lokalizacji: {location_name}"
+        return json.dumps({"error": err_msg}, ensure_ascii=False)
+
+    try:
+        obs = await observation_provider.get_observations(
+            location=location,
+            radius_km=50.0,
+            variables=list(WeatherVariable),
+        )
+    except WeatherProviderError as exc:
+        return json.dumps({"error": f"Błąd dostawcy obserwacji: {exc.message}"}, ensure_ascii=False)
+
+    points_data = [_format_observation_point(p) for p in obs.points]
+    return json.dumps(
+        {"location": location.name, "observations": points_data},
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+async def weather_agent_node(
+    state: ConversationState,
+    model_factory: ModelFactory | None,
+    forecast_provider: ForecastProvider | None,
+    observation_provider: ObservationProvider | None,
+    geocoder: Geocoder | None,
+    date_resolver: DateResolver | None,
+    location_service: LocationService | None,
+    user_id: int = 0,
+) -> dict[str, Any]:
+    if state.get("error"):
+        return {"answer": f"Przepraszam, wystąpił błąd: {state['error']}"}
+
+    user_message = state.get("user_message") or ""
+
+    if (
+        model_factory is None
+        or forecast_provider is None
+        or geocoder is None
+        or date_resolver is None
+    ):
+        return {"answer": "Przepraszam, usługa pogodowa jest niedostępna."}
+
+    extraction = await _extract_location_and_focus(user_message, model_factory)
+    location_hint = ""
+    if extraction.location_name:
+        location_hint = f"Użytkownik pyta o miejscowość: {extraction.location_name}.\n"
+
+    focus_hint = ""
+    if extraction.focus:
+        focus_hint = (
+            f"Użytkownik pyta szczegółowo o: {extraction.focus}. Skoncentruj się na tym aspekcie.\n"
+        )
+
+    tools = _build_tools(
+        forecast_provider,
+        observation_provider,
+        geocoder,
+        date_resolver,
+        location_service,
+        user_id,
+    )
+
+    chat = model_factory.create_chat_model()
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
+                "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
+                "(get_forecast, get_observations)."
+                " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
+                " poproś tylko o wind_speed_10m_ms,"
+                " wind_gusts_10m_ms, wind_direction_10m_deg.\n"
+                f"{location_hint}{focus_hint}"
+                "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
+                " Podaj lokalizację i zakres czasu."
+            ),
+        },
+        {"role": "user", "content": user_message},
+    ]
+
+    max_iterations = 5
+    for _ in range(max_iterations):
+        response = await chat.ainvoke(messages, tools=tools)
+
+        if not response.tool_calls:
+            answer = str(response.content) if response.content else ""
+            if not answer:
+                answer = "Przepraszam, nie udało się przetworzyć zapytania."
+            return {"answer": answer, "resolved_location": state.get("resolved_location")}
+
+        for tc in response.tool_calls:
+            tc_dict = tc if isinstance(tc, dict) else dict(tc)
+            tool_name: str = tc_dict.get("name", "")
+            tool_args: Any = tc_dict.get("args", {})
+            if isinstance(tool_args, str):
+                try:
+                    tool_args = json.loads(tool_args)
+                except json.JSONDecodeError:
+                    tool_args = {}
+
+            logger.info("Tool call: %s(%s)", tool_name, tool_args)
+            result = await _execute_tool_call(
+                tool_name,
+                tool_args,
+                forecast_provider,
+                observation_provider,
+                geocoder,
+                date_resolver,
+                location_service,
+                user_id,
+            )
+
+            messages.append(
+                {"role": "assistant", "content": None, "tool_calls": [tc_dict]}
+            )
+            tc_id: str = str(tc_dict.get("id", ""))
+            messages.append(
+                {
+                    "role": "tool",
+                    "content": result,
+                    "tool_call_id": tc_id,
+                }
+            )
+
+            if tool_name == "get_forecast" and '"error"' not in result:
+                try:
+                    data = json.loads(result)
+                    loc_name = data.get("location")
+                    if loc_name:
+                        loc_ref = await _resolve_location(
+                            loc_name,
+                            geocoder,
+                            location_service,
+                            user_id,
+                        )
+                        if loc_ref:
+                            state = {**state, "resolved_location": loc_ref}
+                except Exception:
+                    pass
+
+    return {"answer": "Przepraszam, nie udało się przetworzyć zapytania po zbyt wielu krokach."}
 
 
 async def resolve_location_node(
@@ -253,6 +538,7 @@ async def resolve_location_node(
     location_service: LocationService | None,
     user_id: int,
     geocoder: Any | None = None,
+    model_factory: ModelFactory | None = None,
 ) -> dict[str, Any]:
     message = state.get("user_message") or ""
     location_ref = state.get("resolved_location")
@@ -260,17 +546,23 @@ async def resolve_location_node(
     if location_ref is not None:
         return {"resolved_location": location_ref}
 
-    extracted = _extract_location_reference(message)
+    extraction = await _extract_location_and_focus(message, model_factory)
+    extracted = extraction.location_name
+
+    updates: dict[str, Any] = {}
+    if extraction.focus:
+        updates["user_focus"] = extraction.focus
+
     if extracted:
         if location_service is not None:
             resolved = await location_service.resolve_location(extracted, user_id)
             if resolved is not None:
-                return {"resolved_location": resolved}
+                return {"resolved_location": resolved, **updates}
 
         if geocoder is not None:
             resolved = await geocoder.geocode(extracted)
             if resolved is not None:
-                return {"resolved_location": resolved}
+                return {"resolved_location": resolved, **updates}
 
         return {
             "error": (
@@ -278,27 +570,16 @@ async def resolve_location_node(
                 " Podaj lokalizację jawnie (np. w Gdańsku)."
             ),
             "resolved_location": None,
+            **updates,
         }
-
-    if location_service is not None:
-        locations = await location_service.list_locations(user_id)
-        if len(locations) == 1:
-            loc = locations[0]
-            return {
-                "resolved_location": LocationRef(
-                    id=str(loc.id),
-                    name=loc.name,
-                    latitude=loc.latitude,
-                    longitude=loc.longitude,
-                ),
-            }
 
     return {
         "error": (
-            "Nie podałeś lokalizacji. Napisz np. „jaka pogoda w Gdańsku jutro\""
+            'Nie podałeś lokalizacji. Napisz np. „jaka pogoda w Gdańsku jutro"'
             " lub ustaw lokalizację domową komendą /dodaj_lok."
         ),
         "resolved_location": None,
+        **updates,
     }
 
 
@@ -320,110 +601,3 @@ async def resolve_time_range_node(
 
     result = await date_resolver.resolve("dziś")
     return {"resolved_time_range": result}
-
-
-async def call_weather_tools_node(
-    state: ConversationState,
-    forecast_provider: ForecastProvider,
-    observation_provider: ObservationProvider | None = None,
-) -> dict[str, Any]:
-    location = state.get("resolved_location")
-    time_range = state.get("resolved_time_range")
-
-    if location is None:
-        return {
-            "forecast_result": None,
-            "observation_result": None,
-            "error": "Brak lokalizacji — nie można pobrać prognozy.",
-        }
-
-    if time_range is None:
-        return {
-            "forecast_result": None,
-            "observation_result": None,
-            "error": "Brak zakresu czasu — nie można pobrać prognozy.",
-        }
-
-    from weather_agent.domain.weather import TimeRange
-
-    tr = TimeRange(start=time_range.start, end=time_range.end)
-    message = state.get("user_message") or ""
-    variables = _select_variables(message)
-
-    try:
-        forecast = await forecast_provider.get_forecast(
-            location=location,
-            time_range=tr,
-            variables=variables,
-            resolution=ForecastResolution.hourly,
-        )
-    except WeatherProviderError as exc:
-        return {
-            "forecast_result": None,
-            "observation_result": None,
-            "error": f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}",
-        }
-
-    observation: ObservationResult | None = None
-    if observation_provider is not None:
-        try:
-            observation = await observation_provider.get_observations(
-                location=location,
-                radius_km=50.0,
-                variables=variables,
-            )
-        except WeatherProviderError:
-            pass
-        except Exception:
-            pass
-
-    return {
-        "forecast_result": forecast,
-        "observation_result": observation,
-        "error": None,
-    }
-
-
-async def answer_weather_question_node(
-    state: ConversationState,
-    model_factory: ModelFactory | None = None,
-) -> dict[str, Any]:
-    if state.get("error"):
-        return {"answer": f"Przepraszam, wystąpił błąd: {state['error']}"}
-
-    location = state.get("resolved_location")
-    time_range = state.get("resolved_time_range")
-    forecast = state.get("forecast_result")
-    observation = state.get("observation_result")
-
-    if location is None:
-        return {"answer": "Nie mogę udzielić prognozy — brak lokalizacji."}
-
-    if forecast is None:
-        return {"answer": "Nie udało się pobrać danych prognozy. Spróbuj ponownie za chwilę."}
-
-    if time_range is None:
-        return {"answer": "Nie udało się ustalić zakresu czasu. Spróbuj ponownie."}
-
-    if model_factory is not None:
-        try:
-            summary = _format_forecast_summary(location, time_range, forecast, observation)
-            chat = model_factory.create_chat_model()
-            prompt = (
-                "Na podstawie poniższego podsumowania danych pogodowych, "
-                " Przygotuj zwięzłą, naturalną odpowiedź po polsku "
-                f"dla lokalizacji {location.name}.\n\n"
-                f"{summary}\n\n"
-                "Odpowiedz krótko i naturalnie. Podaj lokalizację i zakres czasu."
-            )
-            response = await chat.ainvoke(prompt)
-            if hasattr(response, "content"):
-                answer = str(response.content)
-            else:
-                answer = _format_forecast_summary(location, time_range, forecast, observation)
-            return {"answer": answer}
-        except Exception:
-            pass
-
-    answer = _format_forecast_summary(location, time_range, forecast, observation)
-    return {"answer": answer}

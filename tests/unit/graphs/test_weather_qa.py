@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from freezegun import freeze_time
 
 from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
-from weather_agent.domain.errors import WeatherProviderResponseError
 from weather_agent.domain.locations import Location, LocationService
 from weather_agent.domain.weather import (
     ForecastPoint,
@@ -15,21 +15,13 @@ from weather_agent.domain.weather import (
     LocationRef,
     ObservationPoint,
     ObservationResult,
-    WeatherVariable,
 )
-from weather_agent.graphs.conversation import (
-    WeatherQADependencies,
-    compile_conversation_graph,
-)
+from weather_agent.graphs.conversation import compile_conversation_graph
 from weather_agent.graphs.nodes.weather_qa import (
-    _extract_location_reference,
     _extract_time_reference,
-    _format_forecast_summary,
-    _select_variables,
-    answer_weather_question_node,
-    call_weather_tools_node,
     resolve_location_node,
     resolve_time_range_node,
+    weather_agent_node,
 )
 from weather_agent.graphs.state import ConversationState
 
@@ -112,25 +104,26 @@ def _observation(location: LocationRef | None = None) -> ObservationResult:
     )
 
 
-def _state(**overrides: object) -> ConversationState:
-    base: ConversationState = {
-        "authorized_user_id": 12345,
-        "chat_id": 999,
-        "message_thread_id": None,
-        "context_key": "999",
-        "user_message": "jaka będzie jutro pogoda?",
-        "resolved_intent": None,
-        "resolved_location": None,
-        "resolved_time_range": None,
-        "forecast_result": None,
-        "observation_result": None,
-        "pending_confirmation": None,
-        "cel_expression": None,
-        "cel_validation_result": None,
-        "answer": None,
-        "error": None,
-    }
-    base.update(overrides)
+def _state(**overrides: Any) -> ConversationState:
+    base = ConversationState(
+        authorized_user_id=12345,
+        chat_id=999,
+        message_thread_id=None,
+        context_key="999",
+        user_message="jaka będzie jutro pogoda?",
+        resolved_intent=None,
+        resolved_location=None,
+        resolved_time_range=None,
+        forecast_result=None,
+        observation_result=None,
+        pending_confirmation=None,
+        cel_expression=None,
+        cel_validation_result=None,
+        answer=None,
+        error=None,
+    )
+    for k, v in overrides.items():
+        base[k] = v  # type: ignore[literal-required]
     return base
 
 
@@ -165,22 +158,71 @@ def _mock_observation_provider(obs: ObservationResult | None = None) -> AsyncMoc
     return provider
 
 
-class TestExtractLocationReference:
-    def test_extracts_location_with_w_prefix(self) -> None:
-        result = _extract_location_reference("jaka będzie pogoda w Chwarznie?")
-        assert result == "Chwarznie"
+def _mock_geocoder(loc: LocationRef | None = None) -> AsyncMock:
+    geocoder = AsyncMock()
+    geocoder.geocode = AsyncMock(return_value=loc or _loc())
+    return geocoder
 
-    def test_extracts_capitalized_location(self) -> None:
-        result = _extract_location_reference("jaka będzie pogoda w Warszawie jutro?")
-        assert result == "Warszawie"
 
-    def test_returns_none_for_no_location(self) -> None:
-        result = _extract_location_reference("jaka będzie jutro pogoda?")
-        assert result is None
+def _mock_model_factory_with_answer(
+    answer: str = "Jutro w Warszawie 18°C, wiatr 8 m/s.",
+) -> MagicMock:
+    mf = MagicMock()
+    chat = AsyncMock()
+    response_no_tools = MagicMock()
+    response_no_tools.content = answer
+    response_no_tools.tool_calls = []
+    chat.ainvoke = AsyncMock(return_value=response_no_tools)
+    chat.with_structured_output = MagicMock(return_value=chat)
+    mf.create_chat_model = MagicMock(return_value=chat)
+    return mf
 
-    def test_extracts_lowercase_location(self) -> None:
-        result = _extract_location_reference("pogoda w krakowie")
-        assert result == "krakowie"
+
+def _mock_model_factory_with_location(
+    location_name: str | None = "Warszawa",
+    focus: str | None = None,
+) -> MagicMock:
+    from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
+
+    mf = MagicMock()
+    chat = MagicMock()
+    extraction = _LocationExtraction(location_name=location_name, focus=focus)
+    structured = AsyncMock()
+    structured.ainvoke = AsyncMock(return_value=extraction)
+    chat.with_structured_output = MagicMock(return_value=structured)
+    mf.create_chat_model = MagicMock(return_value=chat)
+    return mf
+
+
+def _mock_model_factory_with_tool_call(
+    tool_name: str = "get_forecast",
+    tool_args: dict[str, Any] | None = None,
+    answer: str = "Jutro w Warszawie 18°C, wiatr 8 m/s.",
+) -> MagicMock:
+    mf = MagicMock()
+    chat = AsyncMock()
+
+    tool_call_response = MagicMock()
+    tool_call_response.content = ""
+    tool_call_response.tool_calls = [
+        {
+            "name": tool_name,
+            "args": tool_args or {
+                "location_name": "Warszawa",
+                "time_expression": "jutro",
+            },
+            "id": "tc_1",
+        },
+    ]
+
+    answer_response = MagicMock()
+    answer_response.content = answer
+    answer_response.tool_calls = []
+
+    chat.ainvoke = AsyncMock(side_effect=[tool_call_response, answer_response])
+    chat.with_structured_output = MagicMock(return_value=chat)
+    mf.create_chat_model = MagicMock(return_value=chat)
+    return mf
 
 
 class TestExtractTimeReference:
@@ -199,10 +241,12 @@ class TestExtractTimeReference:
 
     def test_extracts_dzis_wieczorem(self) -> None:
         result = _extract_time_reference("jak się ubrać na dziś wieczór?")
+        assert result is not None
         assert "wieczor" in result or "wieczór" in result
 
     def test_extracts_nastepne_3_dni(self) -> None:
         result = _extract_time_reference("czy będzie wietrznie przez następne 3 dni?")
+        assert result is not None
         assert "następne" in result or "nastepne" in result
 
     def test_returns_none_for_no_time(self) -> None:
@@ -210,94 +254,33 @@ class TestExtractTimeReference:
         assert result is None
 
 
-class TestSelectVariables:
-    def test_wind_keywords_include_wind_vars(self) -> None:
-        vars = _select_variables("czy będzie mocno wietrznie przez następne 3 dni?")
-        assert WeatherVariable.wind_speed_10m_ms in vars
-        assert WeatherVariable.wind_gusts_10m_ms in vars
-
-    def test_rain_keywords_include_rain_vars(self) -> None:
-        vars = _select_variables("czy będzie padać jutro?")
-        assert WeatherVariable.rain_mm in vars
-
-    def test_default_variables_include_temperature(self) -> None:
-        vars = _select_variables("jaka będzie jutro pogoda?")
-        assert WeatherVariable.temperature_2m_c in vars
-
-
-class TestFormatForecastSummary:
-    def test_basic_summary_includes_location(self) -> None:
-        loc = _loc("Chwarzno")
-        tr = _time_range(explanation="Jutro (2026-05-02)")
-        forecast = _forecast(location=loc)
-        summary = _format_forecast_summary(loc, tr, forecast)
-        assert "Chwarzno" in summary
-        assert "Jutro" in summary
-
-    def test_summary_includes_temperature_range(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        summary = _format_forecast_summary(loc, tr, forecast)
-        assert "°C" in summary
-
-    def test_summary_includes_wind(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        summary = _format_forecast_summary(loc, tr, forecast)
-        assert "m/s" in summary
-
-    def test_summary_includes_observation(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        obs = _observation(location=loc)
-        summary = _format_forecast_summary(loc, tr, forecast, obs)
-        assert "Obecnie" in summary
-        assert "Warszawa" in summary
-
-    def test_empty_forecast_points(self) -> None:
-        loc = _loc()
-        tr = _time_range(explanation="Dziś")
-        forecast = _forecast(location=loc, points=[])
-        summary = _format_forecast_summary(loc, tr, forecast)
-        assert "Brak danych" in summary
-
-
 class TestResolveLocationNode:
     @pytest.mark.asyncio
     async def test_resolves_named_location(self) -> None:
         loc_ref = _loc("Chwarzno", 54.4871, 18.4202)
         svc = _mock_location_service(resolved=loc_ref)
+        mf = _mock_model_factory_with_location(location_name="Chwarzno")
         state = _state(user_message="jaka będzie pogoda w Chwarznie jutro?")
-        result = await resolve_location_node(state, svc, user_id=1)
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
         assert result["resolved_location"] is not None
         assert result["resolved_location"].name == "Chwarzno"
 
     @pytest.mark.asyncio
-    async def test_single_default_location(self) -> None:
-        locations = [
-            Location(
-                id=1, name="Dom", aliases=[], latitude=52.22, longitude=21.01,
-                description=None, enabled=True,
-                created_at=datetime(2026, 1, 1, tzinfo=UTC),
-                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-            )
-        ]
-        svc = _mock_location_service(locations=locations)
-        svc.resolve_location = AsyncMock(return_value=None)
+    async def test_no_location_extracted_returns_error(self) -> None:
+        svc = _mock_location_service(locations=[])
+        mf = _mock_model_factory_with_location(location_name=None)
         state = _state(user_message="jaka będzie jutro pogoda?")
-        result = await resolve_location_node(state, svc, user_id=1)
-        assert result["resolved_location"] is not None
-        assert result["resolved_location"].name == "Dom"
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is None
+        assert result["error"] is not None
 
     @pytest.mark.asyncio
     async def test_no_locations_returns_error(self) -> None:
         svc = _mock_location_service(locations=[])
         svc.resolve_location = AsyncMock(return_value=None)
+        mf = _mock_model_factory_with_location(location_name=None)
         state = _state(user_message="jaka będzie jutro pogoda?")
-        result = await resolve_location_node(state, svc, user_id=1)
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
         assert result["resolved_location"] is None
         assert result["error"] is not None
         assert "lokalizacji" in result["error"].lower() or "lokalizacj" in result["error"].lower()
@@ -320,8 +303,9 @@ class TestResolveLocationNode:
         ]
         svc = _mock_location_service(locations=locations)
         svc.resolve_location = AsyncMock(return_value=None)
+        mf = _mock_model_factory_with_location(location_name=None)
         state = _state(user_message="jaka będzie jutro pogoda?")
-        result = await resolve_location_node(state, svc, user_id=1)
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
         assert result["resolved_location"] is None
         assert result["error"] is not None
 
@@ -371,304 +355,91 @@ class TestResolveTimeRangeNode:
         assert result["resolved_time_range"] == existing
 
 
-class TestCallWeatherToolsNode:
+class TestWeatherAgentNode:
     @pytest.mark.asyncio
-    async def test_fetches_forecast_successfully(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        fp = _mock_forecast_provider(forecast)
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-        )
-        result = await call_weather_tools_node(state, fp, observation_provider=None)
-        assert result["forecast_result"] is not None
-        assert result["error"] is None
-
-    @pytest.mark.asyncio
-    async def test_fetches_forecast_and_observation(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        obs = _observation(location=loc)
-        fp = _mock_forecast_provider(forecast)
-        op = _mock_observation_provider(obs)
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-        )
-        result = await call_weather_tools_node(state, fp, observation_provider=op)
-        assert result["forecast_result"] is not None
-        assert result["observation_result"] is not None
-
-    @pytest.mark.asyncio
-    async def test_provider_error_does_not_fabricate(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        fp = AsyncMock()
-        fp.get_forecast = AsyncMock(
-            side_effect=WeatherProviderResponseError("open-meteo", "Server error: 500")
-        )
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-        )
-        result = await call_weather_tools_node(state, fp, observation_provider=None)
-        assert result["forecast_result"] is None
-        assert result["error"] is not None
-        assert "open-meteo" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_missing_location_returns_error(self) -> None:
-        fp = _mock_forecast_provider()
-        state = _state(resolved_location=None, resolved_time_range=_time_range())
-        result = await call_weather_tools_node(state, fp, observation_provider=None)
-        assert result["forecast_result"] is None
-        assert result["error"] is not None
-        assert "lokalizacji" in result["error"].lower() or "localizacji" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_missing_time_range_returns_error(self) -> None:
-        fp = _mock_forecast_provider()
-        state = _state(resolved_location=_loc(), resolved_time_range=None)
-        result = await call_weather_tools_node(state, fp, observation_provider=None)
-        assert result["forecast_result"] is None
-        assert result["error"] is not None
-
-    @pytest.mark.asyncio
-    async def test_observation_failure_does_not_block_forecast(self) -> None:
-        loc = _loc()
-        tr = _time_range()
-        forecast = _forecast(location=loc)
-        fp = _mock_forecast_provider(forecast)
-        op = AsyncMock()
-        op.get_observations = AsyncMock(
-            side_effect=WeatherProviderResponseError("imgw", "Unavailable")
-        )
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-        )
-        result = await call_weather_tools_node(state, fp, observation_provider=op)
-        assert result["forecast_result"] is not None
-        assert result["observation_result"] is None
-        assert result["error"] is None
-
-
-class TestAnswerWeatherQuestionNode:
-    @pytest.mark.asyncio
-    async def test_generates_polish_answer(self) -> None:
-        loc = _loc("Chwarzno")
-        tr = _time_range(explanation="Jutro (2026-05-02)")
-        forecast = _forecast(location=loc)
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-            forecast_result=forecast,
-        )
-        result = await answer_weather_question_node(state, model_factory=None)
-        assert result["answer"] is not None
-        assert "Chwarzno" in result["answer"]
-        assert "Jutro" in result["answer"]
-
-    @pytest.mark.asyncio
-    async def test_error_in_state_produces_transparent_response(self) -> None:
+    async def test_returns_error_when_state_has_error(self) -> None:
         state = _state(error="Błąd dostawcy prognozy (open-meteo): Server error: 500")
-        result = await answer_weather_question_node(state, model_factory=None)
+        result = await weather_agent_node(
+            state,
+            model_factory=None,
+            forecast_provider=None,
+            observation_provider=None,
+            geocoder=None,
+            date_resolver=None,
+            location_service=None,
+            user_id=1,
+        )
         assert result["answer"] is not None
         assert "błąd" in result["answer"].lower() or "Błąd" in result["answer"]
 
     @pytest.mark.asyncio
-    async def test_missing_location_produces_message(self) -> None:
-        state = _state(resolved_location=None)
-        result = await answer_weather_question_node(state, model_factory=None)
-        assert result["answer"] is not None
-        assert (
-            "lokalizacji" in result["answer"].lower()
-            or "localizacji" in result["answer"].lower()
-        )
-
-    @pytest.mark.asyncio
-    async def test_missing_forecast_produces_message(self) -> None:
-        state = _state(resolved_location=_loc(), forecast_result=None)
-        result = await answer_weather_question_node(state, model_factory=None)
-        assert result["answer"] is not None
-        assert "prognozy" in result["answer"].lower() or "danych" in result["answer"].lower()
-
-    @pytest.mark.asyncio
-    async def test_answer_includes_location_and_time_range(self) -> None:
-        loc = _loc("Warszawa")
-        tr = _time_range(explanation="Jutro (2026-05-02)")
-        forecast = _forecast(location=loc)
-        state = _state(
-            resolved_location=loc,
-            resolved_time_range=tr,
-            forecast_result=forecast,
-        )
-        result = await answer_weather_question_node(state, model_factory=None)
-        assert "Warszawa" in result["answer"]
-        assert "Jutro" in result["answer"]
-
-
-class TestWeatherQAFullFlow:
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_full_weather_qa_flow_with_location(self) -> None:
-        loc = _loc("Chwarzno", 54.4871, 18.4202)
-        forecast = _forecast(location=loc)
-
-        ls = _mock_location_service(resolved=loc)
-        dr = DateResolver()
-        fp = _mock_forecast_provider(forecast)
-
-        deps = WeatherQADependencies(
-            location_service=ls,
-            date_resolver=dr,
-            forecast_provider=fp,
+    async def test_returns_unavailable_when_missing_deps(self) -> None:
+        state = _state()
+        result = await weather_agent_node(
+            state,
+            model_factory=None,
+            forecast_provider=None,
             observation_provider=None,
+            geocoder=None,
+            date_resolver=None,
+            location_service=None,
             user_id=1,
         )
-        compiled = compile_conversation_graph(deps)
+        assert "niedostępna" in result["answer"].lower()
 
+    @pytest.mark.asyncio
+    async def test_llm_returns_answer_directly(self) -> None:
+        mf = _mock_model_factory_with_answer("Jutro w Chwarznie 18°C, wiatr 8 m/s.")
+        fp = _mock_forecast_provider()
+        gc = _mock_geocoder()
+        dr = DateResolver()
+        ls = _mock_location_service()
         state = _state(user_message="jaka będzie pogoda w Chwarznie jutro?")
-        result = await compiled.ainvoke(state)
-        assert result["resolved_intent"] == "weather"
-        assert result["answer"] is not None
-        assert "Chwarzno" in result["answer"]
-
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_full_weather_qa_flow_weekend(self) -> None:
-        loc = _loc("Jeziorak", 53.77, 19.71)
-        forecast = _forecast(location=loc)
-
-        ls = _mock_location_service(resolved=loc)
-        dr = DateResolver()
-        fp = _mock_forecast_provider(forecast)
-
-        deps = WeatherQADependencies(
-            location_service=ls,
-            date_resolver=dr,
+        result = await weather_agent_node(
+            state,
+            model_factory=mf,
             forecast_provider=fp,
             observation_provider=None,
+            geocoder=gc,
+            date_resolver=dr,
+            location_service=ls,
             user_id=1,
         )
-        compiled = compile_conversation_graph(deps)
-
-        state = _state(user_message="jaka będzie pogoda w weekend?")
-        result = await compiled.ainvoke(state)
-        assert result["resolved_intent"] == "weather"
         assert result["answer"] is not None
+        assert "Chwarzno" in result["answer"] or "Chwarzni" in result["answer"]
 
     @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_wind_question_extracts_wind_vars(self) -> None:
-        loc = _loc()
-        forecast = _forecast(location=loc)
-
-        ls = _mock_location_service(resolved=loc)
+    async def test_llm_calls_tool_then_answers(self) -> None:
+        fp = _mock_forecast_provider()
+        gc = _mock_geocoder()
         dr = DateResolver()
-        fp = _mock_forecast_provider(forecast)
+        ls = _mock_location_service()
 
-        deps = WeatherQADependencies(
-            location_service=ls,
-            date_resolver=dr,
+        mf = _mock_model_factory_with_tool_call(
+            tool_name="get_forecast",
+            tool_args={"location_name": "Warszawa", "time_expression": "jutro"},
+            answer="Jutro w Warszawie 18°C, wiatr 8 m/s.",
+        )
+        state = _state(user_message="jaka będzie jutro pogoda w Warszawie?")
+        result = await weather_agent_node(
+            state,
+            model_factory=mf,
             forecast_provider=fp,
             observation_provider=None,
-            user_id=1,
-        )
-        compiled = compile_conversation_graph(deps)
-
-        state = _state(user_message="czy będzie mocno wietrznie przez następne 3 dni?")
-        result = await compiled.ainvoke(state)
-        assert result["resolved_intent"] == "weather"
-        assert result["answer"] is not None
-
-    @pytest.mark.asyncio
-    async def test_provider_error_flow_transparent(self) -> None:
-        loc = _loc("Warszawa")
-
-        ls = _mock_location_service(resolved=loc)
-        dr = DateResolver()
-        fp = AsyncMock()
-        fp.get_forecast = AsyncMock(
-            side_effect=WeatherProviderResponseError("open-meteo", "Server error: 500")
-        )
-
-        deps = WeatherQADependencies(
-            location_service=ls,
+            geocoder=gc,
             date_resolver=dr,
-            forecast_provider=fp,
-            observation_provider=None,
-            user_id=1,
-        )
-        compiled = compile_conversation_graph(deps)
-
-        state = _state(user_message="jaka będzie jutro pogoda?")
-        result = await compiled.ainvoke(state)
-        assert result["answer"] is not None
-        assert "błąd" in result["answer"].lower() or "Błąd" in result["answer"]
-
-    @pytest.mark.asyncio
-    async def test_majowka_question(self) -> None:
-        loc = _loc()
-        forecast = _forecast(location=loc)
-
-        ls = _mock_location_service(resolved=loc)
-        dr = DateResolver()
-        fp = _mock_forecast_provider(forecast)
-
-        deps = WeatherQADependencies(
             location_service=ls,
-            date_resolver=dr,
-            forecast_provider=fp,
-            observation_provider=None,
             user_id=1,
         )
-        compiled = compile_conversation_graph(deps)
-
-        state = _state(user_message="jaka będzie pogoda na majówkę?")
-        result = await compiled.ainvoke(state)
         assert result["answer"] is not None
-
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 14:00:00", tz_offset=2)
-    async def test_dzis_wieczor_question(self) -> None:
-        loc = _loc()
-        forecast = _forecast(location=loc)
-
-        ls = _mock_location_service(resolved=loc)
-        dr = DateResolver()
-        fp = _mock_forecast_provider(forecast)
-
-        deps = WeatherQADependencies(
-            location_service=ls,
-            date_resolver=dr,
-            forecast_provider=fp,
-            observation_provider=None,
-            user_id=1,
-        )
-        compiled = compile_conversation_graph(deps)
-
-        state = _state(user_message="jak się ubrać na dziś wieczór?")
-        result = await compiled.ainvoke(state)
-        assert result["answer"] is not None
+        assert "Warszaw" in result["answer"]
 
 
 class TestStubGraphBackwardsCompat:
     @pytest.mark.asyncio
     async def test_stub_graph_still_works(self) -> None:
         compiled = compile_conversation_graph()
-        loc = _loc()
-        tr = _time_range()
-        fr = _forecast(location=loc)
-        state = _state(
-            user_message="jaka będzie jutro pogoda?",
-            resolved_location=loc,
-            resolved_time_range=tr,
-            forecast_result=fr,
-        )
+        state = _state(user_message="jaka będzie jutro pogoda?")
         result = await compiled.ainvoke(state)
         assert result["resolved_intent"] == "weather"
         assert result["answer"] is not None

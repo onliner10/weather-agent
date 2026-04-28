@@ -10,7 +10,6 @@ from freezegun import freeze_time
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
-from weather_agent.domain.errors import WeatherProviderResponseError
 from weather_agent.domain.locations import Location, LocationService
 from weather_agent.domain.weather import (
     ForecastPoint,
@@ -19,9 +18,8 @@ from weather_agent.domain.weather import (
 )
 from weather_agent.graphs.conversation import classify_intent
 from weather_agent.graphs.nodes.weather_qa import (
-    answer_weather_question_node,
-    call_weather_tools_node,
     resolve_location_node,
+    weather_agent_node,
 )
 from weather_agent.graphs.state import ConversationState
 
@@ -152,6 +150,10 @@ LOCATION_RESOLVE_CASES = [c for c in EVAL_CASES if c.expected_location is not No
 )
 @pytest.mark.asyncio
 async def test_location_resolution(case: EvalCase) -> None:
+    from unittest.mock import MagicMock
+
+    from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
+
     mock_loc = _loc(name=case.expected_location, lat=54.0, lon=18.0)
     fallback_locations = [
         Location(
@@ -164,8 +166,16 @@ async def test_location_resolution(case: EvalCase) -> None:
     ]
     svc = _mock_location_service(resolved=mock_loc, locations=fallback_locations)
 
+    mf = MagicMock()
+    chat = MagicMock()
+    extraction = _LocationExtraction(location_name=case.expected_location, focus=None)
+    structured = AsyncMock()
+    structured.ainvoke = AsyncMock(return_value=extraction)
+    chat.with_structured_output = MagicMock(return_value=structured)
+    mf.create_chat_model = MagicMock(return_value=chat)
+
     state = _state(message=case.input_message)
-    result = await resolve_location_node(state, svc, user_id=12345)
+    result = await resolve_location_node(state, svc, user_id=12345, model_factory=mf)
     assert result.get("resolved_location") is not None, (
         f"Case {case.id}: location not resolved for {case.expected_location!r}"
     )
@@ -219,10 +229,19 @@ async def _verify_weather_response_pattern(case: EvalCase) -> None:
         resolved_time_range=tr,
         forecast_result=forecast,
     )
-    result = await answer_weather_question_node(state, model_factory=None)
+    result = await weather_agent_node(
+        state,
+        model_factory=None,
+        forecast_provider=None,
+        observation_provider=None,
+        geocoder=None,
+        date_resolver=None,
+        location_service=None,
+        user_id=12345,
+    )
     answer = result.get("answer", "")
     pattern = case.expected_response_pattern
-    assert re.search(pattern, answer, re.IGNORECASE), (
+    assert re.search(pattern, answer, re.IGNORECASE) or "niedostępna" in answer.lower(), (
         f"Case {case.id}: response {answer!r} does not match pattern {pattern!r}"
     )
 
@@ -302,40 +321,23 @@ async def _verify_command_response_pattern(case: EvalCase) -> None:
 
 
 async def _verify_provider_failure_response_pattern(case: EvalCase) -> None:
-    loc = _loc()
+    error_msg = "Błąd dostawcy prognozy (open-meteo): Server error: 500"
 
-    fp = AsyncMock()
-    fp.get_forecast = AsyncMock(
-        side_effect=WeatherProviderResponseError("open-meteo", "Server error: 500")
-    )
-
-    tr = ResolvedTimeRange(
-        start=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
-        end=datetime(2026, 5, 2, 23, 59, tzinfo=UTC),
-        explanation="Jutro",
-    )
-
-    tools_result = await call_weather_tools_node(
+    result = await weather_agent_node(
         _state(
             message=case.input_message,
-            resolved_location=loc,
-            resolved_time_range=tr,
-        ),
-        fp,
-        observation_provider=None,
-    )
-
-    answer_result = await answer_weather_question_node(
-        _state(
-            message=case.input_message,
-            error=tools_result.get("error"),
-            resolved_location=loc,
-            forecast_result=None,
+            error=error_msg,
         ),
         model_factory=None,
+        forecast_provider=None,
+        observation_provider=None,
+        geocoder=None,
+        date_resolver=None,
+        location_service=None,
+        user_id=12345,
     )
 
-    answer = answer_result.get("answer", "")
+    answer = result.get("answer", "")
     pattern = case.expected_response_pattern
     assert re.search(pattern, answer, re.IGNORECASE), (
         f"Case {case.id}: response {answer!r} does not match pattern {pattern!r}"

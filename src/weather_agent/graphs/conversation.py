@@ -16,10 +16,9 @@ from weather_agent.graphs.nodes.rule_management import (
 from weather_agent.graphs.nodes.weather_qa import (
     ForecastProvider,
     ObservationProvider,
-    answer_weather_question_node,
-    call_weather_tools_node,
     resolve_location_node,
     resolve_time_range_node,
+    weather_agent_node,
 )
 from weather_agent.graphs.state import ConversationState
 from weather_agent.infrastructure.geocoder import Geocoder
@@ -71,14 +70,13 @@ async def route_to_rule_management(state: ConversationState) -> dict[str, Any]:
 
 
 async def route_to_command_or_help(state: ConversationState) -> dict[str, Any]:
-    return {}
+    return {"answer": "Pomoc: wpisz /start lub /help aby uzyskać informacje."}
 
 
-async def call_weather_tools_stub(state: ConversationState) -> dict[str, Any]:
-    return {
-        "forecast_result": state.get("forecast_result"),
-        "observation_result": state.get("observation_result"),
-    }
+async def weather_agent_stub(state: ConversationState) -> dict[str, Any]:
+    if state.get("error"):
+        return {"answer": f"Przepraszam, wystąpił błąd: {state['error']}"}
+    return {"answer": "Przepraszam, usługa pogodowa jest niedostępna."}
 
 
 async def propose_cel_rule_stub(state: ConversationState) -> dict[str, Any]:
@@ -90,7 +88,7 @@ async def require_user_confirmation_stub(state: ConversationState) -> dict[str, 
 
 
 async def persist_rule_change_stub(state: ConversationState) -> dict[str, Any]:
-    return {}
+    return {"answer": "Reguła została zapisana."}
 
 
 async def save_thread_context(state: ConversationState) -> dict[str, Any]:
@@ -127,6 +125,8 @@ class ConversationDeps:
             for v in (
                 self.date_resolver,
                 self.forecast_provider,
+                self.model_factory,
+                self.geocoder,
             )
         )
 
@@ -155,26 +155,6 @@ class ConversationDeps:
         )
 
 
-class WeatherQADependencies(ConversationDeps):
-    def __init__(
-        self,
-        location_service: LocationService | None = None,
-        date_resolver: DateResolver | None = None,
-        forecast_provider: ForecastProvider | None = None,
-        observation_provider: ObservationProvider | None = None,
-        model_factory: ModelFactory | None = None,
-        user_id: int = 0,
-    ) -> None:
-        super().__init__(
-            location_service=location_service,
-            date_resolver=date_resolver,
-            forecast_provider=forecast_provider,
-            observation_provider=observation_provider,
-            model_factory=model_factory,
-            user_id=user_id,
-        )
-
-
 def _intent_router(state: ConversationState) -> str:
     intent = state.get("resolved_intent", "weather")
     if intent == "weather":
@@ -189,12 +169,12 @@ def _intent_router(state: ConversationState) -> str:
 def _stub_answer_user(state: ConversationState) -> dict[str, Any]:
     if state.get("error"):
         return {"answer": f"Przepraszam, wystąpił błąd: {state['error']}"}
-    if state.get("resolved_intent") == "weather" and state.get("forecast_result"):
+    if state.get("resolved_intent") == "weather":
         return {"answer": "Prognoza pogody jest dostępna."}
     if state.get("resolved_intent") == "rule" and state.get("cel_expression"):
         return {"answer": "Reguła została zapisana."}
     if state.get("resolved_intent") in ("command", "help"):
-        return {"answer": "Pomoc: wpisze /start lub /help aby uzyskać informacje."}
+        return {"answer": "Pomoc: wpisz /start lub /help aby uzyskać informacje."}
     return {"answer": "Przepraszam, nie mogłem przetworzyć zapytania."}
 
 
@@ -216,33 +196,39 @@ def build_conversation_graph(
         uid = deps.user_id
         op = deps.observation_provider
         mf = deps.model_factory
+        assert mf is not None
         gc = deps.geocoder
+        assert gc is not None
 
         async def _resolve_location(state: ConversationState) -> dict[str, Any]:
-            return await resolve_location_node(state, ls, uid, geocoder=gc)
+            return await resolve_location_node(state, ls, uid, geocoder=gc, model_factory=mf)
 
         async def _resolve_time_range(state: ConversationState) -> dict[str, Any]:
             return await resolve_time_range_node(state, dr)
 
-        async def _call_weather_tools(state: ConversationState) -> dict[str, Any]:
-            return await call_weather_tools_node(state, fp, op)
-
-        async def _answer_user(state: ConversationState) -> dict[str, Any]:
-            return await answer_weather_question_node(state, mf)
+        async def _weather_agent(state: ConversationState) -> dict[str, Any]:
+            return await weather_agent_node(
+                state,
+                model_factory=mf,
+                forecast_provider=fp,
+                observation_provider=op,
+                geocoder=gc,
+                date_resolver=dr,
+                location_service=ls,
+                user_id=uid,
+            )
 
         graph.add_node("resolve_location", _resolve_location)
         graph.add_node("resolve_time_range", _resolve_time_range)
-        graph.add_node("call_weather_tools", _call_weather_tools)
-        graph.add_node("answer_user", _answer_user)
+        graph.add_node("weather_agent", _weather_agent)
     else:
         graph.add_node("resolve_location", resolve_location_stub)
         graph.add_node("resolve_time_range", resolve_time_range_stub)
-        graph.add_node("call_weather_tools", call_weather_tools_stub)
-        graph.add_node("answer_user", _stub_answer_user)
+        graph.add_node("weather_agent", weather_agent_stub)
 
     if deps is not None and deps.has_rule_deps:
-        mf = deps.model_factory
-        assert mf is not None
+        mf_r = deps.model_factory
+        assert mf_r is not None
         cel = deps.cel_evaluator
         assert cel is not None
         rs = deps.rule_service
@@ -251,7 +237,7 @@ def build_conversation_graph(
         assert rls is not None
 
         async def _propose_cel_rule(state: ConversationState) -> dict[str, Any]:
-            return await propose_cel_rule_node(state, mf, cel)
+            return await propose_cel_rule_node(state, mf_r, cel)
 
         async def _require_user_confirmation(state: ConversationState) -> dict[str, Any]:
             return await require_user_confirmation_node(state)
@@ -267,8 +253,6 @@ def build_conversation_graph(
         graph.add_node("require_user_confirmation", require_user_confirmation_stub)
         graph.add_node("persist_rule_change", persist_rule_change_stub)
 
-    graph.add_node("route_to_weather_question", route_to_weather_question)
-    graph.add_node("route_to_rule_management", route_to_rule_management)
     graph.add_node("route_to_command_or_help", route_to_command_or_help)
     graph.add_node("save_thread_context", save_thread_context)
 
@@ -293,17 +277,16 @@ def build_conversation_graph(
         "resolve_time_range",
         _intent_router,
         {
-            "weather_path": "call_weather_tools",
+            "weather_path": "weather_agent",
             "rule_path": "propose_cel_rule",
         },
     )
 
-    graph.add_edge("call_weather_tools", "answer_user")
-    graph.add_edge("route_to_command_or_help", "answer_user")
+    graph.add_edge("weather_agent", "save_thread_context")
+    graph.add_edge("route_to_command_or_help", "save_thread_context")
     graph.add_edge("propose_cel_rule", "require_user_confirmation")
     graph.add_edge("require_user_confirmation", "persist_rule_change")
-    graph.add_edge("persist_rule_change", "answer_user")
-    graph.add_edge("answer_user", "save_thread_context")
+    graph.add_edge("persist_rule_change", "save_thread_context")
     graph.add_edge("save_thread_context", END)
 
     return graph
