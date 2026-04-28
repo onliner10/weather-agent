@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "weather_agent",
+  "project_id": "d834e5b3-430f-4729-a258-2bd8d4b0baa7"
+}
