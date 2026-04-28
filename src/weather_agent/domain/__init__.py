@@ -1,6 +1,17 @@
 """Domain package for core application contracts."""
 
 from weather_agent.domain.auth import AuthorizationService, AuthorizedUserRepo, UnauthorizedError
+from weather_agent.domain.cel import (
+    ALL_ALLOWED_FUNCTION_NAMES,
+    ALLOWED_FUNCTIONS,
+    ALLOWED_METRICS,
+    CELEvalError,
+    CELEvaluationResult,
+    CELEvaluator,
+    ValidationResult,
+    get_allowlist_for_prompt,
+    validate_expression,
+)
 from weather_agent.domain.errors import (
     WeatherProviderError,
     WeatherProviderResponseError,
@@ -28,8 +39,14 @@ from weather_agent.domain.weather import (
 )
 
 __all__ = [
+    "ALL_ALLOWED_FUNCTION_NAMES",
+    "ALLOWED_FUNCTIONS",
+    "ALLOWED_METRICS",
     "AuthorizationService",
     "AuthorizedUserRepo",
+    "CELEvalError",
+    "CELEvaluationResult",
+    "CELEvaluator",
     "ForecastPoint",
     "ForecastProvider",
     "ForecastResolution",
@@ -43,6 +60,7 @@ __all__ = [
     "ObservationResult",
     "TimeRange",
     "UnauthorizedError",
+    "ValidationResult",
     "WarningCategory",
     "WarningSeverity",
     "WeatherProviderError",
@@ -52,4 +70,6 @@ __all__ = [
     "WeatherVariable",
     "WeatherWarning",
     "WarningProvider",
+    "get_allowlist_for_prompt",
+    "validate_expression",
 ]
