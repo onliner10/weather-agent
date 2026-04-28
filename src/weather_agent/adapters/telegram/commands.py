@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+from datetime import datetime
+
+from weather_agent import __version__
 from weather_agent.domain.auth import AuthorizationService
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules import NotificationRuleService, strip_hash_prefix
+from weather_agent.observability.langsmith_tracing import LangSmithTracing
+
+
+class SystemStatus:
+    def __init__(
+        self,
+        db_connected: bool = False,
+        scheduler_status: str = "stopped",
+        last_forecast_fetch: datetime | None = None,
+        last_rule_evaluation: datetime | None = None,
+        provider_status: dict[str, str] | None = None,
+    ) -> None:
+        self.db_connected = db_connected
+        self.scheduler_status = scheduler_status
+        self.last_forecast_fetch = last_forecast_fetch
+        self.last_rule_evaluation = last_rule_evaluation
+        self.provider_status = provider_status or {}
 
 
 class CommandContext:
@@ -14,6 +34,7 @@ class CommandContext:
         location_service: LocationService,
         rule_service: NotificationRuleService,
         auth_service: AuthorizationService,
+        system_status: SystemStatus | None = None,
     ) -> None:
         self.user_id = user_id
         self.chat_id = chat_id
@@ -21,6 +42,7 @@ class CommandContext:
         self.location_service = location_service
         self.rule_service = rule_service
         self.auth_service = auth_service
+        self.system_status = system_status
 
 
 async def handle_lokalizacje(ctx: CommandContext) -> str:
@@ -163,5 +185,32 @@ async def handle_status(ctx: CommandContext) -> str:
     ]
     if dry_run_rules:
         lines.append(f"  Dry-run: {len(dry_run_rules)} reguł")
-    lines.append("  ✅ Bot działa poprawnie")
+
+    if ctx.system_status is not None:
+        db_icon = "✅" if ctx.system_status.db_connected else "❌"
+        lines.append(f"  Baza danych: {db_icon}")
+        lines.append(f"  Scheduler: {ctx.system_status.scheduler_status}")
+        if ctx.system_status.last_forecast_fetch is not None:
+            fmt = ctx.system_status.last_forecast_fetch
+            lines.append(f"  Ostatni pobór prognozy: {fmt:%Y-%m-%d %H:%M UTC}")
+        else:
+            lines.append("  Ostatni pobór prognozy: brak")
+        if ctx.system_status.last_rule_evaluation is not None:
+            fmt = ctx.system_status.last_rule_evaluation
+            lines.append(f"  Ostatnia ewaluacja reguł: {fmt:%Y-%m-%d %H:%M UTC}")
+        else:
+            lines.append("  Ostatnia ewaluacja reguł: brak")
+        if ctx.system_status.provider_status:
+            for provider, status in ctx.system_status.provider_status.items():
+                icon = "✅" if status == "ok" else "❌"
+                lines.append(f"  {provider}: {icon} {status}")
+        langsmith = "włączony" if LangSmithTracing.is_enabled() else "wyłączony"
+        lines.append(f"  LangSmith: {langsmith}")
+        lines.append(f"  Wersja: {__version__}")
+        if ctx.system_status.db_connected:
+            lines.append("  ✅ Bot działa poprawnie")
+        else:
+            lines.append("  ⚠️ Problemy z bazą danych")
+    else:
+        lines.append("  ✅ Bot działa poprawnie")
     return "\n".join(lines)
