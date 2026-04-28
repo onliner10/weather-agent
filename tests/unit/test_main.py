@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+
+class TestCLIParsing:
+    def test_bot_subcommand_parses(self) -> None:
+        from weather_agent.__main__ import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["bot"])
+        assert args.command == "bot"
+        assert hasattr(args, "func")
+
+    def test_worker_subcommand_parses(self) -> None:
+        from weather_agent.__main__ import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["worker"])
+        assert args.command == "worker"
+        assert hasattr(args, "func")
+
+    def test_missing_subcommand_raises(self) -> None:
+        from weather_agent.__main__ import _build_parser
+
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([])
+
+    def test_invalid_subcommand_raises(self) -> None:
+        from weather_agent.__main__ import _build_parser
+
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["nonexistent"])
+
+
+class TestMainEntryPoint:
+    def test_main_dispatches_to_subcommand(self) -> None:
+        from weather_agent.__main__ import main
+
+        mock_func = MagicMock()
+        with patch("weather_agent.__main__._build_parser") as mock_parser_cls:
+            mock_parser = MagicMock()
+            mock_parser_cls.return_value = mock_parser
+            mock_args = MagicMock()
+            mock_args.func = mock_func
+            mock_parser.parse_args.return_value = mock_args
+            main()
+            mock_func.assert_called_once_with(mock_args)
+
+    def test_python_m_weather_agent_shows_help(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "weather_agent", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert "weather_agent" in result.stdout
+        assert "bot" in result.stdout
+        assert "worker" in result.stdout
+
+
+class TestRunMigrations:
+    def test_run_migrations_calls_alembic_upgrade(self) -> None:
+        from weather_agent.__main__ import run_migrations
+
+        with patch("alembic.command.upgrade") as mock_upgrade:
+            run_migrations()
+            mock_upgrade.assert_called_once()
+            args = mock_upgrade.call_args
+            assert args[0][1] == "head"
+
+    def test_run_migrations_propagates_errors(self) -> None:
+        from weather_agent.__main__ import run_migrations
+
+        with patch(
+            "alembic.command.upgrade",
+            side_effect=RuntimeError("migration error"),
+        ):
+            with pytest.raises(RuntimeError, match="migration error"):
+                run_migrations()
+
+
+class TestDatabaseUrlNormalization:
+    def test_normalizes_postgresql_url(self) -> None:
+        from weather_agent.__main__ import _normalize_database_url
+
+        url = "postgresql://user:pass@localhost/db"
+        result = _normalize_database_url(url)
+        assert result == "postgresql+psycopg_async://user:pass@localhost/db"
+
+    def test_normalizes_postgres_url(self) -> None:
+        from weather_agent.__main__ import _normalize_database_url
+
+        url = "postgres://user:pass@localhost/db"
+        result = _normalize_database_url(url)
+        assert result == "postgresql+psycopg_async://user:pass@localhost/db"
+
+    def test_normalizes_psycopg_url(self) -> None:
+        from weather_agent.__main__ import _normalize_database_url
+
+        url = "postgresql+psycopg://user:pass@localhost/db"
+        result = _normalize_database_url(url)
+        assert result == "postgresql+psycopg_async://user:pass@localhost/db"
+
+    def test_leaves_async_url_unchanged(self) -> None:
+        from weather_agent.__main__ import _normalize_database_url
+
+        url = "postgresql+psycopg_async://user:pass@localhost/db"
+        result = _normalize_database_url(url)
+        assert result == url
+
+    def test_leaves_other_schemes_unchanged(self) -> None:
+        from weather_agent.__main__ import _normalize_database_url
+
+        url = "sqlite+aiosqlite:///test.db"
+        result = _normalize_database_url(url)
+        assert result == url
+
+
+class TestMissingConfiguration:
+    def test_missing_env_vars_exits_with_error(self) -> None:
+        from weather_agent.__main__ import _BotServices
+
+        with patch(
+            "weather_agent.settings.load_settings",
+            side_effect=Exception("Validation error: database_url"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _BotServices()
+            assert exc_info.value.code == 1
+
+    def test_missing_settings_produces_clear_error_message(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from weather_agent.__main__ import _BotServices
+
+        with patch(
+            "weather_agent.settings.load_settings",
+            side_effect=Exception("field required"),
+        ):
+            with pytest.raises(SystemExit):
+                _BotServices()
+            captured = capsys.readouterr()
+            assert "Error loading configuration" in captured.err
+            assert "environment variables" in captured.err
+
+
+class TestCmdBot:
+    def test_cmd_bot_calls_run_migrations(self) -> None:
+        from weather_agent.__main__ import cmd_bot
+
+        mock_services = MagicMock()
+        mock_services.settings.telegram = MagicMock()
+        mock_services.settings.telegram.allowed_user_ids = ()
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.__main__.run_migrations") as mock_migrate,
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+        ):
+            mock_asyncio.new_event_loop.return_value = MagicMock()
+            mock_asyncio.run = MagicMock()
+
+            cmd_bot(MagicMock())
+            mock_migrate.assert_called_once()
+
+    def test_cmd_bot_creates_and_runs_telegram_bot(self) -> None:
+        from weather_agent.__main__ import cmd_bot
+
+        mock_services = MagicMock()
+        mock_services.settings.telegram = MagicMock()
+        mock_services.settings.telegram.allowed_user_ids = ()
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.__main__.run_migrations"),
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
+        ):
+            mock_bot = MagicMock()
+            mock_bot_cls.return_value = mock_bot
+            mock_loop = MagicMock()
+            mock_asyncio.new_event_loop.return_value = mock_loop
+            mock_asyncio.run = MagicMock()
+
+            cmd_bot(MagicMock())
+            mock_bot.setup.assert_called_once()
+            mock_bot.run.assert_called_once()
+
+    def test_cmd_bot_migration_failure_is_warned(self) -> None:
+        from weather_agent.__main__ import cmd_bot
+
+        mock_services = MagicMock()
+        mock_services.settings.telegram = MagicMock()
+        mock_services.settings.telegram.allowed_user_ids = ()
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch(
+                "weather_agent.__main__.run_migrations",
+                side_effect=RuntimeError("db not found"),
+            ),
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
+        ):
+            mock_bot = MagicMock()
+            mock_bot_cls.return_value = mock_bot
+            mock_asyncio.new_event_loop.return_value = MagicMock()
+            mock_asyncio.run = MagicMock()
+
+            cmd_bot(MagicMock())
+            mock_bot.setup.assert_called_once()
+
+
+class TestCmdWorker:
+    def test_cmd_worker_calls_run_migrations(self) -> None:
+        from weather_agent.__main__ import cmd_worker
+
+        mock_services = MagicMock()
+        mock_services.settings.scheduler = MagicMock()
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.__main__.run_migrations") as mock_migrate,
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+        ):
+            mock_asyncio.run = MagicMock()
+            cmd_worker(MagicMock())
+            mock_migrate.assert_called_once()
+
+
+class TestCreateEngine:
+    def test_create_engine_returns_async_engine(self) -> None:
+        from sqlalchemy.ext.asyncio import AsyncEngine as AE
+
+        from weather_agent.__main__ import _create_engine
+
+        engine = _create_engine("sqlite+aiosqlite:///test.db")
+        assert isinstance(engine, AE)
+
+    def test_create_session_factory_returns_sessionmaker(self) -> None:
+        from weather_agent.__main__ import _create_engine, _create_session_factory
+
+        engine = _create_engine("sqlite+aiosqlite:///test.db")
+        factory = _create_session_factory(engine)
+        assert factory is not None
+
+
+class TestSessionContext:
+    @pytest.mark.asyncio
+    async def test_session_context_commits_on_success(self) -> None:
+        from weather_agent.__main__ import _session_context
+
+        engine = create_async_engine("sqlite+aiosqlite:///test.db")
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False,
+        )
+
+        async with _session_context(factory) as session:
+            assert session is not None
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_session_context_rolls_back_on_error(self) -> None:
+        from weather_agent.__main__ import _session_context
+
+        engine = create_async_engine("sqlite+aiosqlite:///test.db")
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False,
+        )
+
+        with pytest.raises(ValueError):
+            async with _session_context(factory) as session:
+                assert session is not None
+                raise ValueError("test error")
+
+        await engine.dispose()
