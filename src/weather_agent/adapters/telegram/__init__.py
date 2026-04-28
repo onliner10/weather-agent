@@ -6,5 +6,12 @@ from weather_agent.adapters.telegram.context import (
     TelegramContext,
     TelegramContextService,
 )
+from weather_agent.adapters.telegram.sender import TelegramNotificationSender
 
-__all__ = ["ContextKey", "TelegramBot", "TelegramContext", "TelegramContextService"]
+__all__ = [
+    "ContextKey",
+    "TelegramBot",
+    "TelegramContext",
+    "TelegramContextService",
+    "TelegramNotificationSender",
+]
