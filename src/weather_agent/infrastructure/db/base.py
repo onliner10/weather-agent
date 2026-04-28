@@ -273,6 +273,7 @@ class NotificationRule(Base):
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    snooze_until: Mapped[datetime | None] = mapped_column(nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -302,8 +303,8 @@ class NotificationEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     short_id: Mapped[str] = mapped_column(String(10), unique=True)
-    rule_id: Mapped[int] = mapped_column(
-        ForeignKey("notification_rules.id")
+    rule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("notification_rules.id", ondelete="SET NULL"), nullable=True
     )
     evaluation_run_id: Mapped[int | None] = mapped_column(
         ForeignKey("rule_evaluation_runs.id"), nullable=True
@@ -321,7 +322,7 @@ class NotificationEvent(Base):
     message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
-    rule: Mapped[NotificationRule] = relationship(
+    rule: Mapped[NotificationRule | None] = relationship(
         back_populates="notification_events"
     )
 
