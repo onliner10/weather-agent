@@ -21,4 +21,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN useradd --system --create-home appuser
 USER appuser
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD python -c "from weather_agent import __version__; print(__version__)" || exit 1
+
 ENTRYPOINT ["python", "-m", "weather_agent"]

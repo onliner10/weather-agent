@@ -18,6 +18,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   weather-agent-worker:
     build:
@@ -32,11 +37,23 @@ services:
     environment:
       WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from weather_agent import __version__; print(__version__)\""]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   postgres-timescaledb:
     image: timescale/timescaledb:latest-pg16
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - pgbackups:/backups
     environment:
       POSTGRES_DB: weather_agent
       POSTGRES_USER: weather_agent
@@ -50,6 +67,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:
+  pgbackups:
