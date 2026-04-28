@@ -158,3 +158,41 @@ For more details, see README.md and docs/QUICKSTART.md.
 - If push fails, resolve and retry until it succeeds
 
 <!-- END BEADS INTEGRATION -->
+
+## Fresh Session Workflow
+
+Start every Beads task in a fresh session and rebuild context from the repository:
+
+```bash
+bd ready --json
+bd show <issue-id>
+bd dep tree <issue-id>
+```
+
+Rules for task execution:
+
+- Work on exactly one Beads issue at a time.
+- Read the full issue description and acceptance criteria before editing code.
+- Do not assume memory from previous sessions; inspect the current files, docs, and dependency graph first.
+- If you discover follow-up work, create a new Beads issue and link it with `discovered-from:<parent-id>`.
+- Run the relevant tests before closing the issue.
+- Close the issue with a concise completion reason once the work and quality gates are done.
+
+## Build And Test
+
+```bash
+uv sync
+uv run pytest
+uv run ruff check .
+uv run mypy
+```
+
+## Architecture Constraints
+
+- Keep the package layout rooted at `src/weather_agent/` with explicit boundaries between domain, adapters, infrastructure, and graphs.
+- Treat Telegram as the only MVP UI and preserve topic-aware context handling using `chat_id + message_thread_id` with `chat_id` fallback.
+- Keep the MVP Polish-only and default to the `Europe/Warsaw` timezone unless a Beads issue explicitly expands scope.
+- LLMs may propose or edit rules, but runtime rule evaluation must remain deterministic and must never call the LLM.
+- Preserve the provider split between forecast, observation, and warning contracts so later adapters remain swappable.
+
+Read [docs/domain-vocabulary.md](/home/mateusz/git/weather-agent/docs/domain-vocabulary.md) and the ADRs in [docs/adr/](/home/mateusz/git/weather-agent/docs/adr) before changing interfaces.

@@ -3,3 +3,18 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# Python
+.uv-bootstrap/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# Local configuration
+.env
