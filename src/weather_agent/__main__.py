@@ -165,10 +165,8 @@ async def _make_message_handler(services: _BotServices) -> Any:
 
         message_id = update.message.message_id
         reply_to_message_id = None
-        reply_to_message_text = None
         if update.message.reply_to_message is not None:
             reply_to_message_id = update.message.reply_to_message.message_id
-            reply_to_message_text = update.message.reply_to_message.text
 
         context_key = f"{chat_id}:{thread_id}" if thread_id else str(chat_id)
 
@@ -211,7 +209,6 @@ async def _make_message_handler(services: _BotServices) -> Any:
                     "user_message": text,
                     "message_id": message_id,
                     "reply_to_message_id": reply_to_message_id,
-                    "reply_to_message_text": reply_to_message_text,
                 }
 
                 graph_config = build_graph_config(state)

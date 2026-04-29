@@ -310,12 +310,16 @@ class TestResolveLocationNode:
         assert result["error"] is not None
 
     @pytest.mark.asyncio
-    async def test_preresolved_location_passed_through(self) -> None:
-        loc_ref = _loc("Chwarzno")
+    async def test_follow_up_without_location_returns_none(self) -> None:
         svc = _mock_location_service()
-        state = _state(resolved_location=loc_ref)
-        result = await resolve_location_node(state, svc, user_id=1)
-        assert result["resolved_location"] == loc_ref
+        mf = _mock_model_factory_with_location(location_name=None)
+        state = _state(
+            user_message="a będzie mocno wiało?",
+            reply_context_turns=[{"role": "user", "text": "jaka pogoda w Gdańsku?"}],
+        )
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is None
+        assert "error" not in result
 
 
 class TestResolveTimeRangeNode:

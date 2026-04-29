@@ -7,7 +7,7 @@ from typing import Any
 from langsmith import trace
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
-from weather_agent.domain.date_resolver import DateResolver
+from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.rules.service import NotificationRuleService
@@ -120,20 +120,42 @@ def _make_load_thread_context(
             reply_to_message_id = state.get("reply_to_message_id")
 
             try:
-                turns = await memory_service.load_turns(context_key)
-                if turns:
-                    updates["recent_context"] = turns
+                pending = await memory_service.get_pending_confirmation(context_key)
+                if pending is not None:
+                    updates["pending_confirmation"] = pending
 
                 if reply_to_message_id is not None:
+                    turns = await memory_service.load_turns(context_key)
                     anchor = await memory_service.find_turn_by_message_id(
                         context_key, reply_to_message_id
                     )
                     if anchor is not None:
-                        updates["reply_anchor"] = anchor
+                        loc = anchor.get("resolved_location")
+                        if loc and isinstance(loc, dict):
+                            updates["resolved_location"] = LocationRef(**loc)
+                        tr = anchor.get("resolved_time_range")
+                        if tr and isinstance(tr, dict):
+                            updates["resolved_time_range"] = ResolvedTimeRange(**tr)
+                        if anchor.get("user_focus"):
+                            updates["user_focus"] = anchor["user_focus"]
 
-                pending = await memory_service.get_pending_confirmation(context_key)
-                if pending is not None:
-                    updates["pending_confirmation"] = pending
+                        ctx_turns = [anchor]
+                        if turns:
+                            aid = anchor.get("message_id")
+                            anchor_idx = next(
+                                (
+                                    i
+                                    for i, t in enumerate(turns)
+                                    if t.get("message_id") is not None
+                                    and t.get("message_id") == aid
+                                ),
+                                -1,
+                            )
+                            if anchor_idx > 0:
+                                prev = turns[anchor_idx - 1]
+                                if prev.get("role") == "user":
+                                    ctx_turns.insert(0, prev)
+                        updates["reply_context_turns"] = ctx_turns
             except Exception:
                 logger.warning(
                     "thread_context_load_failed",

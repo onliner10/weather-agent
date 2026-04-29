@@ -104,7 +104,7 @@ class TestCleanupThreadMemory:
         assert deleted == 1
 
     @pytest.mark.asyncio()
-    async def test_keeps_recent_context(
+    async def test_keeps_recent_thread_context(
         self, service: RetentionService, async_session: AsyncSession
     ) -> None:
         recent_time = datetime.now(UTC) - timedelta(days=5)

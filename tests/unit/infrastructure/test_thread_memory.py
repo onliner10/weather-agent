@@ -113,35 +113,6 @@ class TestPendingConfirmation:
         assert result is None
 
 
-class TestRecentContext:
-    @pytest.mark.asyncio()
-    async def test_store_and_retrieve_recent_context(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        ctx = {"last_intent": "weather", "last_location": "Warszawa"}
-        await memory_service.store_recent_context("100:1", ctx)
-        result = await memory_service.get_recent_context("100:1")
-        assert result == ctx
-
-    @pytest.mark.asyncio()
-    async def test_recent_context_is_thread_scoped(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        ctx_a = {"last_intent": "weather"}
-        ctx_b = {"last_intent": "rules"}
-        await memory_service.store_recent_context("100:1", ctx_a)
-        await memory_service.store_recent_context("100:2", ctx_b)
-        assert await memory_service.get_recent_context("100:1") == ctx_a
-        assert await memory_service.get_recent_context("100:2") == ctx_b
-
-    @pytest.mark.asyncio()
-    async def test_no_recent_context_returns_none(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        result = await memory_service.get_recent_context("999:1")
-        assert result is None
-
-
 class TestExpiredContext:
     @pytest.mark.asyncio()
     async def test_expired_pending_confirmation_is_ignored(
@@ -160,25 +131,6 @@ class TestExpiredContext:
         await context_service.update_context("100:1", metadata)
 
         result = await memory.get_pending_confirmation("100:1")
-        assert result is None
-
-    @pytest.mark.asyncio()
-    async def test_expired_recent_context_is_ignored(
-        self, async_session: AsyncSession
-    ) -> None:
-        context_service = TelegramContextService(async_session)
-        memory = ThreadMemoryService(context_service, default_ttl_days=14)
-
-        recent = {"last_intent": "weather"}
-        await memory.store_recent_context("100:1", recent)
-
-        ctx = await context_service.get_or_create_context(100, 1)
-        metadata = dict(ctx.metadata)
-        expired_time = (datetime.now(UTC) - timedelta(days=15)).isoformat()
-        metadata["recent_context_stored_at"] = expired_time
-        await context_service.update_context("100:1", metadata)
-
-        result = await memory.get_recent_context("100:1")
         assert result is None
 
     @pytest.mark.asyncio()
@@ -223,26 +175,15 @@ class TestNewThreadCleanState:
         assert result is None
 
     @pytest.mark.asyncio()
-    async def test_new_thread_has_no_recent_context(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        await memory_service.store_recent_context("100:1", {"intent": "weather"})
-        result = await memory_service.get_recent_context("100:2")
-        assert result is None
-
-    @pytest.mark.asyncio()
     async def test_new_thread_same_chat_is_isolated(
         self, memory_service: ThreadMemoryService
     ) -> None:
         confirmation = {"action": "activate_rule", "rule_id": "R7K2"}
         await memory_service.store_pending_confirmation("100:1", confirmation)
-        await memory_service.store_recent_context("100:1", {"intent": "weather"})
 
         assert await memory_service.get_pending_confirmation("100:5") is None
-        assert await memory_service.get_recent_context("100:5") is None
 
         assert await memory_service.get_pending_confirmation("100:1") == confirmation
-        assert await memory_service.get_recent_context("100:1") == {"intent": "weather"}
 
 
 class TestRetentionConfigurable:
@@ -265,24 +206,6 @@ class TestRetentionConfigurable:
         result = await memory.get_pending_confirmation("100:1")
         assert result is None
 
-    @pytest.mark.asyncio()
-    async def test_store_recent_context_with_custom_ttl(
-        self, async_session: AsyncSession
-    ) -> None:
-        context_service = TelegramContextService(async_session)
-        memory = ThreadMemoryService(context_service, default_ttl_days=14)
-
-        recent = {"intent": "weather"}
-        await memory.store_recent_context("100:1", recent, ttl_days=7)
-
-        ctx = await context_service.get_or_create_context(100, 1)
-        metadata = dict(ctx.metadata)
-        expired_time = (datetime.now(UTC) - timedelta(days=8)).isoformat()
-        metadata["recent_context_stored_at"] = expired_time
-        await context_service.update_context("100:1", metadata)
-
-        result = await memory.get_recent_context("100:1")
-        assert result is None
 
 class TestTurnPersistence:
     @pytest.mark.asyncio()
@@ -564,49 +487,6 @@ class TestReplyAnchorLookup:
 
         anchor = await memory_service.find_turn_by_message_id("200:1", 11)
         assert anchor is None
-
-
-class TestRecentContextWindow:
-    @pytest.mark.asyncio()
-    async def test_get_recent_context_window(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        for i in range(10):
-            await memory_service.save_turn("100:1", {
-                "message_id": i,
-                "role": "user",
-                "text": f"wiadomość {i}",
-                "timestamp": None,
-            })
-
-        turns = await memory_service.load_turns("100:1")
-        window = memory_service.get_recent_context_window(turns, max_turns=4)
-        assert len(window) == 4
-        assert window[0]["message_id"] == 6
-        assert window[-1]["message_id"] == 9
-
-    @pytest.mark.asyncio()
-    async def test_get_recent_context_window_fewer_than_max(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        for i in range(3):
-            await memory_service.save_turn("100:1", {
-                "message_id": i,
-                "role": "user",
-                "text": f"wiadomość {i}",
-                "timestamp": None,
-            })
-
-        turns = await memory_service.load_turns("100:1")
-        window = memory_service.get_recent_context_window(turns, max_turns=6)
-        assert len(window) == 3
-
-    @pytest.mark.asyncio()
-    async def test_get_recent_context_window_empty(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        window = memory_service.get_recent_context_window([], max_turns=6)
-        assert window == []
 
 
 class TestThreadTopicIsolation:

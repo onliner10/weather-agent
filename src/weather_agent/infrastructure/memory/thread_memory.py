@@ -60,54 +60,6 @@ class ThreadMemoryService:
         metadata.pop("pending_confirmation_stored_at", None)
         await self._context_service.update_context(context_key, metadata)
 
-    async def store_recent_context(
-        self,
-        context_key: str,
-        context: dict[str, Any],
-        ttl_days: int | None = None,
-    ) -> None:
-        effective_ttl = (
-            ttl_days if ttl_days is not None else self._default_ttl_days
-        )
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
-        metadata = dict(ctx.metadata)
-        metadata["recent_context"] = context
-        metadata["recent_context_stored_at"] = datetime.now(UTC).isoformat()
-        metadata["recent_context_ttl_days"] = effective_ttl
-        await self._context_service.update_context(context_key, metadata)
-
-    async def get_recent_context(
-        self, context_key: str, ttl_days: int | None = None
-    ) -> dict[str, Any] | None:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
-        recent = ctx.metadata.get("recent_context")
-        if recent is None:
-            return None
-        stored_at_raw = ctx.metadata.get("recent_context_stored_at")
-        context_ttl_raw = ctx.metadata.get(
-            "recent_context_ttl_days", self._default_ttl_days
-        )
-        if stored_at_raw is not None and isinstance(stored_at_raw, str):
-            stored_at = datetime.fromisoformat(stored_at_raw)
-            context_ttl: int = (
-                int(context_ttl_raw)
-                if isinstance(context_ttl_raw, (int, float))
-                else self._default_ttl_days
-            )
-            effective_ttl = ttl_days if ttl_days is not None else context_ttl
-            if self._is_expired(stored_at, effective_ttl):
-                metadata = dict(ctx.metadata)
-                metadata.pop("recent_context", None)
-                metadata.pop("recent_context_stored_at", None)
-                metadata.pop("recent_context_ttl_days", None)
-                await self._context_service.update_context(context_key, metadata)
-                return None
-        return recent if isinstance(recent, dict) else None
-
     async def save_turn(
         self,
         context_key: str,
@@ -192,14 +144,6 @@ class ThreadMemoryService:
                 break
         metadata["turns"] = turns
         await self._context_service.update_context(context_key, metadata)
-
-    def get_recent_context_window(
-        self,
-        turns: list[dict[str, Any]],
-        max_turns: int = 6,
-    ) -> list[dict[str, Any]]:
-        return turns[-max_turns:]
-
 
 def _parse_context_key(context_key: str) -> tuple[int, int | None]:
     if ":" in context_key:

@@ -669,8 +669,6 @@ class TestTracingUtilities:
             "resolved_intent": "weather",
             "resolved_location": loc,
             "resolved_time_range": tr,
-            "recent_context": [{"role": "user", "text": "secret prior message"}],
-            "reply_anchor": {"role": "bot", "answer_summary": "prior answer"},
             "forecast_result": {"raw_payload": {"large": "data"}},  # type: ignore[dict-item]
             "pending_confirmation": {"action": "activate_rule"},
             "cel_expression": "temp > 30",
@@ -695,8 +693,7 @@ class TestTracingUtilities:
         assert metadata["user_message_preview"] == "x" * 80
 
         # Excluded
-        assert "recent_context" not in metadata
-        assert "reply_anchor" not in metadata
+        assert "reply_context_turns" not in metadata
         assert "forecast_result" not in metadata
         assert "observation_result" not in metadata
         assert "pending_confirmation" not in metadata

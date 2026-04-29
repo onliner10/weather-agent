@@ -313,7 +313,7 @@ async def _async_session(_async_engine: AsyncEngine) -> AsyncSession:
 
 class TestLoadThreadContextWithMemory:
     @pytest.mark.asyncio
-    async def test_load_turns_into_recent_context(self, _async_session: AsyncSession) -> None:
+    async def test_load_reply_context_turns(self, _async_session: AsyncSession) -> None:
         context_service = TelegramContextService(_async_session)
         memory = ThreadMemoryService(context_service)
         _load = _make_load_thread_context(memory)
@@ -334,16 +334,17 @@ class TestLoadThreadContextWithMemory:
             "message_thread_id": 1,
             "context_key": "999:1",
             "user_message": "a wiatr?",
-            "reply_to_message_id": None,
+            "message_id": 11,
+            "reply_to_message_id": 10,
         }
         result = await _load(state)
         assert result["context_key"] == "999:1"
-        assert result.get("recent_context") is not None
-        assert len(result["recent_context"]) == 1
-        assert result["recent_context"][0]["text"] == "jaka pogoda w Warszawie?"
+        assert result.get("reply_context_turns") is not None
+        assert len(result["reply_context_turns"]) == 1
+        assert result["reply_context_turns"][0]["text"] == "jaka pogoda w Warszawie?"
 
     @pytest.mark.asyncio
-    async def test_load_reply_anchor(self, _async_session: AsyncSession) -> None:
+    async def test_load_reply_context_with_bot_anchor(self, _async_session: AsyncSession) -> None:
         context_service = TelegramContextService(_async_session)
         memory = ThreadMemoryService(context_service)
         _load = _make_load_thread_context(memory)
@@ -367,9 +368,9 @@ class TestLoadThreadContextWithMemory:
             "reply_to_message_id": 42,
         }
         result = await _load(state)
-        assert result.get("reply_anchor") is not None
-        assert result["reply_anchor"]["role"] == "bot"
-        assert result["reply_anchor"]["message_id"] == 42
+        assert result.get("reply_context_turns") is not None
+        assert result["reply_context_turns"][0]["role"] == "bot"
+        assert result["reply_context_turns"][0]["message_id"] == 42
 
     @pytest.mark.asyncio
     async def test_load_reply_anchor_not_found(self, _async_session: AsyncSession) -> None:
@@ -396,7 +397,7 @@ class TestLoadThreadContextWithMemory:
             "reply_to_message_id": 999,
         }
         result = await _load(state)
-        assert result.get("reply_anchor") is None
+        assert result.get("reply_context_turns") is None
 
     @pytest.mark.asyncio
     async def test_load_without_memory_service(self) -> None:
@@ -411,8 +412,7 @@ class TestLoadThreadContextWithMemory:
         }
         result = await _load(state)
         assert result["context_key"] == "999"
-        assert "recent_context" not in result
-        assert "reply_anchor" not in result
+        assert "reply_context_turns" not in result
 
 
 class TestSaveThreadContextWithMemory:
@@ -474,31 +474,21 @@ class TestConversationStateFields:
             "user_message": "a wiatr?",
             "message_id": 42,
             "reply_to_message_id": 41,
-            "reply_to_message_text": "W Warszawie jutro 18°C.",
         }
         assert state["message_id"] == 42
         assert state["reply_to_message_id"] == 41
-        assert state["reply_to_message_text"] == "W Warszawie jutro 18°C."
 
-    def test_state_has_reply_anchor_field(self) -> None:
+    def test_state_has_reply_context_turns_field(self) -> None:
         state: ConversationState = {
             "chat_id": 100,
             "context_key": "100:5",
-            "reply_anchor": {
-                "role": "bot",
-                "answer_summary": "W Chwarznie 18°C.",
-                "message_id": 41,
-            },
-        }
-        assert state["reply_anchor"]["role"] == "bot"
-
-    def test_state_has_recent_context_field(self) -> None:
-        state: ConversationState = {
-            "chat_id": 100,
-            "context_key": "100:5",
-            "recent_context": [
-                {"role": "user", "text": "pogoda?"},
-                {"role": "bot", "answer_summary": "Słońce."},
+            "reply_context_turns": [
+                {
+                    "role": "bot",
+                    "answer_summary": "W Chwarznie 18°C.",
+                    "message_id": 41,
+                },
             ],
         }
-        assert len(state["recent_context"]) == 2
+        assert len(state["reply_context_turns"]) == 1
+        assert state["reply_context_turns"][0]["role"] == "bot"

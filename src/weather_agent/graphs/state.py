@@ -26,9 +26,7 @@ class ConversationState(TypedDict, total=False):
     user_message: str | None
     message_id: int | None
     reply_to_message_id: int | None
-    reply_to_message_text: str | None
-    reply_anchor: dict[str, Any] | None
-    recent_context: list[dict[str, Any]] | None
+    reply_context_turns: list[dict[str, Any]] | None
     resolved_intent: str | None
     resolved_location: LocationRef | None
     resolved_time_range: ResolvedTimeRange | None

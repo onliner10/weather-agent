@@ -8,7 +8,7 @@ from typing import Any
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
-from weather_agent.domain.date_resolver import DateResolver
+from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
@@ -284,6 +284,7 @@ async def _execute_tool_call(
     location_service: LocationService | None,
     user_id: int,
     resolved_location: LocationRef | None = None,
+    resolved_time_range: ResolvedTimeRange | None = None,
 ) -> str:
     TOOL_CALLS_TOTAL.labels(tool=tool_name).inc()
     start = time.perf_counter()
@@ -297,6 +298,7 @@ async def _execute_tool_call(
                 location_service,
                 user_id,
                 resolved_location=resolved_location,
+                resolved_time_range=resolved_time_range,
             )
         elif tool_name == "get_observations":
             result = await _execute_get_observations(
@@ -345,6 +347,7 @@ async def _execute_get_forecast(
     location_service: LocationService | None,
     user_id: int,
     resolved_location: LocationRef | None = None,
+    resolved_time_range: ResolvedTimeRange | None = None,
 ) -> str:
     location_name = args.get("location_name", "")
     time_expr = args.get("time_expression", "dziś")
@@ -357,9 +360,11 @@ async def _execute_get_forecast(
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
 
-    time_range = await date_resolver.resolve(time_expr)
+    time_range = resolved_time_range
     if time_range is None:
-        time_range = await date_resolver.resolve("dziś")
+        time_range = await date_resolver.resolve(time_expr)
+        if time_range is None:
+            time_range = await date_resolver.resolve("dziś")
     assert time_range is not None
 
     variables = []
@@ -518,17 +523,6 @@ async def weather_agent_node(
 
     try:
         resolved_loc = state.get("resolved_location")
-        location_hint = ""
-        if resolved_loc and resolved_loc.name:
-            location_hint = f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n"
-
-        focus_hint = ""
-        focus = state.get("user_focus")
-        if focus:
-            focus_hint = (
-                f"Użytkownik pyta szczegółowo o: {focus}."
-                " Skoncentruj się na tym aspekcie.\n"
-            )
 
         tools = _build_tools(
             forecast_provider,
@@ -539,24 +533,48 @@ async def weather_agent_node(
             user_id,
         )
 
-        chat = model_factory.create_chat_model()
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
-                    "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
-                    "(get_forecast, get_observations)."
-                    " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
-                    " poproś tylko o wind_speed_10m_ms,"
-                    " wind_gusts_10m_ms, wind_direction_10m_deg.\n"
-                    f"{location_hint}{focus_hint}"
-                    "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
-                    " Podaj lokalizację i zakres czasu."
-                ),
-            },
-            {"role": "user", "content": user_message},
+        system_parts: list[str] = [
+            "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
+            "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
+            "(get_forecast, get_observations)."
+            " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
+            " poproś tylko o wind_speed_10m_ms,"
+            " wind_gusts_10m_ms, wind_direction_10m_deg.\n",
         ]
+        if resolved_loc and resolved_loc.name:
+            system_parts.append(
+                f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n"
+            )
+        focus = state.get("user_focus")
+        if focus:
+            system_parts.append(
+                f"Użytkownik pyta szczegółowo o: {focus}."
+                " Skoncentruj się na tym aspekcie.\n"
+            )
+        system_parts.append(
+            "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
+            " Podaj lokalizację i zakres czasu."
+        )
+        system_content = "".join(system_parts)
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_content},
+        ]
+
+        reply_context_turns = state.get("reply_context_turns")
+        if reply_context_turns:
+            for turn in reply_context_turns:
+                role = turn.get("role", "")
+                text = turn.get("text") or ""
+                answer = turn.get("answer_summary") or ""
+                if role == "user" and text:
+                    messages.append({"role": "user", "content": text})
+                elif role == "bot" and answer:
+                    messages.append({"role": "assistant", "content": answer})
+
+        messages.append({"role": "user", "content": user_message})
+
+        chat = model_factory.create_chat_model()
 
         max_iterations = 5
         for _ in range(max_iterations):
@@ -606,6 +624,7 @@ async def weather_agent_node(
                     location_service,
                     user_id,
                     resolved_location=resolved_loc,
+                    resolved_time_range=state.get("resolved_time_range"),
                 )
 
                 messages.append({"role": "assistant", "content": None, "tool_calls": [tc_dict]})
@@ -636,10 +655,6 @@ async def resolve_location_node(
     model_factory: ModelFactory | None = None,
 ) -> dict[str, Any]:
     message = state.get("user_message") or ""
-    location_ref = state.get("resolved_location")
-
-    if location_ref is not None:
-        return {"resolved_location": location_ref}
 
     extraction = await _extract_location_and_focus(message, model_factory)
     extracted = extraction.location_name
@@ -667,6 +682,13 @@ async def resolve_location_node(
             "resolved_location": None,
             **updates,
         }
+
+    existing = state.get("resolved_location")
+    if existing is not None:
+        return {"resolved_location": existing, **updates}
+
+    if state.get("reply_context_turns"):
+        return {"resolved_location": None, **updates}
 
     return {
         "error": (
