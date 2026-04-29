@@ -351,6 +351,7 @@ class TestBuildParams:
         assert params["longitude"] == 21.0122
         assert "start_date" in params
         assert "end_date" in params
+        assert params["wind_speed_unit"] == "ms"
 
     def test_fifteen_min_resolution(self) -> None:
         provider = OpenMeteoDwdIconProvider(OpenMeteoSettings())
@@ -360,6 +361,14 @@ class TestBuildParams:
         )
         assert params["minutely_15"] == "temperature_2m"
         assert "hourly" not in params
+
+    def test_wind_speed_unit_requested(self) -> None:
+        provider = OpenMeteoDwdIconProvider(OpenMeteoSettings())
+        vars_api = provider._map_variables(
+            [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms]
+        )
+        params = provider._build_params(_WARSZAWA, _TIME_RANGE, vars_api, ForecastResolution.hourly)
+        assert params["wind_speed_unit"] == "ms"
 
 
 class TestEmptyResponse:
@@ -412,3 +421,19 @@ class TestFifteenMinResolution:
         assert len(result.points) == 2
         assert result.points[0].temperature_2m_c == 14.0
         assert result.points[1].temperature_2m_c == 14.2
+
+
+class TestWindUnitInRequest:
+    @respx.mock
+    async def test_wind_speed_unit_sent_in_request(self) -> None:
+        route = respx.get(_BASE_URL).mock(
+            return_value=httpx.Response(200, json=_make_hourly_response())
+        )
+        provider = OpenMeteoDwdIconProvider(OpenMeteoSettings())
+        await provider.get_forecast(
+            _WARSZAWA, _TIME_RANGE,
+            [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms],
+            ForecastResolution.hourly,
+        )
+        request_url = str(route.calls[0].request.url)
+        assert "wind_speed_unit=ms" in request_url

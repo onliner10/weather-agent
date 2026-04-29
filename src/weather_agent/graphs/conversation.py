@@ -22,7 +22,6 @@ from weather_agent.graphs.nodes.rule_management import (
 )
 from weather_agent.graphs.nodes.weather_qa import (
     resolve_location_node,
-    resolve_time_range_node,
     weather_agent_node,
 )
 from weather_agent.graphs.state import ConversationState, TurnRecord
@@ -435,28 +434,6 @@ class ConversationOrchestrator:
         ):
             result: dict[str, Any] = {}
 
-            # Resolve location
-            loc_result = await resolve_location_node(
-                state,
-                self.deps.location_service,
-                self.deps.user_id,
-                geocoder=self.deps.geocoder,
-                model_factory=self.deps.model_factory,
-            )
-            result.update(loc_result)
-            state = _merge_state(state, loc_result)
-
-            # Early return for location errors (don't mask specific messages)
-            if state.get("error"):
-                result["answer"] = state["error"]
-                return result
-
-            # Resolve time range
-            time_result = await resolve_time_range_node(state, self.deps.date_resolver)
-            result.update(time_result)
-            state = _merge_state(state, time_result)
-
-            # Generate weather answer
             agent_result = await weather_agent_node(
                 state,
                 model_factory=self.deps.model_factory,

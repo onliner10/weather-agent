@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import re
 import time
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from langsmith import traceable
 from pydantic import BaseModel, Field
@@ -31,6 +33,8 @@ from weather_agent.observability.metrics import (
 )
 
 logger = get_logger(__name__)
+
+_WARSAW = ZoneInfo("Europe/Warsaw")
 
 _GENERIC_USER_ERROR = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
 
@@ -217,8 +221,9 @@ def _build_tools(
             "function": {
                 "name": "get_forecast",
                 "description": (
-                    "Pobierz prognozę pogody dla lokalizacji i zakresu czasu."
+                    "Pobierz prognozę pogody dla lokalizacji i zakresu dat."
                     " Zwraca godzinowe dane: temperatura, opady, wiatr, zachmurzenie itp."
+                    " Daty podawaj jako yyyy-mm-dd w strefie Europe/Warsaw."
                 ),
                 "parameters": {
                     "type": "object",
@@ -227,9 +232,13 @@ def _build_tools(
                             "type": "string",
                             "description": "Nazwa miejscowości (np. Gdańsk, Chwarzno)",
                         },
-                        "time_expression": {
+                        "start_date": {
                             "type": "string",
-                            "description": "Wyrażenie czasowe (np. jutro, weekend, dziś wieczorem)",
+                            "description": "Data początkowa w formacie yyyy-mm-dd (np. 2026-05-01)",
+                        },
+                        "end_date": {
+                            "type": "string",
+                            "description": "Konkowa data yyyy-mm-dd. Dla jednego dnia powtórz.",
                         },
                         "variables": {
                             "type": "array",
@@ -245,7 +254,7 @@ def _build_tools(
                             ),
                         },
                     },
-                    "required": ["location_name", "time_expression"],
+                    "required": ["location_name", "start_date", "end_date"],
                 },
             },
         },
@@ -283,8 +292,6 @@ async def _execute_tool_call(
     date_resolver: DateResolver,
     location_service: LocationService | None,
     user_id: int,
-    resolved_location: LocationRef | None = None,
-    resolved_time_range: ResolvedTimeRange | None = None,
 ) -> str:
     TOOL_CALLS_TOTAL.labels(tool=tool_name).inc()
     start = time.perf_counter()
@@ -297,8 +304,6 @@ async def _execute_tool_call(
                 date_resolver,
                 location_service,
                 user_id,
-                resolved_location=resolved_location,
-                resolved_time_range=resolved_time_range,
             )
         elif tool_name == "get_observations":
             result = await _execute_get_observations(
@@ -307,7 +312,6 @@ async def _execute_tool_call(
                 geocoder,
                 location_service,
                 user_id,
-                resolved_location=resolved_location,
             )
         else:
             result = json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -346,26 +350,53 @@ async def _execute_get_forecast(
     date_resolver: DateResolver,
     location_service: LocationService | None,
     user_id: int,
-    resolved_location: LocationRef | None = None,
-    resolved_time_range: ResolvedTimeRange | None = None,
 ) -> str:
     location_name = args.get("location_name", "")
-    time_expr = args.get("time_expression", "dziś")
+    start_date_str = args.get("start_date")
+    end_date_str = args.get("end_date")
     variable_names = args.get("variables", [])
 
-    location = resolved_location
-    if location is None:
-        location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    location = await _resolve_location(location_name, geocoder, location_service, user_id)
     if location is None:
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
 
-    time_range = resolved_time_range
-    if time_range is None:
-        time_range = await date_resolver.resolve(time_expr)
-        if time_range is None:
-            time_range = await date_resolver.resolve("dziś")
-    assert time_range is not None
+    if start_date_str and end_date_str:
+        try:
+            s = date.fromisoformat(start_date_str)
+            e = date.fromisoformat(end_date_str)
+            start_dt = datetime(s.year, s.month, s.day, tzinfo=_WARSAW)
+            end_dt = datetime(e.year, e.month, e.day, 23, 59, tzinfo=_WARSAW)
+            if start_dt > end_dt:
+                return json.dumps(
+                    {"error": "start_date nie może być późniejsza niż end_date"},
+                    ensure_ascii=False,
+                )
+            time_range = ResolvedTimeRange(
+                start=start_dt,
+                end=end_dt,
+                explanation=f"{start_date_str} – {end_date_str}",
+            )
+        except ValueError:
+            return json.dumps(
+                {"error": "Nieprawidłowy format daty. Użyj yyyy-mm-dd."},
+                ensure_ascii=False,
+            )
+    else:
+        time_expr = args.get("time_expression")
+        if time_expr:
+            resolved = await date_resolver.resolve(time_expr)
+            if resolved is None:
+                return json.dumps(
+                    {"error": f"Nie udało się rozpoznać wyrażenia czasowego: {time_expr}"},
+                    ensure_ascii=False,
+                )
+            time_range = resolved
+        else:
+            return json.dumps(
+                {"error": "Brak parametrów start_date/end_date lub time_expression"},
+                ensure_ascii=False,
+            )
 
     variables = []
     for vn in variable_names:
@@ -406,7 +437,6 @@ async def _execute_get_forecast(
         logger.exception(
             "forecast_provider_unexpected_error",
             location_name=location_name,
-            time_expression=time_expr,
         )
         return json.dumps(
             {"error": "Błąd podczas pobierania prognozy. Spróbuj ponownie."},
@@ -435,15 +465,12 @@ async def _execute_get_observations(
     geocoder: Geocoder,
     location_service: LocationService | None,
     user_id: int,
-    resolved_location: LocationRef | None = None,
 ) -> str:
     if observation_provider is None:
         return json.dumps({"error": "Obserwacje niedostępne"})
 
     location_name = args.get("location_name", "")
-    location = resolved_location
-    if location is None:
-        location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    location = await _resolve_location(location_name, geocoder, location_service, user_id)
     if location is None:
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
@@ -533,13 +560,19 @@ async def weather_agent_node(
             user_id,
         )
 
+        now_warsaw = datetime.now(_WARSAW)
         system_parts: list[str] = [
             "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
+            f"Dziś jest {now_warsaw.strftime('%Y-%m-%d')} (dzień tygodnia: "
+            f"{now_warsaw.strftime('%A')}), godzina {now_warsaw.strftime('%H:%M')} "
+            f"w strefie czasowej Europe/Warsaw.\n\n"
             "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
             "(get_forecast, get_observations)."
             " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
             " poproś tylko o wind_speed_10m_ms,"
-            " wind_gusts_10m_ms, wind_direction_10m_deg.\n",
+            " wind_gusts_10m_ms, wind_direction_10m_deg.\n\n"
+            "Daty w narzędziach podawaj jako yyyy-mm-dd na podstawie "
+            "bieżącej daty i strefy czasowej.\n",
         ]
         if resolved_loc and resolved_loc.name:
             system_parts.append(
@@ -610,7 +643,10 @@ async def weather_agent_node(
                     location_name=tool_args.get("location_name")
                     if isinstance(tool_args, dict)
                     else None,
-                    time_expression=tool_args.get("time_expression")
+                    start_date=tool_args.get("start_date")
+                    if isinstance(tool_args, dict)
+                    else None,
+                    end_date=tool_args.get("end_date")
                     if isinstance(tool_args, dict)
                     else None,
                 )
@@ -623,8 +659,6 @@ async def weather_agent_node(
                     date_resolver,
                     location_service,
                     user_id,
-                    resolved_location=resolved_loc,
-                    resolved_time_range=state.get("resolved_time_range"),
                 )
 
                 messages.append({"role": "assistant", "content": None, "tool_calls": [tc_dict]})

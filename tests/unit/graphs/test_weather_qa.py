@@ -423,7 +423,11 @@ class TestWeatherAgentNode:
 
         mf = _mock_model_factory_with_tool_call(
             tool_name="get_forecast",
-            tool_args={"location_name": "Warszawa", "time_expression": "jutro"},
+            tool_args={
+                "location_name": "Warszawa",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-01",
+            },
             answer="Jutro w Warszawie 18°C, wiatr 8 m/s.",
         )
         state = _state(user_message="jaka będzie jutro pogoda w Warszawie?")
@@ -439,6 +443,119 @@ class TestWeatherAgentNode:
         )
         assert result["answer"] is not None
         assert "Warszaw" in result["answer"]
+
+
+class TestToolArgsOverState:
+    """Regression: LLM tool args must drive fetch, not pre-resolved state."""
+
+    @pytest.mark.asyncio
+    async def test_stale_resolved_time_range_does_not_override_llm_dates(self) -> None:
+
+        stale_range = _time_range(explanation="Dziś (2026-04-29)")
+        fp = _mock_forecast_provider()
+        gc = _mock_geocoder()
+        dr = DateResolver()
+        ls = _mock_location_service(resolved=_loc("Siemiany", 53.72977, 19.58556))
+
+        mf = _mock_model_factory_with_tool_call(
+            tool_name="get_forecast",
+            tool_args={
+                "location_name": "Siemiany",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-03",
+            },
+            answer="Majówka w Siemianach: 15-20°C.",
+        )
+        state = _state(
+            user_message="jaka pogoda będzie w siemianach w majówkę?",
+            resolved_time_range=stale_range,
+            resolved_location=_loc("Siemiany", 53.72977, 19.58556),
+        )
+        result = await weather_agent_node(
+            state,
+            model_factory=mf,
+            forecast_provider=fp,
+            observation_provider=None,
+            geocoder=gc,
+            date_resolver=dr,
+            location_service=ls,
+            user_id=1,
+        )
+        assert result["answer"] is not None
+        assert "Majówka" in result["answer"] or "Siemian" in result["answer"]
+        self._assert_not_today_in_answer(result)
+
+    @pytest.mark.asyncio
+    async def test_llm_start_end_dates_drive_fetch(self) -> None:
+
+        fp = _mock_forecast_provider()
+        gc = _mock_geocoder()
+        dr = DateResolver()
+        ls = _mock_location_service(resolved=_loc("Gdańsk", 54.35, 18.65))
+
+        mf = _mock_model_factory_with_tool_call(
+            tool_name="get_forecast",
+            tool_args={
+                "location_name": "Gdańsk",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-03",
+            },
+            answer="Majówka w Gdańsku: 15-22°C.",
+        )
+        state = _state(
+            user_message="jaka pogoda w majówkę w Gdańsku?",
+            resolved_time_range=_time_range(explanation="Dziś (2026-04-29)"),
+        )
+        result = await weather_agent_node(
+            state,
+            model_factory=mf,
+            forecast_provider=fp,
+            observation_provider=None,
+            geocoder=gc,
+            date_resolver=dr,
+            location_service=ls,
+            user_id=1,
+        )
+        assert result["answer"] is not None
+        assert "Gdańsk" in result["answer"] or "Gda" in result["answer"]
+
+    @staticmethod
+    def _assert_not_today_in_answer(result: dict) -> None:
+        answer = result.get("answer", "").lower()
+        assert "dziś" not in answer, f"Answer should not reference 'dziś': {answer}"
+
+    @pytest.mark.asyncio
+    async def test_siemiany_forecast_fetches_correct_dates(self) -> None:
+        fp = _mock_forecast_provider(_forecast())
+        gc = _mock_geocoder(_loc("Siemiany", 53.72977, 19.58556))
+        dr = DateResolver()
+        ls = _mock_location_service(resolved=_loc("Siemiany", 53.72977, 19.58556))
+
+        mf = _mock_model_factory_with_tool_call(
+            tool_name="get_forecast",
+            tool_args={
+                "location_name": "Siemiany",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-03",
+            },
+            answer="Majówka w Siemianach: temperatura 8-22°C.",
+        )
+        state = _state(
+            user_message="jaka pogoda będzie w siemianach w majówkę?",
+            resolved_time_range=_time_range(explanation="Dziś (2026-04-29)"),
+        )
+        result = await weather_agent_node(
+            state,
+            model_factory=mf,
+            forecast_provider=fp,
+            observation_provider=None,
+            geocoder=gc,
+            date_resolver=dr,
+            location_service=ls,
+            user_id=1,
+        )
+        assert result["answer"] is not None
+        self._assert_not_today_in_answer(result)
 
 
 class TestHomeDefaultFallback:

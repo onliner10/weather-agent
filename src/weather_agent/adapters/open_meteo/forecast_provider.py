@@ -153,6 +153,7 @@ class OpenMeteoDwdIconProvider:
             "start_date": start_date,
             "end_date": end_date,
             "model": self._model,
+            "wind_speed_unit": "ms",
         }
         if resolution == ForecastResolution.fifteen_min:
             params["minutely_15"] = ",".join(api_vars)
