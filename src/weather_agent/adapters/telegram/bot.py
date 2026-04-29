@@ -184,7 +184,7 @@ class TelegramBot:
             )
             return
 
-        name = " ".join(parts[:-2])
+        name = " ".join(parts[:-2]).strip()
         if not name:
             await update.message.reply_text(
                 "Nieprawidłowa nazwa. "
@@ -217,7 +217,7 @@ class TelegramBot:
                 location_service = LocationService(session)
                 data = LocationCreate(
                     name=name,
-                    aliases=[],
+                    aliases=["dom"],
                     latitude=lat,
                     longitude=lon,
                 )

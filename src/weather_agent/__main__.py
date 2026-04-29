@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 import time
 from typing import Any
 
 from langsmith import trace
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -21,6 +23,13 @@ from weather_agent.api.health import create_health_app
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.date_resolver import DateResolver
 from weather_agent.domain.holidays import CachedHolidayProvider
+from weather_agent.domain.locations import (
+    LocationAliasConflictError,
+    LocationCreate,
+    LocationNameConflictError,
+    LocationService,
+)
+from weather_agent.infrastructure.db.base import AuthorizedUser
 from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
 from weather_agent.observability.logging import (
@@ -73,6 +82,83 @@ def _create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSess
         class_=AsyncSession,
         expire_on_commit=False,
     )
+
+
+_HOME_LOCATION_PATTERNS = (
+    re.compile(
+        r"(?:zapami[eę]taj|zapisz|ustaw)\s+"
+        r"(?:moj[aą]\s+)?lokalizacj[eę]\s+domow[aą]\s*"
+        r"(?:jako|to|:)?\s*(?P<location>.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:moja\s+)?lokalizacj[aą]\s+domowa\s+"
+        r"(?:to|jest|:)\s*(?P<location>.+)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _extract_home_location_request(message: str) -> str | None:
+    """Return requested home-location text for deterministic save intents."""
+    for pattern in _HOME_LOCATION_PATTERNS:
+        match = pattern.search(message)
+        if match is None:
+            continue
+        location = match.group("location").strip(" .,!?:;\t\n")
+        return location or None
+    return None
+
+
+async def _get_or_create_authorized_user_id(
+    session: AsyncSession,
+    telegram_user_id: int,
+) -> int:
+    result = await session.execute(
+        select(AuthorizedUser).where(AuthorizedUser.telegram_user_id == telegram_user_id)
+    )
+    authorized_user = result.scalar_one_or_none()
+    if authorized_user is None:
+        authorized_user = AuthorizedUser(telegram_user_id=telegram_user_id)
+        session.add(authorized_user)
+        await session.flush()
+    return int(authorized_user.id)
+
+
+async def _handle_home_location_save_message(
+    message: str,
+    user_id: int,
+    location_service: LocationService,
+    geocoder: Geocoder | None,
+) -> str | None:
+    requested_location = _extract_home_location_request(message)
+    if requested_location is None:
+        return None
+
+    if geocoder is None:
+        return "Nie mogę teraz rozpoznać adresu. Użyj /dodaj_lok <nazwa> <lat> <lon>."
+
+    resolved = await geocoder.geocode(requested_location)
+    if resolved is None:
+        return (
+            f"Nie udało się rozpoznać lokalizacji „{requested_location}”. "
+            "Podaj współrzędne komendą /dodaj_lok <nazwa> <lat> <lon>."
+        )
+
+    try:
+        await location_service.create_location(
+            user_id,
+            LocationCreate(
+                name=requested_location,
+                aliases=["dom"],
+                latitude=resolved.latitude,
+                longitude=resolved.longitude,
+            ),
+        )
+    except (LocationAliasConflictError, LocationNameConflictError):
+        return "Masz już zapisaną lokalizację domową."
+
+    return f"Zapamiętałem Twoją lokalizację domową jako {requested_location}."
 
 
 class _BotServices:
@@ -180,12 +266,12 @@ async def _make_message_handler(services: _BotServices) -> Any:
             context_key=context_key,
         ):
             from weather_agent.adapters.telegram.context import TelegramContextService
-            from weather_agent.domain.locations import LocationService
             from weather_agent.domain.rules.service import NotificationRuleService
             from weather_agent.graphs.state import ConversationState
             from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 
             async with services.session_factory() as session:
+                authorized_user_id = await _get_or_create_authorized_user_id(session, user_id)
                 location_service = LocationService(session)
                 rule_service = NotificationRuleService(
                     session=session,
@@ -194,47 +280,70 @@ async def _make_message_handler(services: _BotServices) -> Any:
                 context_service = TelegramContextService(session)
                 memory_service = ThreadMemoryService(context_service)
 
-                graph = services.compile_graph(
-                    location_service=location_service,
-                    rule_service=rule_service,
-                    user_id=user_id,
-                    memory_service=memory_service,
-                )
-
-                state: ConversationState = {
-                    "authorized_user_id": user_id,
-                    "chat_id": chat_id,
-                    "message_thread_id": thread_id,
-                    "context_key": context_key,
-                    "user_message": text,
-                    "message_id": message_id,
-                    "reply_to_message_id": reply_to_message_id,
-                }
-
-                graph_config = build_graph_config(state)
-                if services.model_factory is not None:
-                    graph_config["metadata"]["model_provider"] = services.model_factory.provider
-                    graph_config["metadata"]["model_name"] = services.model_factory.model_name
-
-                CONVERSATION_TURNS_TOTAL.inc()
-                turn_start = time.perf_counter()
                 try:
-                    result_state = await graph.ainvoke(state, config=graph_config)
-                    answer = result_state.get(
-                        "answer",
-                        "Przepraszam, nie udało się przetworzyć zapytania.",
+                    home_location_answer = await _handle_home_location_save_message(
+                        text,
+                        authorized_user_id,
+                        location_service,
+                        services.geocoder,
                     )
                 except Exception as exc:
-                    CONVERSATION_FAILURES_TOTAL.inc()
+                    await session.rollback()
                     logger.exception(
-                        "conversation_graph_failed",
+                        "home_location_save_failed",
                         error_class=type(exc).__name__,
                         outcome="failure",
                     )
-                    answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
-                finally:
-                    CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
-                await session.commit()
+                    home_location_answer = (
+                        "Nie udało się zapisać lokalizacji. Spróbuj ponownie."
+                    )
+                if home_location_answer is not None:
+                    answer = home_location_answer
+                    await session.commit()
+                else:
+                    graph = services.compile_graph(
+                        location_service=location_service,
+                        rule_service=rule_service,
+                        user_id=authorized_user_id,
+                        memory_service=memory_service,
+                    )
+
+                    state: ConversationState = {
+                        "authorized_user_id": user_id,
+                        "chat_id": chat_id,
+                        "message_thread_id": thread_id,
+                        "context_key": context_key,
+                        "user_message": text,
+                        "message_id": message_id,
+                        "reply_to_message_id": reply_to_message_id,
+                    }
+
+                    graph_config = build_graph_config(state)
+                    if services.model_factory is not None:
+                        graph_config["metadata"]["model_provider"] = services.model_factory.provider
+                        graph_config["metadata"]["model_name"] = services.model_factory.model_name
+
+                    CONVERSATION_TURNS_TOTAL.inc()
+                    turn_start = time.perf_counter()
+                    try:
+                        result_state = await graph.ainvoke(state, config=graph_config)
+                        answer = result_state.get(
+                            "answer",
+                            "Przepraszam, nie udało się przetworzyć zapytania.",
+                        )
+                    except Exception as exc:
+                        CONVERSATION_FAILURES_TOTAL.inc()
+                        logger.exception(
+                            "conversation_graph_failed",
+                            error_class=type(exc).__name__,
+                            outcome="failure",
+                        )
+                        answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
+                    finally:
+                        CONVERSATION_TURN_DURATION_SECONDS.observe(
+                            time.perf_counter() - turn_start
+                        )
+                    await session.commit()
 
             if reply_to_message_id is not None:
                 REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()

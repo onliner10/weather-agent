@@ -528,6 +528,26 @@ class TestGetDefaultLocation:
         assert ref.id == str(loc1.id)
         assert ref.name == "Home"
 
+    async def test_home_alias_wins_over_earliest_created(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        work = LocationCreate(
+            name="Work", aliases=["praca"], latitude=54.6, longitude=18.5
+        )
+        home = LocationCreate(
+            name="Rogalińska 11, Gdańsk",
+            aliases=["dom"],
+            latitude=54.35,
+            longitude=18.65,
+        )
+        await service.create_location(1, work)
+        home_loc = await service.create_location(1, home)
+        ref = await service.get_default_location(1)
+        assert ref is not None
+        assert ref.id == str(home_loc.id)
+        assert ref.name == "Rogalińska 11, Gdańsk"
+
     async def test_does_not_cross_users(
         self, service: LocationService, session: AsyncSession
     ) -> None:

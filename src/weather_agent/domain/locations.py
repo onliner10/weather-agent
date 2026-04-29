@@ -88,6 +88,20 @@ def _orm_to_domain(orm: LocationORM) -> Location:
     )
 
 
+def _is_home_location(orm: LocationORM) -> bool:
+    home_markers = {"dom", "home"}
+    if normalize_for_matching(orm.name) in home_markers:
+        return True
+    aliases_raw = orm.aliases
+    if isinstance(aliases_raw, dict):
+        aliases = list(aliases_raw.keys())
+    elif isinstance(aliases_raw, list):
+        aliases = aliases_raw
+    else:
+        aliases = []
+    return any(normalize_for_matching(alias) in home_markers for alias in aliases)
+
+
 class LocationService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -238,11 +252,11 @@ class LocationService:
 
     async def get_default_location(self, user_id: int) -> LocationRef | None:
         """
-        Return the first enabled saved location as a default/home location.
+        Return the saved default/home location for a user.
 
-        This is a first-enabled fallback since no explicit home/default flag exists
-        in the schema. If an explicit default/home flag is needed in the future,
-        the schema would need migration to support it.
+        The current schema has no explicit default flag. As an MVP bridge, prefer
+        locations marked by name/alias as ``dom``/``home``, then fall back to the
+        first enabled saved location in stable creation order.
         """
         stmt = (
             select(LocationORM)
@@ -250,7 +264,10 @@ class LocationService:
             .order_by(LocationORM.id)
         )
         result = await self._session.execute(stmt)
-        orm = result.scalars().first()
+        locations = result.scalars().all()
+        orm = next((loc for loc in locations if _is_home_location(loc)), None)
+        if orm is None and locations:
+            orm = locations[0]
         if orm is None:
             return None
         return LocationRef(
