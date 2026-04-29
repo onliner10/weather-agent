@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -132,8 +132,6 @@ class TestDatabaseUrlNormalization:
         url = "sqlite+aiosqlite:///test.db"
         result = _normalize_database_url(url)
         assert result == url
-
-
 
 
 class TestMissingConfiguration:

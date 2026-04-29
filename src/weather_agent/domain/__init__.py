@@ -18,7 +18,6 @@ from weather_agent.domain.errors import (
     WeatherProviderTimeoutError,
     WeatherProviderUnavailableError,
 )
-from weather_agent.domain.global_settings import GlobalSettingsService, GlobalUnits, SettingsRepo
 from weather_agent.domain.providers import (
     ForecastProvider,
     ObservationProvider,
@@ -64,8 +63,6 @@ __all__ = [
     "ForecastProvider",
     "ForecastResolution",
     "ForecastResult",
-    "GlobalSettingsService",
-    "GlobalUnits",
     "LocationRef",
     "NotificationEvent",
     "NotificationRule",
@@ -76,7 +73,6 @@ __all__ = [
     "RuleCreate",
     "RuleNotFoundError",
     "RuleUpdate",
-    "SettingsRepo",
     "ShortIdCollisionError",
     "TimeRange",
     "UnauthorizedError",

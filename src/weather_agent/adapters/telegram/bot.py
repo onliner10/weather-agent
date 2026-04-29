@@ -35,8 +35,8 @@ class TelegramBot:
         self,
         settings: TelegramSettings,
         auth_service: AuthorizationService,
-message_handler: MessageHandlerCallback,
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
+        message_handler: MessageHandlerCallback,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._settings = settings
         self._auth_service = auth_service

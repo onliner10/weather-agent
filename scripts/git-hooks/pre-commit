@@ -23,3 +23,9 @@ if command -v bd >/dev/null 2>&1; then
 fi
 
 scripts/security/scan-secrets.sh --staged
+
+if command -v uv >/dev/null 2>&1; then
+  uv run ruff check .
+  uv run ruff format --check .
+  scripts/quality/check-dead-code.sh
+fi

@@ -4,9 +4,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
-
-from langchain_core.messages import AIMessage
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import SecretStr
@@ -18,8 +16,6 @@ from weather_agent.domain.date_resolver import ResolvedTimeRange
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.weather import LocationRef
-from weather_agent.graphs.conversation import ConversationDeps, ConversationOrchestrator
-from weather_agent.graphs.state import ConversationState
 from weather_agent.infrastructure.db.base import (
     AuthorizedUser,
     Base,
@@ -183,7 +179,7 @@ class TestLangSmithTracing:
 
 
 # ---------------------------------------------------------------------------
-# Trace emission verification helpers
+# Trace emission verification helpers (worker tests)
 # ---------------------------------------------------------------------------
 
 
@@ -234,202 +230,6 @@ class _TraceContextManager:
 
     def __exit__(self, *args: Any) -> bool:
         return False
-
-
-def _traceable_stub(**decorator_kwargs: Any) -> Any:
-    def decorator(func: Any) -> Any:
-        return func
-
-    return decorator
-
-
-def _make_mock_model_factory(default_intent: str = "weather") -> MagicMock:
-    """Return a model factory whose chat model answers directly without tool calls."""
-    mock_chat = AsyncMock()
-    mock_response = MagicMock()
-    mock_response.content = "Jutro będzie słonecznie, około 20°C."
-    mock_response.tool_calls = []
-    mock_chat.ainvoke = AsyncMock(return_value=mock_response)
-
-    def with_structured_output_side_effect(schema: Any) -> MagicMock:
-        mock_extraction = MagicMock()
-
-        schema_name = getattr(schema, "__name__", str(schema))
-
-        if "IntentExtraction" in schema_name:
-            mock_extraction.intent = default_intent
-        elif "LocationExtraction" in schema_name:
-            mock_extraction.location_name = None
-            mock_extraction.focus = None
-        elif "RuleProposalExtraction" in schema_name:
-            mock_extraction.cel_expression = 'max("wind_gusts_10m_ms", weekend()) >= 12'
-            mock_extraction.explanation = "Test rule"
-            mock_extraction.short_id = None
-        else:
-            pass
-
-        return _make_async_runnable(mock_extraction)
-
-    mock_chat.with_structured_output = MagicMock(side_effect=with_structured_output_side_effect)
-
-    mock_model_factory = MagicMock(spec=["create_chat_model"])
-    mock_model_factory.create_chat_model = MagicMock(return_value=mock_chat)
-    return mock_model_factory
-
-
-def _make_async_runnable(return_value: MagicMock) -> MagicMock:
-    """Create a mock that works as a Runnable when used with `|` chaining.
-
-    LangChain's ``RunnableSequence`` wraps non-Runnable types in
-    ``RunnableLambda``, which calls the object as a function (``obj(input)``)
-    rather than ``obj.ainvoke(input)``.  A plain ``AsyncMock`` would return a
-    fresh mock when called.  Setting both ``ainvoke`` and ``return_value``
-    ensures both paths return the same value.
-    """
-    m = AsyncMock()
-    m.ainvoke = AsyncMock(return_value=return_value)
-    m.return_value = return_value
-    return m
-
-
-# ---------------------------------------------------------------------------
-# Conversation flow trace tests
-# ---------------------------------------------------------------------------
-
-
-class TestTraceEmission:
-    async def test_conversation_weather_flow_emits_traces(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        stub = _TraceStub()
-        monkeypatch.setattr(
-            "weather_agent.application.conversation_service.trace",
-            stub,
-        )
-        monkeypatch.setattr(
-            "weather_agent.application.weather.weather_handler.traceable",
-            _traceable_stub,
-        )
-
-        mock_agent = MagicMock()
-        mock_agent.ainvoke = AsyncMock(
-            return_value={"messages": [AIMessage(content="Odpowiedź asystenta")]}
-        )
-        monkeypatch.setattr(
-            "weather_agent.application.weather.weather_handler.create_weather_agent",
-            MagicMock(return_value=mock_agent),
-        )
-
-        loc = LocationRef(id="1", name="Warszawa", latitude=52.22, longitude=21.01)
-        tr = ResolvedTimeRange(
-            start=datetime(2026, 5, 1, tzinfo=UTC),
-            end=datetime(2026, 5, 1, 23, 59, tzinfo=UTC),
-            explanation="Jutro",
-        )
-
-        deps = ConversationDeps(
-            model_factory=_make_mock_model_factory(),
-            forecast_provider=MagicMock(),
-            geocoder=MagicMock(),
-            date_resolver=MagicMock(),
-        )
-        orchestrator = ConversationOrchestrator(deps)
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": None,
-            "context_key": "999",
-            "user_message": "jaka pogoda jutro?",
-            "message_id": 42,
-            "resolved_location": loc,
-            "resolved_time_range": tr,
-        }
-
-        result = await orchestrator.handle_turn(state)
-
-        assert result.get("answer") is not None
-        assert result.get("resolved_intent") == "weather"
-
-        names = [c.name for c in stub.calls]
-        assert "telegram-turn:999:unknown" in names
-
-        top_level = next(c for c in stub.calls if c.name == "telegram-turn:999:unknown")
-        assert top_level.run_type == "chain"
-        assert top_level.tags is not None
-        assert "telegram" in top_level.tags
-        assert "conversation" in top_level.tags
-        assert top_level.metadata is not None
-        assert top_level.metadata.get("context_key") == "999"
-        assert top_level.metadata.get("chat_id") == 999
-
-    async def test_conversation_rule_flow_emits_traces(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        stub = _TraceStub()
-        monkeypatch.setattr(
-            "weather_agent.application.conversation_service.trace",
-            stub,
-        )
-        monkeypatch.setattr(
-            "weather_agent.application.rules.rule_handler.traceable",
-            stub,
-        )
-
-        deps = ConversationDeps(
-            model_factory=_make_mock_model_factory(default_intent="rule"),
-            cel_evaluator=MagicMock(),
-            rule_service=MagicMock(),
-        )
-        orchestrator = ConversationOrchestrator(deps)
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": None,
-            "context_key": "999",
-            "user_message": "ustaw regułę gdy wiatr powyżej 10 m/s",
-            "message_id": 42,
-        }
-
-        result = await orchestrator.handle_turn(state)
-
-        assert result.get("answer") is not None
-
-        names = [c.name for c in stub.calls]
-        assert "telegram-turn:999:unknown" in names
-
-    async def test_conversation_reply_follow_up_tag(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        stub = _TraceStub()
-        monkeypatch.setattr(
-            "weather_agent.application.conversation_service.trace",
-            stub,
-        )
-
-        orchestrator = ConversationOrchestrator()
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": 1,
-            "context_key": "999:1",
-            "user_message": "a wiatr?",
-            "message_id": 43,
-            "reply_to_message_id": 42,
-        }
-
-        result = await orchestrator.handle_turn(state)
-        assert result.get("resolved_intent") == "weather"
-
-        top_level = next(c for c in stub.calls if c.name.startswith("telegram-turn:999:1"))
-        assert top_level.tags is not None
-        assert "reply-follow-up" in top_level.tags
-        assert top_level.metadata is not None
-        assert top_level.metadata.get("is_reply_follow_up") is True
 
 
 # ---------------------------------------------------------------------------
@@ -683,7 +483,7 @@ class TestTracingUtilities:
             end=datetime(2026, 5, 1, 23, 59, tzinfo=UTC),
             explanation="Jutro",
         )
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "authorized_user_id": 12345,
             "chat_id": 999,
             "message_thread_id": 1,
@@ -726,7 +526,7 @@ class TestTracingUtilities:
         assert "cel_validation_result" not in metadata
 
     def test_build_telegram_turn_tags(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1",
             "resolved_intent": "weather",
@@ -735,7 +535,7 @@ class TestTracingUtilities:
         assert tags == ["telegram", "conversation", "intent:weather"]
 
     def test_build_telegram_turn_tags_with_reply(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1",
             "reply_to_message_id": 42,
@@ -744,7 +544,7 @@ class TestTracingUtilities:
         assert "reply-follow-up" in tags
 
     def test_build_run_name(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1:2",
             "resolved_intent": "rule",
@@ -753,12 +553,12 @@ class TestTracingUtilities:
         assert name == "telegram-turn:1:2:rule"
 
     def test_build_run_name_defaults_to_unknown(self) -> None:
-        state: ConversationState = {"chat_id": 1, "context_key": "1"}
+        state: dict[str, Any] = {"chat_id": 1, "context_key": "1"}
         name = build_run_name(state)
         assert name == "telegram-turn:1:unknown"
 
     def test_build_graph_config(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1",
             "resolved_intent": "weather",
@@ -770,7 +570,7 @@ class TestTracingUtilities:
         assert config["metadata"]["context_key"] == "1"
 
     def test_build_node_metadata_inherits_conversation_context(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1",
             "resolved_intent": "weather",
@@ -781,7 +581,7 @@ class TestTracingUtilities:
         assert node_meta["resolved_intent"] == "weather"
 
     def test_build_telegram_turn_metadata_omits_none_values(self) -> None:
-        state: ConversationState = {
+        state: dict[str, Any] = {
             "chat_id": 1,
             "context_key": "1",
             "user_message": None,

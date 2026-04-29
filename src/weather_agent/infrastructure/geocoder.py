@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 import httpx
-from pydantic import BaseModel, Field
 
 from weather_agent.domain.polish_utils import normalize_polish
 from weather_agent.domain.weather import LocationRef

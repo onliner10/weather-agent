@@ -146,23 +146,27 @@ class RulesToolbox:
 
     @traceable(run_type="tool")
     async def list_notification_rules(
-        self, include_disabled: bool = False,
+        self,
+        include_disabled: bool = False,
     ) -> ListRulesToolResult:
         TOOL_CALLS_TOTAL.labels(tool="list_notification_rules").inc()
         start = _time.perf_counter()
         try:
             rules = await self.rule_service.list_rules(
-                self.user_id, include_disabled=include_disabled,
+                self.user_id,
+                include_disabled=include_disabled,
             )
             rules_data: list[dict[str, Any]] = []
             for r in rules:
-                rules_data.append({
-                    "short_id": f"#{r.short_id}",
-                    "expression": r.expression,
-                    "description": r.description or "",
-                    "enabled": r.enabled,
-                    "location_id": r.location_id,
-                })
+                rules_data.append(
+                    {
+                        "short_id": f"#{r.short_id}",
+                        "expression": r.expression,
+                        "description": r.description or "",
+                        "enabled": r.enabled,
+                        "location_id": r.location_id,
+                    }
+                )
             return ListRulesToolResult(rules=rules_data, count=len(rules_data))
         except Exception as exc:
             logger.exception("list_notification_rules_failed", user_id=self.user_id)
@@ -201,7 +205,10 @@ class RulesToolbox:
         start = _time.perf_counter()
         try:
             return await self._execute_propose(
-                cel_expression, explanation, location_name, edit_short_id,
+                cel_expression,
+                explanation,
+                location_name,
+                edit_short_id,
             )
         finally:
             TOOL_CALL_DURATION_SECONDS.labels(tool="propose_notification_rule").observe(
@@ -249,7 +256,8 @@ class RulesToolbox:
         )
 
         await self.memory_service.store_pending_confirmation(
-            self.context_key, pending.to_dict(),
+            self.context_key,
+            pending.to_dict(),
         )
 
         header = "Propozycja edycji reguły" if action == "edit_rule" else "Propozycja nowej reguły"
@@ -307,7 +315,8 @@ class RulesToolbox:
 
         effective_chat_id = pending.chat_id if pending.chat_id is not None else self.chat_id
         effective_thread_id = (
-            pending.message_thread_id if pending.message_thread_id is not None
+            pending.message_thread_id
+            if pending.message_thread_id is not None
             else self.message_thread_id
         )
         cel_expression = pending.cel_expression
@@ -321,6 +330,7 @@ class RulesToolbox:
                         error=f"Nie znaleziono reguły #{pending.edit_short_id}",
                     )
                 from weather_agent.domain.rules.models import RuleUpdate
+
                 rule = await self.rule_service.update_rule(
                     existing.id,
                     RuleUpdate(expression=cel_expression, description=explanation),
@@ -426,7 +436,7 @@ class RulesToolbox:
             StructuredTool.from_function(
                 coroutine=self.cancel_pending_action,
                 name="cancel_pending_action",
-description=(
+                description=(
                     "Anuluj oczekującą akcję (np. propozycję reguły powiadomienia). "
                     "Użyj gdy użytkownik odrzuca propozycję "
                     "(np. odpowiada 'nie')."

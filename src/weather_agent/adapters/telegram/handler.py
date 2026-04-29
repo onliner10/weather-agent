@@ -111,8 +111,7 @@ async def make_message_handler(services: BotServices) -> Any:
                 )
 
                 all_tools = (
-                    weather_toolbox.to_langchain_tools()
-                    + rules_toolbox.to_langchain_tools()
+                    weather_toolbox.to_langchain_tools() + rules_toolbox.to_langchain_tools()
                 )
 
                 pending_confirmation = await memory_service.get_pending_confirmation(context_key)
@@ -183,7 +182,12 @@ async def make_message_handler(services: BotServices) -> Any:
                     pending_for_save = _PC.from_dict(new_pending)
 
                 await _save_turn(
-                    memory_service, context_key, text, answer, message_id, pending_for_save,
+                    memory_service,
+                    context_key,
+                    text,
+                    answer,
+                    message_id,
+                    pending_for_save,
                 )
                 await session.commit()
 
@@ -209,7 +213,8 @@ async def make_message_handler(services: BotServices) -> Any:
                         context_service2 = TelegramContextService(session)
                         memory_service2 = ThreadMemoryService(context_service2)
                         await memory_service2.update_last_bot_turn_message_id(
-                            context_key, bot_message_id,
+                            context_key,
+                            bot_message_id,
                         )
                         await session.commit()
                 except Exception:
@@ -249,7 +254,8 @@ async def _save_turn(
 
         if pending_confirmation is not None:
             await memory_service.store_pending_confirmation(
-                context_key, pending_confirmation.to_dict(),
+                context_key,
+                pending_confirmation.to_dict(),
             )
         else:
             stored = await memory_service.get_pending_confirmation(context_key)
@@ -263,6 +269,7 @@ async def _save_turn(
 
 def _PC_from_dict_if_needed(data: dict[str, Any]) -> Any:
     from weather_agent.application.conversation_models import PendingConfirmation
+
     try:
         return PendingConfirmation.from_dict(data)
     except Exception:

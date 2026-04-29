@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
@@ -38,17 +38,34 @@ logger = get_logger(__name__)
 _WARSAW = ZoneInfo("Europe/Warsaw")
 
 _WEATHER_CODE_MAP: dict[int, str] = {
-    0: "bezchmurnie", 1: "przeważnie czysto", 2: "częściowe zachmurzenie",
-    3: "zachmurzenie", 45: "mgła", 48: "osadzająca mgła",
-    51: "delikatna mżawka", 53: "umiarkowana mżawka", 55: "gęsta mżawka",
-    56: "zamarzająca mżawka", 57: "gęsta zamarzająca mżawka",
-    61: "niewielki deszcz", 63: "umiarkowany deszcz", 65: "silny deszcz",
-    66: "zamarzający deszcz", 67: "silny zamarzający deszcz",
-    71: "niewielki śnieg", 73: "umiarkowany śnieg", 75: "silny śnieg",
-    77: "ziarna śnieżne", 80: "niewielki deszcz nawalny",
-    81: "umiarkowany deszcz nawalny", 82: "silny deszcz nawalny",
-    85: "niewielki śnieg nawalny", 86: "silny śnieg nawalny",
-    95: "burza", 96: "burza z niewielkim gradem", 99: "burza z silnym gradem",
+    0: "bezchmurnie",
+    1: "przeważnie czysto",
+    2: "częściowe zachmurzenie",
+    3: "zachmurzenie",
+    45: "mgła",
+    48: "osadzająca mgła",
+    51: "delikatna mżawka",
+    53: "umiarkowana mżawka",
+    55: "gęsta mżawka",
+    56: "zamarzająca mżawka",
+    57: "gęsta zamarzająca mżawka",
+    61: "niewielki deszcz",
+    63: "umiarkowany deszcz",
+    65: "silny deszcz",
+    66: "zamarzający deszcz",
+    67: "silny zamarzający deszcz",
+    71: "niewielki śnieg",
+    73: "umiarkowany śnieg",
+    75: "silny śnieg",
+    77: "ziarna śnieżne",
+    80: "niewielki deszcz nawalny",
+    81: "umiarkowany deszcz nawalny",
+    82: "silny deszcz nawalny",
+    85: "niewielki śnieg nawalny",
+    86: "silny śnieg nawalny",
+    95: "burza",
+    96: "burza z niewielkim gradem",
+    99: "burza z silnym gradem",
 }
 
 
@@ -64,11 +81,19 @@ def _weather_code_description(code: str | None) -> str | None:
 def _format_point(p: Any) -> dict[str, Any]:
     d: dict[str, Any] = {"time": str(p.target_time)}
     for attr in (
-        "temperature_2m_c", "apparent_temperature_c", "precipitation_mm",
-        "precipitation_probability_pct", "rain_mm", "snowfall_cm",
-        "cloud_cover_pct", "wind_speed_10m_ms", "wind_gusts_10m_ms",
-        "wind_direction_10m_deg", "pressure_msl_hpa",
-        "relative_humidity_2m_pct", "weather_code",
+        "temperature_2m_c",
+        "apparent_temperature_c",
+        "precipitation_mm",
+        "precipitation_probability_pct",
+        "rain_mm",
+        "snowfall_cm",
+        "cloud_cover_pct",
+        "wind_speed_10m_ms",
+        "wind_gusts_10m_ms",
+        "wind_direction_10m_deg",
+        "pressure_msl_hpa",
+        "relative_humidity_2m_pct",
+        "weather_code",
     ):
         v = getattr(p, attr, None)
         if v is not None:
@@ -79,9 +104,15 @@ def _format_point(p: Any) -> dict[str, Any]:
 def _format_observation_point(p: Any) -> dict[str, Any]:
     d: dict[str, Any] = {}
     for attr in (
-        "observed_at", "station_name", "distance_km", "temperature_c",
-        "wind_speed_ms", "wind_direction_deg", "pressure_hpa",
-        "humidity_pct", "precipitation_mm",
+        "observed_at",
+        "station_name",
+        "distance_km",
+        "temperature_c",
+        "wind_speed_ms",
+        "wind_direction_deg",
+        "pressure_hpa",
+        "humidity_pct",
+        "precipitation_mm",
     ):
         v = getattr(p, attr, None)
         if v is not None:
@@ -177,7 +208,10 @@ class WeatherToolbox:
 
     @traceable(run_type="tool")
     async def get_forecast(
-        self, location_name: str, start_date: str, end_date: str,
+        self,
+        location_name: str,
+        start_date: str,
+        end_date: str,
         variables: list[str] | None = None,
     ) -> ForecastToolResult:
         TOOL_CALLS_TOTAL.labels(tool="get_forecast").inc()
@@ -192,7 +226,10 @@ class WeatherToolbox:
             )
 
     async def _execute_get_forecast(
-        self, location_name: str, start_date_str: str, end_date_str: str,
+        self,
+        location_name: str,
+        start_date_str: str,
+        end_date_str: str,
         variable_names: list[str],
     ) -> ForecastToolResult:
         location = await self._resolve_location(location_name)
@@ -207,7 +244,8 @@ class WeatherToolbox:
             if start_dt > end_dt:
                 return ForecastToolResult(error="start_date nie może być późniejsza niż end_date")
             time_range = ResolvedTimeRange(
-                start=start_dt, end=end_dt,
+                start=start_dt,
+                end=end_dt,
                 explanation=f"{start_date_str} – {end_date_str}",
             )
         except ValueError:
@@ -227,18 +265,26 @@ class WeatherToolbox:
         start = _time.perf_counter()
         try:
             forecast = await self.forecast_provider.get_forecast(
-                location=location, time_range=tr, variables=variables,
+                location=location,
+                time_range=tr,
+                variables=variables,
                 resolution=ForecastResolution.hourly,
             )
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
         except WeatherProviderError as exc:
-            PROVIDER_REQUESTS_TOTAL.labels(provider=getattr(exc, "provider", provider_name), outcome="failure").inc()
-            return ForecastToolResult(error=f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}")
+            PROVIDER_REQUESTS_TOTAL.labels(
+                provider=getattr(exc, "provider", provider_name), outcome="failure"
+            ).inc()
+            return ForecastToolResult(
+                error=f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}"
+            )
         except Exception:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
             return ForecastToolResult(error="Błąd podczas pobierania prognozy. Spróbuj ponownie.")
         finally:
-            PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(_time.perf_counter() - start)
+            PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(
+                _time.perf_counter() - start
+            )
 
         points_data = [_format_point(p) for p in forecast.points]
         return ForecastToolResult(
@@ -256,7 +302,9 @@ class WeatherToolbox:
         try:
             return await self._execute_get_observations(location_name)
         finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="get_observations").observe(_time.perf_counter() - start)
+            TOOL_CALL_DURATION_SECONDS.labels(tool="get_observations").observe(
+                _time.perf_counter() - start
+            )
 
     async def _execute_get_observations(self, location_name: str) -> ObservationToolResult:
         if self.observation_provider is None:
@@ -270,17 +318,25 @@ class WeatherToolbox:
         start = _time.perf_counter()
         try:
             obs = await self.observation_provider.get_observations(
-                location=location, radius_km=50.0, variables=list(WeatherVariable),
+                location=location,
+                radius_km=50.0,
+                variables=list(WeatherVariable),
             )
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
         except WeatherProviderError as exc:
-            PROVIDER_REQUESTS_TOTAL.labels(provider=getattr(exc, "provider", provider_name), outcome="failure").inc()
+            PROVIDER_REQUESTS_TOTAL.labels(
+                provider=getattr(exc, "provider", provider_name), outcome="failure"
+            ).inc()
             return ObservationToolResult(error=f"Błąd dostawcy obserwacji: {exc.message}")
         except Exception:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
-            return ObservationToolResult(error="Błąd podczas pobierania obserwacji. Spróbuj ponownie.")
+            return ObservationToolResult(
+                error="Błąd podczas pobierania obserwacji. Spróbuj ponownie."
+            )
         finally:
-            PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(_time.perf_counter() - start)
+            PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(
+                _time.perf_counter() - start
+            )
 
         points_data = [_format_observation_point(p) for p in obs.points]
         return ObservationToolResult(location=location.name, observations=points_data)
@@ -292,9 +348,13 @@ class WeatherToolbox:
         try:
             return await self._execute_save_location(location_name, alias)
         finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="save_location").observe(_time.perf_counter() - start)
+            TOOL_CALL_DURATION_SECONDS.labels(tool="save_location").observe(
+                _time.perf_counter() - start
+            )
 
-    async def _execute_save_location(self, location_name: str, alias: str) -> SaveLocationToolResult:
+    async def _execute_save_location(
+        self, location_name: str, alias: str
+    ) -> SaveLocationToolResult:
         if self.location_service is None:
             return SaveLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
 
@@ -306,22 +366,33 @@ class WeatherToolbox:
 
         resolved = await self.geocoder.geocode(location_name)
         if resolved is None:
-            return SaveLocationToolResult(error=f"Nie udało się rozpoznać lokalizacji '{location_name}'.")
+            return SaveLocationToolResult(
+                error=f"Nie udało się rozpoznać lokalizacji '{location_name}'."
+            )
 
         try:
             aliases = [alias] if alias else []
             await self.location_service.create_location(
                 self.user_id,
-                LocationCreate(name=location_name, aliases=aliases, latitude=resolved.latitude, longitude=resolved.longitude),
+                LocationCreate(
+                    name=location_name,
+                    aliases=aliases,
+                    latitude=resolved.latitude,
+                    longitude=resolved.longitude,
+                ),
             )
             msg = f"Zapamiętałem lokalizację: {location_name}"
             if alias:
                 msg += f" (alias: {alias})"
             return SaveLocationToolResult(success=msg)
         except (LocationAliasConflictError, LocationNameConflictError):
-            return SaveLocationToolResult(error="Masz już zapisaną lokalizację o tej nazwie lub aliasie.")
+            return SaveLocationToolResult(
+                error="Masz już zapisaną lokalizację o tej nazwie lub aliasie."
+            )
         except Exception as exc:
-            logger.exception("save_location_failed", user_id=self.user_id, location_name=location_name)
+            logger.exception(
+                "save_location_failed", user_id=self.user_id, location_name=location_name
+            )
             return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
 
     @traceable(run_type="tool")
@@ -331,14 +402,18 @@ class WeatherToolbox:
         try:
             return await self._execute_list_locations(include_disabled)
         finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="list_locations").observe(_time.perf_counter() - start)
+            TOOL_CALL_DURATION_SECONDS.labels(tool="list_locations").observe(
+                _time.perf_counter() - start
+            )
 
     async def _execute_list_locations(self, include_disabled: bool) -> ListLocationsToolResult:
         if self.location_service is None:
             return ListLocationsToolResult(error="Usługa lokalizacji jest niedostępna.")
 
         try:
-            locations = await self.location_service.list_locations(self.user_id, include_disabled=include_disabled)
+            locations = await self.location_service.list_locations(
+                self.user_id, include_disabled=include_disabled
+            )
             locations_data: list[dict[str, Any]] = []
             for loc in locations:
                 entry: dict[str, Any] = {
@@ -358,7 +433,7 @@ class WeatherToolbox:
             logger.exception("list_locations_failed", user_id=self.user_id)
             return ListLocationsToolResult(error=f"Błąd podczas pobierania lokalizacji: {exc}")
 
-    def to_langchain_tools(self) -> list:
+    def to_langchain_tools(self) -> list[BaseTool]:
         return [
             StructuredTool.from_function(
                 coroutine=self.get_forecast,
@@ -383,8 +458,10 @@ class WeatherToolbox:
                 coroutine=self.save_location,
                 name="save_location",
                 description=(
-                    "Zapisz lokalizację użytkownika (np. dom, praca) pod konkretną nazwą lub adresem."
-                    " Jeśli użytkownik prosi o 'zapamiętanie lokalizacji domowej', ustaw alias na 'dom'."
+                    "Zapisz lokalizację użytkownika (np. dom, praca)"
+                    " pod konkretną nazwą lub adresem."
+                    " Jeśli użytkownik prosi o 'zapamiętanie"
+                    " lokalizacji domowej', ustaw alias na 'dom'."
                 ),
                 args_schema=SaveLocationArgs,
             ),

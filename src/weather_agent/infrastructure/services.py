@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from weather_agent.infrastructure.db.setup import create_engine, create_session_factory
 from weather_agent.observability.logging import get_logger
@@ -82,36 +82,3 @@ class BotServices:
         self.model_factory = ModelFactory(settings=self.settings.model)
         self.geocoder = Geocoder(model_factory=self.model_factory)
         logger.info("Application services initialized")
-
-    def compile_graph(
-        self,
-        location_service: Any = None,
-        rule_service: Any = None,
-        user_id: int = 0,
-        memory_service: Any = None,
-    ) -> Any:
-        import warnings
-
-        warnings.warn(
-            "compile_graph is deprecated — use direct agent invocation via handler",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from weather_agent.application.conversation_service import (
-            ConversationDeps,
-            compile_conversation_service,
-        )
-
-        deps = ConversationDeps(
-            location_service=location_service,
-            date_resolver=self.date_resolver,
-            forecast_provider=self.forecast_provider,
-            observation_provider=self.observation_provider,
-            model_factory=self.model_factory,
-            cel_evaluator=self.cel_evaluator,
-            rule_service=rule_service,
-            geocoder=self.geocoder,
-            user_id=user_id,
-            memory_service=memory_service,
-        )
-        return compile_conversation_service(deps)

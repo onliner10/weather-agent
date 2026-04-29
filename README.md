@@ -69,7 +69,9 @@ Telegram weather AI agent foundations for a Polish-language MVP built around det
 
    - `uv run pytest`
    - `uv run ruff check .`
+   - `uv run ruff format --check .`
    - `uv run mypy`
+   - `scripts/quality/check-dead-code.sh`
 
 6. Install local git hooks that block likely secrets before commit and push:
 
@@ -77,7 +79,7 @@ Telegram weather AI agent foundations for a Polish-language MVP built around det
    ./scripts/security/install-git-hooks.sh
    ```
 
-   The hooks run `scripts/security/scan-secrets.sh`. If `gitleaks` is installed locally, the same hooks also run `gitleaks protect --staged` on commit and `gitleaks detect` on push.
+   The hooks run `scripts/security/scan-secrets.sh`, `ruff check`, `ruff format --check`, and a vulture dead-code scan. If `gitleaks` is installed locally, the hooks also run `gitleaks protect --staged` on commit and `gitleaks detect` on push.
 
 ## Repository layout
 
