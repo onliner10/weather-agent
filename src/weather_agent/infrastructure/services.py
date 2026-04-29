@@ -90,7 +90,10 @@ class BotServices:
         user_id: int = 0,
         memory_service: Any = None,
     ) -> Any:
-        from weather_agent.graphs.conversation import ConversationDeps, compile_conversation_graph
+        from weather_agent.application.conversation_service import (
+            ConversationDeps,
+            compile_conversation_service,
+        )
 
         deps = ConversationDeps(
             location_service=location_service,
@@ -104,4 +107,4 @@ class BotServices:
             user_id=user_id,
             memory_service=memory_service,
         )
-        return compile_conversation_graph(deps)
+        return compile_conversation_service(deps)

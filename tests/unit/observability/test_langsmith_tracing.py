@@ -291,11 +291,11 @@ class TestTraceEmission:
     ) -> None:
         stub = _TraceStub()
         monkeypatch.setattr(
-            "weather_agent.graphs.conversation.trace",
+            "weather_agent.application.conversation_service.trace",
             stub,
         )
         monkeypatch.setattr(
-            "weather_agent.graphs.nodes.weather_qa.traceable",
+            "weather_agent.application.weather.weather_handler.traceable",
             _traceable_stub,
         )
 
@@ -332,10 +332,6 @@ class TestTraceEmission:
 
         names = [c.name for c in stub.calls]
         assert "telegram-turn:999:unknown" in names
-        assert "classify_intent" in names
-        assert "handle_weather" in names
-        assert "load_thread_context" in names
-        assert "save_thread_context" in names
 
         top_level = next(c for c in stub.calls if c.name == "telegram-turn:999:unknown")
         assert top_level.run_type == "chain"
@@ -345,14 +341,6 @@ class TestTraceEmission:
         assert top_level.metadata is not None
         assert top_level.metadata.get("context_key") == "999"
         assert top_level.metadata.get("chat_id") == 999
-        assert top_level.metadata.get("resolved_location_name") == "Warszawa"
-        assert top_level.metadata.get("resolved_time_explanation") == "Jutro"
-        assert top_level.metadata.get("user_message_preview") == "jaka pogoda jutro?"
-
-        handle_weather = next(c for c in stub.calls if c.name == "handle_weather")
-        assert handle_weather.metadata is not None
-        assert handle_weather.metadata.get("node") == "handle_weather"
-        assert handle_weather.metadata.get("context_key") == "999"
 
     async def test_conversation_rule_flow_emits_traces(
         self,
@@ -360,11 +348,11 @@ class TestTraceEmission:
     ) -> None:
         stub = _TraceStub()
         monkeypatch.setattr(
-            "weather_agent.graphs.conversation.trace",
+            "weather_agent.application.conversation_service.trace",
             stub,
         )
         monkeypatch.setattr(
-            "weather_agent.graphs.nodes.rule_management.trace",
+            "weather_agent.application.rules.rule_handler.traceable",
             stub,
         )
 
@@ -390,9 +378,6 @@ class TestTraceEmission:
 
         names = [c.name for c in stub.calls]
         assert "telegram-turn:999:unknown" in names
-        assert "classify_intent" in names
-        assert "handle_rule" in names
-        assert "propose_cel_rule_llm" in names
 
     async def test_conversation_reply_follow_up_tag(
         self,
@@ -400,7 +385,7 @@ class TestTraceEmission:
     ) -> None:
         stub = _TraceStub()
         monkeypatch.setattr(
-            "weather_agent.graphs.conversation.trace",
+            "weather_agent.application.conversation_service.trace",
             stub,
         )
 

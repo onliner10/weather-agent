@@ -4,11 +4,10 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import trace
-
 from pydantic import BaseModel, Field
+
 from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluationResult, CELEvaluator
 from weather_agent.domain.locations import LocationService
