@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from typing import Any
@@ -243,19 +244,8 @@ async def _make_message_handler(services: _BotServices) -> Any:
 
             reply_start = time.perf_counter()
             try:
-                async with trace(
-                    "send_telegram_reply",
-                    run_type="chain",
-                    metadata={
-                        "chat_id": chat_id,
-                        "message_thread_id": thread_id,
-                        "context_key": context_key,
-                        "inbound_message_id": message_id,
-                        "is_reply_follow_up": reply_to_message_id is not None,
-                    },
-                ):
-                    sent_message = await update.message.reply_text(answer)
-                    bot_message_id = sent_message.message_id if sent_message else None
+                sent_message = await update.message.reply_text(answer)
+                bot_message_id = sent_message.message_id if sent_message else None
                 REPLY_SEND_TOTAL.labels(outcome="success").inc()
             except Exception as exc:
                 REPLY_SEND_TOTAL.labels(outcome="failure").inc()
@@ -287,7 +277,24 @@ async def _make_message_handler(services: _BotServices) -> Any:
     return message_handler
 
 
+def _acquire_lock(name: str) -> str:
+    pid_file = f"/tmp/weather-agent-{name}.pid"
+    if os.path.exists(pid_file):
+        with open(pid_file) as f:
+            try:
+                old_pid = int(f.read().strip())
+            except ValueError:
+                old_pid = -1
+        if old_pid > 0 and os.path.exists(f"/proc/{old_pid}"):
+            print(f"Another {name} instance (PID {old_pid}) is already running.", file=sys.stderr)
+            sys.exit(1)
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+    return pid_file
+
+
 def cmd_bot(_args: argparse.Namespace) -> None:
+    _pid_file = _acquire_lock("bot")
     print("Initializing bot services...")
     services = _BotServices()
 
@@ -326,10 +333,14 @@ def cmd_bot(_args: argparse.Namespace) -> None:
     bot.setup()
     print("Starting Telegram bot polling...")
     logger.info("Starting Telegram bot polling...")
-    bot.run()
+    try:
+        bot.run()
+    finally:
+        os.unlink(_pid_file)
 
 
 def cmd_worker(_args: argparse.Namespace) -> None:
+    _pid_file = _acquire_lock("worker")
     services = _BotServices()
 
     if services.settings.observability.enabled:
@@ -380,7 +391,10 @@ def cmd_worker(_args: argparse.Namespace) -> None:
 
             with bound_worker_context():
                 logger.info("starting_rule_evaluation_worker")
-                await worker.run_loop()
+                try:
+                    await worker.run_loop()
+                finally:
+                    os.unlink(_pid_file)
 
     asyncio.run(_run_worker())
 

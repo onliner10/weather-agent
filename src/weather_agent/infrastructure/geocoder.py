@@ -39,6 +39,11 @@ class Geocoder:
     async def geocode(self, name: str) -> LocationRef | None:
         start = time.perf_counter()
         try:
+            result = await self._try_geocode(name)
+            if result is not None:
+                GEOCODE_REQUESTS_TOTAL.labels(outcome="success").inc()
+                return result
+
             if self._model_factory is not None:
                 guess = await self._ask_llm(name)
                 if guess is not None:
@@ -52,11 +57,6 @@ class Geocoder:
                         query=query,
                         original_name=name,
                     )
-
-            result = await self._try_geocode(name)
-            if result is not None:
-                GEOCODE_REQUESTS_TOTAL.labels(outcome="success").inc()
-                return result
 
             GEOCODE_REQUESTS_TOTAL.labels(outcome="not_found").inc()
             return None

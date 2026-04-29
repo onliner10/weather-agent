@@ -29,7 +29,7 @@ def test_settings_apply_model_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = AppSettings()
 
     assert settings.model.provider == "openai"
-    assert settings.model.model_name == "gpt-5-mini"
+    assert settings.model.model_name == "gpt-4.1-mini"
     assert settings.telegram.bot_token == SecretStr("telegram-token")
 
 

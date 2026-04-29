@@ -283,6 +283,7 @@ async def _execute_tool_call(
     date_resolver: DateResolver,
     location_service: LocationService | None,
     user_id: int,
+    resolved_location: LocationRef | None = None,
 ) -> str:
     TOOL_CALLS_TOTAL.labels(tool=tool_name).inc()
     start = time.perf_counter()
@@ -295,6 +296,7 @@ async def _execute_tool_call(
                 date_resolver,
                 location_service,
                 user_id,
+                resolved_location=resolved_location,
             )
         elif tool_name == "get_observations":
             result = await _execute_get_observations(
@@ -303,6 +305,7 @@ async def _execute_tool_call(
                 geocoder,
                 location_service,
                 user_id,
+                resolved_location=resolved_location,
             )
         else:
             result = json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -341,12 +344,15 @@ async def _execute_get_forecast(
     date_resolver: DateResolver,
     location_service: LocationService | None,
     user_id: int,
+    resolved_location: LocationRef | None = None,
 ) -> str:
     location_name = args.get("location_name", "")
     time_expr = args.get("time_expression", "dziś")
     variable_names = args.get("variables", [])
 
-    location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    location = resolved_location
+    if location is None:
+        location = await _resolve_location(location_name, geocoder, location_service, user_id)
     if location is None:
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
@@ -424,12 +430,15 @@ async def _execute_get_observations(
     geocoder: Geocoder,
     location_service: LocationService | None,
     user_id: int,
+    resolved_location: LocationRef | None = None,
 ) -> str:
     if observation_provider is None:
         return json.dumps({"error": "Obserwacje niedostępne"})
 
     location_name = args.get("location_name", "")
-    location = await _resolve_location(location_name, geocoder, location_service, user_id)
+    location = resolved_location
+    if location is None:
+        location = await _resolve_location(location_name, geocoder, location_service, user_id)
     if location is None:
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
@@ -508,15 +517,16 @@ async def weather_agent_node(
         return {"answer": "Przepraszam, usługa pogodowa jest niedostępna."}
 
     try:
-        extraction = await _extract_location_and_focus(user_message, model_factory)
+        resolved_loc = state.get("resolved_location")
         location_hint = ""
-        if extraction.location_name:
-            location_hint = f"Użytkownik pyta o miejscowość: {extraction.location_name}.\n"
+        if resolved_loc and resolved_loc.name:
+            location_hint = f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n"
 
         focus_hint = ""
-        if extraction.focus:
+        focus = state.get("user_focus")
+        if focus:
             focus_hint = (
-                f"Użytkownik pyta szczegółowo o: {extraction.focus}."
+                f"Użytkownik pyta szczegółowo o: {focus}."
                 " Skoncentruj się na tym aspekcie.\n"
             )
 
@@ -564,7 +574,7 @@ async def weather_agent_node(
                 answer = str(response.content) if response.content else ""
                 if not answer:
                     answer = "Przepraszam, nie udało się przetworzyć zapytania."
-                return {"answer": answer, "resolved_location": state.get("resolved_location")}
+                return {"answer": answer, "resolved_location": resolved_loc}
 
             for tc in response.tool_calls:
                 tc_dict = tc if isinstance(tc, dict) else dict(tc)
@@ -595,6 +605,7 @@ async def weather_agent_node(
                     date_resolver,
                     location_service,
                     user_id,
+                    resolved_location=resolved_loc,
                 )
 
                 messages.append({"role": "assistant", "content": None, "tool_calls": [tc_dict]})
@@ -606,22 +617,6 @@ async def weather_agent_node(
                         "tool_call_id": tc_id,
                     }
                 )
-
-                if tool_name == "get_forecast" and '"error"' not in result:
-                    try:
-                        data = json.loads(result)
-                        loc_name = data.get("location")
-                        if loc_name:
-                            loc_ref = await _resolve_location(
-                                loc_name,
-                                geocoder,
-                                location_service,
-                                user_id,
-                            )
-                            if loc_ref:
-                                state = {**state, "resolved_location": loc_ref}
-                    except Exception:
-                        pass
 
         return {"answer": "Przepraszam, nie udało się przetworzyć zapytania po zbyt wielu krokach."}
     except Exception:

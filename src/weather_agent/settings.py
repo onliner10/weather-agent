@@ -47,7 +47,7 @@ class ModelSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = "openai"
-    model_name: str = "gpt-5-mini"
+    model_name: str = "gpt-4.1-mini"
     temperature: float = 0.2
     api_key: SecretStr | None = None
     base_url: str | None = None

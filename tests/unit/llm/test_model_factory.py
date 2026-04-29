@@ -40,7 +40,7 @@ class TestModelFactoryDefaults:
 
     def test_default_model_name(self) -> None:
         factory = ModelFactory()
-        assert factory._settings.model_name == "gpt-5-mini"
+        assert factory._settings.model_name == "gpt-4.1-mini"
 
     def test_default_temperature(self) -> None:
         factory = ModelFactory()
