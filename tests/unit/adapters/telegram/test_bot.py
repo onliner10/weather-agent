@@ -23,6 +23,10 @@ def _make_settings(user_ids: list[int] | None = None) -> TelegramSettings:
     )
 
 
+async def _noop_handler(update: object, context: object) -> None:
+    pass
+
+
 def _make_update(
     user_id: int = 42,
     chat_id: int = 100,
@@ -72,20 +76,20 @@ class TestTelegramBotCreation:
     def test_bot_created_from_settings(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         assert bot is not None
 
     def test_bot_setup_creates_application(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         assert bot._app is not None
 
     def test_setup_without_call_raises_on_start(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         with pytest.raises(RuntimeError, match="setup"):
             import asyncio
 
@@ -94,7 +98,7 @@ class TestTelegramBotCreation:
     def test_setup_without_call_raises_on_run(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         with pytest.raises(RuntimeError, match="setup"):
             bot.run()
 
@@ -111,7 +115,7 @@ class TestUnauthorizedMessageHandling:
     async def test_unauthorized_user_gets_denial(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_update(user_id=999)
         context = _make_context()
@@ -124,7 +128,7 @@ class TestUnauthorizedMessageHandling:
     async def test_unauthorized_user_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_update(user_id=999, chat_id=200)
         context = _make_context()
@@ -137,7 +141,7 @@ class TestUnauthorizedMessageHandling:
     async def test_no_secrets_in_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_update(user_id=999)
         context = _make_context()
@@ -164,23 +168,22 @@ class TestAuthorizedMessageHandling:
         custom_handler.assert_awaited_once_with(update, context)
 
     @pytest.mark.asyncio
-    async def test_default_handler_echoes(self) -> None:
+    async def test_custom_handler_is_called(self) -> None:
+        custom_handler = AsyncMock()
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=custom_handler)
         bot.setup()
         update = _make_update(user_id=42, text="pogoda")
         context = _make_context()
         await bot._auth_check(update, context)
-        update.message.reply_text.assert_awaited_once()
-        response = update.message.reply_text.call_args[0][0]
-        assert "pogoda" in response
+        custom_handler.assert_awaited_once_with(update, context)
 
     @pytest.mark.asyncio
     async def test_authorized_user_not_denied(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_update(user_id=42)
         context = _make_context()
@@ -198,7 +201,7 @@ class TestStartCommand:
     async def test_start_for_authorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/start")
         context = _make_context()
@@ -211,7 +214,7 @@ class TestStartCommand:
     async def test_start_for_unauthorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=999, command_text="/start")
         context = _make_context()
@@ -226,7 +229,7 @@ class TestHelpCommand:
     async def test_help_for_authorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/help")
         context = _make_context()
@@ -241,7 +244,7 @@ class TestHelpCommand:
     async def test_help_for_unauthorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=999, command_text="/help")
         context = _make_context()
@@ -256,7 +259,7 @@ class TestStatusCommand:
     async def test_status_for_authorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/status")
         context = _make_context()
@@ -269,7 +272,7 @@ class TestStatusCommand:
     async def test_status_for_unauthorized_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=999, command_text="/status")
         context = _make_context()
@@ -284,7 +287,7 @@ class TestNoUserInUpdate:
     async def test_auth_check_with_no_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = MagicMock(spec=Update)
         update.effective_user = None
@@ -297,7 +300,7 @@ class TestNoUserInUpdate:
     async def test_start_command_with_no_user(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = MagicMock(spec=Update)
         update.effective_user = None
@@ -315,7 +318,7 @@ class TestDodajLokCommand:
         """The /help output should list /dodaj_lok."""
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/help")
         context = _make_context()
@@ -327,7 +330,7 @@ class TestDodajLokCommand:
     async def test_unauthorized_user_gets_denial(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=999, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
@@ -340,7 +343,7 @@ class TestDodajLokCommand:
     async def test_missing_args_shows_usage(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/dodaj_lok")
         context = _make_context()
@@ -354,7 +357,7 @@ class TestDodajLokCommand:
     async def test_invalid_coords_shows_error(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom abc def")
         context = _make_context()
@@ -368,7 +371,7 @@ class TestDodajLokCommand:
     async def test_empty_name_shows_error(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/dodaj_lok  52.2297 21.0122")
         context = _make_context()
@@ -383,7 +386,7 @@ class TestDodajLokCommand:
     async def test_no_session_factory_shows_error(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
@@ -406,6 +409,7 @@ class TestDodajLokCommand:
         bot = TelegramBot(
             settings=settings,
             auth_service=auth,
+            message_handler=_noop_handler,
             session_factory=factory,
         )
         bot.setup()
@@ -455,6 +459,7 @@ class TestDodajLokCommand:
         bot = TelegramBot(
             settings=settings,
             auth_service=auth,
+            message_handler=_noop_handler,
             session_factory=factory,
         )
         bot.setup()
@@ -511,6 +516,7 @@ class TestDodajLokCommand:
         bot = TelegramBot(
             settings=settings,
             auth_service=auth,
+            message_handler=_noop_handler,
             session_factory=factory,
         )
         bot.setup()
@@ -540,6 +546,7 @@ class TestDodajLokCommand:
         bot = TelegramBot(
             settings=settings,
             auth_service=auth,
+            message_handler=_noop_handler,
             session_factory=MagicMock(side_effect=RuntimeError("db down")),
         )
         bot.setup()
@@ -555,7 +562,7 @@ class TestDodajLokCommand:
     async def test_no_user_returns_silently(self) -> None:
         settings = _make_settings(user_ids=[42])
         auth = AuthorizationService(allowed_user_ids=[42])
-        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
         bot.setup()
         update = MagicMock(spec=Update)
         update.effective_user = None

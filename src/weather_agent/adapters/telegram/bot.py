@@ -35,12 +35,12 @@ class TelegramBot:
         self,
         settings: TelegramSettings,
         auth_service: AuthorizationService,
-        message_handler: MessageHandlerCallback | None = None,
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
+message_handler: MessageHandlerCallback,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._settings = settings
         self._auth_service = auth_service
-        self._message_handler = message_handler or _default_message_handler
+        self._message_handler = message_handler
         self._session_factory = session_factory
         self._app: _AppType | None = None
 
@@ -249,13 +249,6 @@ class TelegramBot:
             await _send_denial(update, context)
             return
         await self._message_handler(update, context)
-
-
-async def _default_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message and update.message.text:
-        await update.message.reply_text(
-            f"Otrzymałem: {update.message.text}\nObsługa pytań pogodowych będzie dostępna wkrótce."
-        )
 
 
 async def _send_denial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
