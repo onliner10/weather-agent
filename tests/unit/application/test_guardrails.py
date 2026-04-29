@@ -1,0 +1,157 @@
+"""Architecture and determinism guardrails for the DeepAgents refactor.
+
+These tests codify project-wide invariants so they are enforced by ``pytest``
+and cannot regress silently:
+
+1.  No production Python file exceeds 300 lines (with documented exceptions).
+2.  Domain-layer modules never import infrastructure, adapters, llm, or
+    deepagents — they must remain pure business logic.
+3.  Application-layer modules never import adapters/telegram directly.
+4.  Runtime CEL/rule evaluation paths never call the LLM or model agent.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+SRC = Path(__file__).resolve().parents[3] / "src" / "weather_agent"
+
+# Files that are deliberately longer than 300 lines, with a reason for each.
+_LINE_COUNT_EXCEPTIONS: dict[str, str] = {
+    "domain/cel/evaluator.py": "Complex CEL evaluation with multiple visitor types",
+    "domain/cel/validation.py": "CEL syntax validation and error recovery",
+    "domain/notifications/events.py": "Notification event lifecycle management",
+    "domain/locations.py": "Location CRUD with search, alias matching, defaults",
+    "domain/date_resolver.py": "Holiday-aware date resolution logic",
+    "infrastructure/worker/rule_evaluator.py": "Rule evaluation worker with scheduling",
+    "infrastructure/db/base.py": "SQLAlchemy ORM model declarations",
+    "adapters/telegram/bot.py": "Telegram bot setup with command registration",
+    "adapters/imgw/warnings_provider.py": "IMGW warning parsing and transformation",
+    "adapters/open_meteo/forecast_provider.py": "Open-Meteo API forecast fetching",
+    "llm/tools/weather_tools.py": "Weather toolbox with forecast/observations/location",
+    "graphs/nodes/weather_qa.py": "Deprecated legacy node — slated for removal",
+    "graphs/nodes/rule_management.py": "Deprecated legacy node — slated for removal",
+}
+
+# ---------------------------------------------------------------------------
+# 1. File-size guardrail
+# ---------------------------------------------------------------------------
+
+
+def _all_py_files() -> list[Path]:
+    return sorted(SRC.rglob("*.py"))
+
+
+@pytest.mark.parametrize("pyfile", _all_py_files(), ids=lambda p: str(p.relative_to(SRC)))
+def test_production_file_stays_under_300_lines(pyfile: Path) -> None:
+    rel = str(pyfile.relative_to(SRC))
+    if rel in _LINE_COUNT_EXCEPTIONS:
+        pytest.skip(f"Exempt: {_LINE_COUNT_EXCEPTIONS[rel]}")
+    lines = pyfile.read_text().splitlines()
+    assert len(lines) <= 300, f"{rel} has {len(lines)} lines (limit 300)"
+
+
+# ---------------------------------------------------------------------------
+# 2. Domain-layer import boundaries
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_DOMAIN_IMPORTS: dict[str, list[str]] = {
+    "domain": [
+        "weather_agent.infrastructure",
+        "weather_agent.adapters",
+        "weather_agent.llm",
+        "deepagents",
+    ],
+}
+
+
+def _imports_from(text: str, prefix: str) -> list[str]:
+    """Return import lines in *text* that reference *prefix*."""
+    result: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            if prefix in stripped:
+                result.append(stripped)
+    return result
+
+
+@pytest.mark.parametrize("pyfile", _all_py_files(), ids=lambda p: str(p.relative_to(SRC)))
+def test_domain_import_boundaries(pyfile: Path) -> None:
+    rel = str(pyfile.relative_to(SRC))
+    if not rel.startswith("domain/"):
+        pytest.skip("Not a domain module")
+    text = pyfile.read_text()
+    for prefix in _FORBIDDEN_DOMAIN_IMPORTS["domain"]:
+        matches = _imports_from(text, prefix)
+        assert not matches, (
+            f"{rel} must not import '{prefix}':\n  " + "\n  ".join(matches)
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3. Application-layer adapters boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("pyfile", _all_py_files(), ids=lambda p: str(p.relative_to(SRC)))
+def test_application_does_not_import_telegram(pyfile: Path) -> None:
+    rel = str(pyfile.relative_to(SRC))
+    if not rel.startswith("application/"):
+        pytest.skip("Not an application module")
+    text = pyfile.read_text()
+    matches = _imports_from(text, "weather_agent.adapters.telegram")
+    assert not matches, (
+        f"{rel} must not import telegram adapter directly:\n  " + "\n  ".join(matches)
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. Deterministic CEL/rule runtime — never calls LLM or model agent
+# ---------------------------------------------------------------------------
+
+
+def _all_py_files_under(*parts: str) -> list[Path]:
+    return sorted((SRC / parts[0]).rglob("*.py"))
+
+
+@pytest.mark.parametrize(
+    "pyfile",
+    [p for p in _all_py_files() if "rule" in str(p).lower() or "cel" in str(p).lower()],
+    ids=lambda p: str(p.relative_to(SRC)),
+)
+def test_rule_runtime_does_not_call_llm(pyfile: Path) -> None:
+    """Runtime rule/evaluation files must not import llm or deepagents.
+
+    LLM may *propose* CEL expressions, but the validation, persistence, and
+    evaluation paths must remain purely deterministic.
+    """
+    rel = str(pyfile.relative_to(SRC))
+    text = pyfile.read_text()
+    for forbidden in ("weather_agent.llm", "weather_agent.agent_factory", "deepagents"):
+        matches = _imports_from(text, forbidden)
+        if matches:
+            # Allow llm imports in rules/prompt construction modules that are
+            # clearly used only at proposal time, not runtime.
+            if "rule_handler" in rel or "proposal" in rel.lower():
+                continue
+            pytest.fail(f"{rel} imports {forbidden}")
+
+
+# ---------------------------------------------------------------------------
+# 5. Infrastructure not importing adapters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("pyfile", _all_py_files(), ids=lambda p: str(p.relative_to(SRC)))
+def test_infrastructure_does_not_import_adapters(pyfile: Path) -> None:
+    rel = str(pyfile.relative_to(SRC))
+    if not rel.startswith("infrastructure/"):
+        pytest.skip("Not an infrastructure module")
+    text = pyfile.read_text()
+    matches = _imports_from(text, "weather_agent.adapters")
+    if matches:
+        pytest.fail(f"{rel} imports adapter:\n  " + "\n  ".join(matches))

@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from weather_agent.graphs.state import ConversationState
 
-
-def build_telegram_turn_metadata(state: ConversationState) -> dict[str, Any]:
+def build_telegram_turn_metadata(state: dict[str, Any]) -> dict[str, Any]:
     """Extract concise trace metadata from a conversation state.
 
     Omits secrets and large raw payloads.  Includes identifiers,
@@ -37,7 +35,7 @@ def build_telegram_turn_metadata(state: ConversationState) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if v is not None}
 
 
-def build_telegram_turn_tags(state: ConversationState) -> list[str]:
+def build_telegram_turn_tags(state: dict[str, Any]) -> list[str]:
     """Build LangSmith tags for a Telegram turn."""
     tags = ["telegram", "conversation"]
     intent = state.get("resolved_intent")
@@ -48,7 +46,7 @@ def build_telegram_turn_tags(state: ConversationState) -> list[str]:
     return tags
 
 
-def build_run_name(state: ConversationState) -> str:
+def build_run_name(state: dict[str, Any]) -> str:
     """Build a stable run name for a Telegram turn."""
     context_key = state.get("context_key", "unknown")
     intent = state.get("resolved_intent") or "unknown"
@@ -56,7 +54,7 @@ def build_run_name(state: ConversationState) -> str:
 
 
 def build_node_metadata(
-    state: ConversationState,
+    state: dict[str, Any],
     node_name: str,
 ) -> dict[str, Any]:
     """Build metadata for an individual graph node span.
@@ -69,7 +67,7 @@ def build_node_metadata(
     return metadata
 
 
-def build_graph_config(state: ConversationState) -> dict[str, Any]:
+def build_graph_config(state: dict[str, Any]) -> dict[str, Any]:
     """Build a RunnableConfig dict for LangGraph invocation.
 
     This config is passed as the *config* argument to

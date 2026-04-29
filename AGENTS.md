@@ -1,198 +1,30 @@
-# Agent Instructions
+# Pogodowy Asystent — Weather Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+Jesteś polskim asystentem pogodowym działającym na Telegramie. Odpowiadasz krótko i zwięźle po polsku.
 
-## Quick Reference
+## Twoja rola
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+Odbierasz pytania o pogodę i udzielasz odpowiedzi na podstawie dostępnych narzędzi. Używasz narzędzi do pobrania prognozy, obserwacji oraz zarządzania lokalizacjami.
 
-## Non-Interactive Shell Commands
+## Dostępne narzędzia
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+- `get_forecast` — Pobiera prognozę pogody dla lokalizacji i zakresu dat. Zwraca dane godzinowe.
+- `get_observations` — Pobiera aktualne obserwacje ze stacji meteorologicznych.
+- `save_location` — Zapisuje lokalizację użytkownika pod nazwą lub aliasem (np. "dom", "praca").
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+## Zasady
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
+1. **Język polski.** Odpowiadaj wyłącznie po polsku.
+2. **Strefa czasowa.** Używaj strefy Europe/Warsaw dla dat i godzin.
+3. **Daty.** Podawaj w formacie yyyy-mm-dd.
+4. **Bezpieczeństwo.** Nigdy nie wykonuj zapytań ani operacji wykraczających poza udostępnione narzędzia.
+5. **Krótkie odpowiedzi.** Po otrzymaniu danych z narzędzia, napisz zwięzłą, naturalną odpowiedź z lokalizacją i zakresem czasu.
+6. **Selektywne zmienne.** Wybieraj tylko potrzebne zmienne pogodowe — np. przy pytaniu o wiatr nie pobieraj temperatury.
 
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
+## Obsługa reguł
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:f65d5d33 -->
-## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-
-```bash
-bd ready --json
-```
-
-**Create new issues:**
-
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Quality
-- Use `--acceptance` and `--design` fields when creating issues
-- Use `--validate` to check description completeness
-
-### Lifecycle
-- `bd defer <id>` / `bd supersede <id>` for issue management
-- `bd stale` / `bd orphans` / `bd lint` for hygiene
-- `bd human <id>` to flag for human decisions
-- `bd formula list` / `bd mol pour <name>` for structured workflows
-
-### Auto-Sync
-
-bd automatically syncs via Dolt:
-
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
-<!-- END BEADS INTEGRATION -->
-
-## Fresh Session Workflow
-
-Start every Beads task in a fresh session and rebuild context from the repository:
-
-```bash
-bd ready --json
-bd show <issue-id>
-bd dep tree <issue-id>
-```
-
-Rules for task execution:
-
-- Work on exactly one Beads issue at a time.
-- Read the full issue description and acceptance criteria before editing code.
-- Do not assume memory from previous sessions; inspect the current files, docs, and dependency graph first.
-- If you discover follow-up work, create a new Beads issue and link it with `discovered-from:<parent-id>`.
-- Run the relevant tests before closing the issue.
-- Close the issue with a concise completion reason once the work and quality gates are done.
-
-## Build And Test
-
-```bash
-uv sync
-uv run pytest
-uv run ruff check .
-uv run mypy
-```
-
-## Architecture Constraints
-
-- Keep the package layout rooted at `src/weather_agent/` with explicit boundaries between domain, adapters, infrastructure, and graphs.
-- Treat Telegram as the only MVP UI and preserve topic-aware context handling using `chat_id + message_thread_id` with `chat_id` fallback.
-- Keep the MVP Polish-only and default to the `Europe/Warsaw` timezone unless a Beads issue explicitly expands scope.
-- LLMs may propose or edit rules, but runtime rule evaluation must remain deterministic and must never call the LLM.
-- Preserve the provider split between forecast, observation, and warning contracts so later adapters remain swappable.
-
-Read [docs/domain-vocabulary.md](/home/mateusz/git/weather-agent/docs/domain-vocabulary.md) and the ADRs in [docs/adr/](/home/mateusz/git/weather-agent/docs/adr) before changing interfaces.
+Użytkownik może poprosić o utworzenie reguły powiadomień (np. "powiadom mnie gdy spadnie śnieg"). W takim przypadku:
+1. **Nie twórz reguły samodzielnie** — przekaż prośbę do systemu reguł.
+2. System reguł używa języka CEL (Common Expression Language) do definiowania warunków.
+3. Reguła wymaga potwierdzenia użytkownika przed aktywacją.
+4. Walidacja i wykonanie reguł są deterministyczne — odbywają się poza modelem językowym.

@@ -67,7 +67,6 @@ async def make_message_handler(services: BotServices) -> Any:
         ):
             from weather_agent.adapters.telegram.context import TelegramContextService
             from weather_agent.domain.rules.service import NotificationRuleService
-            from weather_agent.graphs.state import ConversationState
             from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 
             async with services.session_factory() as session:
@@ -89,7 +88,7 @@ async def make_message_handler(services: BotServices) -> Any:
                     memory_service=memory_service,
                 )
 
-                state: ConversationState = {
+                state: dict[str, object] = {
                     "authorized_user_id": user_id,
                     "chat_id": chat_id,
                     "message_thread_id": thread_id,

@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from langchain_core.messages import AIMessage
+
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import event
@@ -250,15 +252,13 @@ def _make_mock_model_factory(default_intent: str = "weather") -> MagicMock:
     mock_chat.ainvoke = AsyncMock(return_value=mock_response)
 
     def with_structured_output_side_effect(schema: Any) -> MagicMock:
-        mock_structured_chat = AsyncMock()
         mock_extraction = MagicMock()
 
-        # schema can be a class or a dict
         schema_name = getattr(schema, "__name__", str(schema))
 
         if "IntentExtraction" in schema_name:
             mock_extraction.intent = default_intent
-        elif "_LocationExtraction" in schema_name:
+        elif "LocationExtraction" in schema_name:
             mock_extraction.location_name = None
             mock_extraction.focus = None
         elif "RuleProposalExtraction" in schema_name:
@@ -266,17 +266,30 @@ def _make_mock_model_factory(default_intent: str = "weather") -> MagicMock:
             mock_extraction.explanation = "Test rule"
             mock_extraction.short_id = None
         else:
-            # Default fallback
             pass
 
-        mock_structured_chat.ainvoke = AsyncMock(return_value=mock_extraction)
-        return mock_structured_chat
+        return _make_async_runnable(mock_extraction)
 
     mock_chat.with_structured_output = MagicMock(side_effect=with_structured_output_side_effect)
 
-    mock_model_factory = MagicMock()
+    mock_model_factory = MagicMock(spec=["create_chat_model"])
     mock_model_factory.create_chat_model = MagicMock(return_value=mock_chat)
     return mock_model_factory
+
+
+def _make_async_runnable(return_value: MagicMock) -> MagicMock:
+    """Create a mock that works as a Runnable when used with `|` chaining.
+
+    LangChain's ``RunnableSequence`` wraps non-Runnable types in
+    ``RunnableLambda``, which calls the object as a function (``obj(input)``)
+    rather than ``obj.ainvoke(input)``.  A plain ``AsyncMock`` would return a
+    fresh mock when called.  Setting both ``ainvoke`` and ``return_value``
+    ensures both paths return the same value.
+    """
+    m = AsyncMock()
+    m.ainvoke = AsyncMock(return_value=return_value)
+    m.return_value = return_value
+    return m
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +310,15 @@ class TestTraceEmission:
         monkeypatch.setattr(
             "weather_agent.application.weather.weather_handler.traceable",
             _traceable_stub,
+        )
+
+        mock_agent = MagicMock()
+        mock_agent.ainvoke = AsyncMock(
+            return_value={"messages": [AIMessage(content="Odpowiedź asystenta")]}
+        )
+        monkeypatch.setattr(
+            "weather_agent.application.weather.weather_handler.create_weather_agent",
+            MagicMock(return_value=mock_agent),
         )
 
         loc = LocationRef(id="1", name="Warszawa", latitude=52.22, longitude=21.01)
