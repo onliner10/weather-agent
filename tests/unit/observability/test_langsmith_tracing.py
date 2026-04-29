@@ -12,7 +12,6 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
-from weather_agent.domain.date_resolver import ResolvedTimeRange
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.weather import LocationRef
@@ -477,8 +476,10 @@ class TestWorkerTraceEmission:
 
 class TestTracingUtilities:
     def test_build_telegram_turn_metadata_excludes_secrets_and_large_payloads(self) -> None:
+        from types import SimpleNamespace
+
         loc = LocationRef(id="1", name="Warszawa", latitude=52.22, longitude=21.01)
-        tr = ResolvedTimeRange(
+        tr = SimpleNamespace(
             start=datetime(2026, 5, 1, tzinfo=UTC),
             end=datetime(2026, 5, 1, 23, 59, tzinfo=UTC),
             explanation="Jutro",

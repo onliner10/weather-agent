@@ -86,14 +86,12 @@ async def make_message_handler(services: BotServices) -> Any:
 
                 assert services.forecast_provider is not None
                 assert services.geocoder is not None
-                assert services.date_resolver is not None
                 assert services.model_factory is not None
 
                 weather_toolbox = WeatherToolbox(
                     forecast_provider=services.forecast_provider,
                     observation_provider=services.observation_provider,
                     geocoder=services.geocoder,
-                    date_resolver=services.date_resolver,
                     location_service=location_service,
                     user_id=authorized_user_id,
                 )

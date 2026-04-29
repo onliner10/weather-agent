@@ -24,7 +24,6 @@ _LINE_COUNT_EXCEPTIONS: dict[str, str] = {
     "domain/cel/validation.py": "CEL syntax validation and error recovery",
     "domain/notifications/events.py": "Notification event lifecycle management",
     "domain/locations.py": "Location CRUD with search, alias matching, defaults",
-    "domain/date_resolver.py": "Holiday-aware date resolution logic",
     "infrastructure/worker/rule_evaluator.py": "Rule evaluation worker with scheduling",
     "infrastructure/db/base.py": "SQLAlchemy ORM model declarations",
     "adapters/telegram/bot.py": "Telegram bot setup with command registration",

@@ -10,8 +10,6 @@ if TYPE_CHECKING:
     from weather_agent.adapters.imgw.synop_provider import ImgwSynopProvider
     from weather_agent.adapters.open_meteo.forecast_provider import OpenMeteoDwdIconProvider
     from weather_agent.domain.cel.evaluator import CELEvaluator
-    from weather_agent.domain.date_resolver import DateResolver
-    from weather_agent.domain.holidays import CachedHolidayProvider
     from weather_agent.infrastructure.geocoder import Geocoder
     from weather_agent.llm.model_factory import ModelFactory
     from weather_agent.settings import AppSettings
@@ -22,8 +20,6 @@ logger = get_logger(__name__)
 class BotServices:
     settings: AppSettings
     cel_evaluator: CELEvaluator | None
-    holiday_provider: CachedHolidayProvider | None
-    date_resolver: DateResolver | None
     forecast_provider: OpenMeteoDwdIconProvider | None
     observation_provider: ImgwSynopProvider | None
     model_factory: ModelFactory | None
@@ -53,8 +49,6 @@ class BotServices:
         self.session_factory = create_session_factory(self.engine)
 
         self.cel_evaluator = None
-        self.holiday_provider = None
-        self.date_resolver = None
         self.forecast_provider = None
         self.observation_provider = None
         self.model_factory = None
@@ -66,17 +60,10 @@ class BotServices:
             OpenMeteoDwdIconProvider,
         )
         from weather_agent.domain.cel.evaluator import CELEvaluator
-        from weather_agent.domain.date_resolver import DateResolver
-        from weather_agent.domain.holidays import CachedHolidayProvider
         from weather_agent.infrastructure.geocoder import Geocoder
         from weather_agent.llm.model_factory import ModelFactory
 
         self.cel_evaluator = CELEvaluator()
-        self.holiday_provider = CachedHolidayProvider(
-            base_url=self.settings.nager_date.base_url,
-            timeout_seconds=self.settings.nager_date.timeout_seconds,
-        )
-        self.date_resolver = DateResolver(holiday_provider=self.holiday_provider)
         self.forecast_provider = OpenMeteoDwdIconProvider(settings=self.settings.open_meteo)
         self.observation_provider = ImgwSynopProvider(settings=self.settings.imgw)
         self.model_factory = ModelFactory(settings=self.settings.model)

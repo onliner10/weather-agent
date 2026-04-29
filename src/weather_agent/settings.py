@@ -73,16 +73,6 @@ class ImgwSettings(BaseModel):
     timeout_seconds: int = 15
 
 
-class NagerDateSettings(BaseModel):
-    """Public-holiday API settings for deterministic Polish date ranges."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    base_url: str = "https://date.nager.at/api/v3"
-    country_code: str = "PL"
-    timeout_seconds: int = 10
-
-
 class GlobalUnitsSettings(BaseModel):
     """Global unit preferences kept consistent across user-facing output."""
 
@@ -152,7 +142,6 @@ class AppSettings(BaseSettings):
     model: ModelSettings = ModelSettings()
     open_meteo: OpenMeteoSettings = OpenMeteoSettings()
     imgw: ImgwSettings = ImgwSettings()
-    nager_date: NagerDateSettings = NagerDateSettings()
     units: GlobalUnitsSettings = GlobalUnitsSettings()
     scheduler: SchedulerSettings = SchedulerSettings()
     observability: ObservabilitySettings = ObservabilitySettings()

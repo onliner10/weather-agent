@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from deepagents import create_deep_agent
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -61,10 +63,18 @@ def create_weather_agent(
     )
 
 
+_WARSAW = ZoneInfo("Europe/Warsaw")
+
+
 def build_context_suffix(
     pending_confirmation: dict[str, Any] | None = None,
 ) -> str:
     parts: list[str] = []
+
+    now = datetime.now(_WARSAW)
+    parts.append(
+        f"Bieżąca data i godzina w strefie Europe/Warsaw: {now.strftime('%Y-%m-%d %H:%M')}."
+    )
 
     if pending_confirmation:
         action = pending_confirmation.get("action", "create_rule")

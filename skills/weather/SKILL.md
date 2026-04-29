@@ -20,6 +20,8 @@ description: Odpowiadanie na pytania o pogodę — prognoza, obserwacje, zapisyw
 
 ## Obsługa czasu
 
-- Dziś: bieżąca data w strefie Europe/Warsaw.
-- Dla zakresów ("w weekend", "w przyszłym tygodniu") przelicz na yyyy-mm-dd.
+- Przeliczaj względne określenia czasu (jutro, dziś, pojutrze, weekend, majówka, przyszły tydzień)
+  na konkretne daty w formacie yyyy-mm-dd przed wywołaniem narzędzia pogodowego.
+- Bieżąca data i godzina w strefie Europe/Warsaw są podane w kontekście.
 - Dla pojedynczego dnia powtórz tę samą datę jako start i end.
+- Nie pytaj użytkownika o dokładną datę — samodzielnie wykonaj obliczenia.

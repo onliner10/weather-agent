@@ -9,7 +9,6 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
-from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import (
     LocationAliasConflictError,
@@ -184,14 +183,12 @@ class WeatherToolbox:
         forecast_provider: ForecastProvider,
         observation_provider: ObservationProvider | None,
         geocoder: Geocoder,
-        date_resolver: DateResolver,
         location_service: LocationService | None,
         user_id: int,
     ) -> None:
         self.forecast_provider = forecast_provider
         self.observation_provider = observation_provider
         self.geocoder = geocoder
-        self.date_resolver = date_resolver
         self.location_service = location_service
         self.user_id = user_id
 
@@ -243,11 +240,8 @@ class WeatherToolbox:
             end_dt = datetime(e.year, e.month, e.day, 23, 59, tzinfo=_WARSAW)
             if start_dt > end_dt:
                 return ForecastToolResult(error="start_date nie może być późniejsza niż end_date")
-            time_range = ResolvedTimeRange(
-                start=start_dt,
-                end=end_dt,
-                explanation=f"{start_date_str} – {end_date_str}",
-            )
+            time_range = TimeRange(start=start_dt, end=end_dt)
+            time_range_explanation = f"{start_date_str} – {end_date_str}"
         except ValueError:
             return ForecastToolResult(error="Nieprawidłowy format daty. Użyj yyyy-mm-dd.")
 
@@ -260,13 +254,13 @@ class WeatherToolbox:
         if not variables:
             variables = list(WeatherVariable)
 
-        tr = TimeRange(start=time_range.start, end=time_range.end)
+
         provider_name = getattr(self.forecast_provider, "provider", "unknown")
         start = _time.perf_counter()
         try:
             forecast = await self.forecast_provider.get_forecast(
                 location=location,
-                time_range=tr,
+                time_range=time_range,
                 variables=variables,
                 resolution=ForecastResolution.hourly,
             )
@@ -289,7 +283,7 @@ class WeatherToolbox:
         points_data = [_format_point(p) for p in forecast.points]
         return ForecastToolResult(
             location=location.name,
-            time_range=time_range.explanation,
+            time_range=time_range_explanation,
             forecast_points=points_data,
             provider=forecast.provider,
             model=forecast.model,
@@ -441,7 +435,9 @@ class WeatherToolbox:
                 description=(
                     "Pobierz prognozę pogody dla lokalizacji i zakresu dat."
                     " Zwraca godzinowe dane: temperatura, opady, wiatr, zachmurzenie itp."
-                    " Daty podawaj jako yyyy-mm-dd w strefie Europe/Warsaw."
+                    " Daty start_date/end_date podaj jako yyyy-mm-dd w strefie Europe/Warsaw."
+                    " Samodzielnie przelicz względne okresy (jutro, dziś, weekend, majówka)"
+                    " na konkretne daty przed wywołaniem narzędzia."
                 ),
                 args_schema=GetForecastArgs,
             ),
