@@ -216,7 +216,6 @@ Rules are created through natural Polish conversation with the bot. The LLM prop
 | Rain alert | `duration_where(precipitation_mm > 0.2, next_hours(12)) >= minutes(60)` |
 | Wind gust alert | `max("wind_gusts_10m_ms", weekend()) >= 12` |
 | Forecast deterioration | `forecast_delta("apparent_temperature_c", tomorrow(), previous_snapshot()) <= -7` |
-| Weekly check | (schedule-based, no CEL condition needed) |
 
 ## Docker Compose deployment
 

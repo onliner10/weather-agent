@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time as _time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.tools import StructuredTool
 from langsmith import traceable
@@ -13,6 +13,7 @@ from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.models import RuleCreate
+from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
 from weather_agent.infrastructure.geocoder import Geocoder
@@ -95,6 +96,44 @@ class ConfirmActionToolResult(BaseModel):
 
 class CancelActionToolResult(BaseModel):
     answer: str | None = None
+    error: str | None = None
+
+
+class ScheduleNotificationArgs(BaseModel):
+    schedule_type: Literal["once", "cron"] = Field(
+        description=(
+            "Typ harmonogramu: 'once' dla jednorazowego powiadomienia, "
+            "'cron' dla cyklicznego"
+        ),
+    )
+    schedule_expression: str = Field(
+        description=(
+            "Wyrażenie harmonogramu: ISO datetime dla 'once', "
+            "5-polowe wyrażenie cron dla 'cron'"
+        ),
+    )
+    explanation: str = Field(
+        description="Opis powiadomienia po polsku",
+    )
+    location_name: str = Field(
+        default="",
+        description=(
+            "Nazwa lokalizacji (np. 'Warszawa', 'dom'). "
+            "Pusta = domyślna lokalizacja użytkownika."
+        ),
+    )
+    cel_expression: str = Field(
+        default="True",
+        description=(
+            "Opcjonalne wyrażenie CEL warunku. "
+            "Domyślnie 'True' (natychmiastowe przypomnienie)."
+        ),
+    )
+
+
+class ScheduleRuleToolResult(BaseModel):
+    proposal: str | None = None
+    pending: bool = False
     error: str | None = None
 
 
@@ -323,7 +362,27 @@ class RulesToolbox:
         explanation = pending.explanation
 
         try:
-            if pending.action == "edit_rule" and pending.edit_short_id:
+            if pending.action == "schedule_notification":
+                rule = await self.rule_service.create_rule(
+                    self.user_id,
+                    RuleCreate(
+                        telegram_chat_id=effective_chat_id,
+                        telegram_message_thread_id=effective_thread_id,
+                        location_id=location_id,
+                        expression=cel_expression,
+                        schedule=pending.schedule,
+                        lead_time_minutes=pending.lead_time_minutes,
+                        description=explanation,
+                    ),
+                )
+                schedule_info = f"harmonogram: {pending.schedule}" if pending.schedule else ""
+                answer = (
+                    f"Nowe zaplanowane powiadomienie #{rule.short_id} zostało zapisane.\n"
+                    f"\U0001f4dd CEL: `{rule.expression}`\n"
+                    f"\U0001f4c5 {schedule_info}"
+                )
+                short_id = rule.short_id
+            elif pending.action == "edit_rule" and pending.edit_short_id:
                 existing = await self.rule_service.get_rule(short_id=pending.edit_short_id)
                 if existing is None:
                     return ConfirmActionToolResult(
@@ -391,6 +450,73 @@ class RulesToolbox:
             )
         return CancelActionToolResult(answer="Reguła została anulowana.")
 
+    @traceable(run_type="tool")
+    async def schedule_notification(
+        self,
+        schedule_type: str,
+        schedule_expression: str,
+        explanation: str,
+        location_name: str = "",
+        cel_expression: str = "True",
+    ) -> ScheduleRuleToolResult:
+        TOOL_CALLS_TOTAL.labels(tool="schedule_notification").inc()
+        start = _time.perf_counter()
+        try:
+            validation = self.cel_evaluator.validate(cel_expression)
+            if not validation.valid:
+                return ScheduleRuleToolResult(
+                    error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
+                )
+
+            schedule_str = f"{schedule_type}:{schedule_expression}"
+            parsed = parse_schedule(schedule_str)
+            if not parsed.valid:
+                return ScheduleRuleToolResult(
+                    error=f"Nieprawidłowy harmonogram: {parsed.error}",
+                )
+
+            location_id = await self._resolve_location_id(location_name)
+            if location_id is None and location_name.strip():
+                return ScheduleRuleToolResult(
+                    error=f"Nie znaleziono lokalizacji: {location_name}",
+                )
+
+            pending = PendingConfirmation(
+                action="schedule_notification",
+                cel_expression=validation.expression,
+                explanation=explanation,
+                validated=True,
+                location_id=location_id,
+                chat_id=self.chat_id,
+                message_thread_id=self.message_thread_id,
+                stored_at=datetime.now(UTC).isoformat(),
+                schedule=schedule_str,
+            )
+
+            await self.memory_service.store_pending_confirmation(
+                self.context_key,
+                pending.to_dict(),
+            )
+
+            schedule_desc = (
+                f"jednorazowo {schedule_expression}"
+                if schedule_type == "once"
+                else f"cyklicznie ({schedule_expression})"
+            )
+            proposal_text = (
+                f"Propozycja zaplanowanego powiadomienia:\n\n"
+                f"\U0001f4c5 Harmonogram: {schedule_desc}\n"
+                f"\U0001f4dd Wyrażenie CEL: `{validation.expression}`\n"
+                f"\U0001f4d6 Opis: {explanation}\n\n"
+                "Czy chcesz potwierdzić? (tak/nie)"
+            )
+
+            return ScheduleRuleToolResult(proposal=proposal_text, pending=True)
+        finally:
+            TOOL_CALL_DURATION_SECONDS.labels(tool="schedule_notification").observe(
+                _time.perf_counter() - start,
+            )
+
     def to_langchain_tools(self) -> list[StructuredTool]:
         return [
             StructuredTool.from_function(
@@ -442,5 +568,17 @@ class RulesToolbox:
                     "(np. odpowiada 'nie')."
                 ),
                 args_schema=CancelPendingActionArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.schedule_notification,
+                name="schedule_notification",
+                description=(
+                    "Zaplanuj powiadomienie z opcjonalnym warunkiem CEL. "
+                    "Przyjmuje typ harmonogramu (once/cron), wyrażenie harmonogramu "
+                    "(ISO datetime lub 5-polowe cron), opis, lokalizację "
+                    "i opcjonalne wyrażenie CEL. Waliduje harmonogram i CEL, "
+                    "a następnie zapisuje propozycję do potwierdzenia przez użytkownika."
+                ),
+                args_schema=ScheduleNotificationArgs,
             ),
         ]

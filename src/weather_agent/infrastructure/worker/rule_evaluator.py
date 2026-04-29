@@ -8,12 +8,15 @@ from zoneinfo import ZoneInfo
 
 from langsmith import trace
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.rules.models import NotificationRule
+from weather_agent.domain.rules.schedule import is_rule_due, last_cron_slot
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.db.base import ForecastPoint as ForecastPointORM
+from weather_agent.infrastructure.db.base import NotificationEvent as NotificationEventORM
 from weather_agent.infrastructure.db.base import RuleEvaluationRun as RuleEvaluationRunORM
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
 from weather_agent.observability.logging import (
@@ -74,7 +77,9 @@ class RuleEvaluationWorker:
         self._forecast_fetcher = forecast_fetcher
 
     async def evaluate_rules(self, dry_run: bool = False) -> list[EvaluationResult]:
-        rules = await self._rule_service.list_all_enabled_rules()
+        all_rules = await self._rule_service.list_all_enabled_rules()
+        now = datetime.now(UTC)
+        rules = [r for r in all_rules if await self._is_rule_due(r, now)]
         async with trace(
             "evaluate_rules",
             run_type="tool",
@@ -95,7 +100,35 @@ class RuleEvaluationWorker:
                     raise
                 results.append(result)
 
+            if not dry_run:
+                for rule, result in zip(rules, results, strict=True):
+                    if (
+                        result.notification_candidate
+                        and rule.schedule is not None
+                        and rule.schedule.startswith("once:")
+                    ):
+                        await self._rule_service.disable_rule(rule.id)
+
             return results
+
+    async def _is_rule_due(
+        self, rule: NotificationRule, now: datetime | None = None
+    ) -> bool:
+        if now is None:
+            now = datetime.now(UTC)
+        if not is_rule_due(rule.schedule, now):
+            return False
+        if rule.schedule is not None and rule.schedule.startswith("cron:"):
+            slot = last_cron_slot(rule.schedule, now)
+            if slot is not None:
+                stmt = select(NotificationEventORM).where(
+                    NotificationEventORM.rule_id == rule.id,
+                    NotificationEventORM.created_at >= slot,
+                )
+                result = await self._session.execute(stmt)
+                if result.scalar_one_or_none() is not None:
+                    return False
+        return True
 
     async def _evaluate_single_rule(
         self, rule: NotificationRule, dry_run: bool

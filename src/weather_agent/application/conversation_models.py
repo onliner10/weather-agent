@@ -15,6 +15,8 @@ class PendingConfirmation:
     message_thread_id: int | None = None
     stored_at: str | None = None
     edit_short_id: str | None = None
+    schedule: str | None = None
+    lead_time_minutes: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -29,6 +31,10 @@ class PendingConfirmation:
         }
         if self.edit_short_id is not None:
             d["edit_short_id"] = self.edit_short_id
+        if self.schedule is not None:
+            d["schedule"] = self.schedule
+        if self.lead_time_minutes is not None:
+            d["lead_time_minutes"] = self.lead_time_minutes
         return d
 
     @classmethod
@@ -43,4 +49,6 @@ class PendingConfirmation:
             message_thread_id=data.get("message_thread_id"),
             stored_at=data.get("stored_at"),
             edit_short_id=data.get("edit_short_id"),
+            schedule=data.get("schedule"),
+            lead_time_minutes=data.get("lead_time_minutes"),
         )
