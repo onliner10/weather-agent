@@ -326,6 +326,7 @@ def cmd_bot(_args: argparse.Namespace) -> None:
         settings=services.settings.telegram,
         auth_service=auth_service,
         message_handler=message_handler,
+        session_factory=services.session_factory,
     )
     bot.setup()
     print("Starting Telegram bot polling...")

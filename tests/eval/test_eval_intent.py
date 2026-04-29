@@ -85,9 +85,11 @@ def _forecast(location: LocationRef | None = None) -> ForecastResult:
 def _mock_location_service(
     resolved: LocationRef | None = None,
     locations: list[Location] | None = None,
+    default_location: LocationRef | None = None,
 ) -> AsyncMock:
     svc = AsyncMock(spec=LocationService)
     svc.resolve_location = AsyncMock(return_value=resolved)
+    svc.get_default_location = AsyncMock(return_value=default_location)
     if locations is not None:
         svc.list_locations = AsyncMock(return_value=locations)
     else:

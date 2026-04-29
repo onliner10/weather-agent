@@ -130,9 +130,11 @@ def _state(**overrides: Any) -> ConversationState:
 def _mock_location_service(
     resolved: LocationRef | None = None,
     locations: list[Location] | None = None,
+    default_location: LocationRef | None = None,
 ) -> AsyncMock:
     svc = AsyncMock(spec=LocationService)
     svc.resolve_location = AsyncMock(return_value=resolved)
+    svc.get_default_location = AsyncMock(return_value=default_location)
     if locations is not None:
         svc.list_locations = AsyncMock(return_value=locations)
     else:
@@ -437,6 +439,74 @@ class TestWeatherAgentNode:
         )
         assert result["answer"] is not None
         assert "Warszaw" in result["answer"]
+
+
+class TestHomeDefaultFallback:
+    """Home/default location fallback in resolve_location_node."""
+
+    @pytest.mark.asyncio
+    async def test_uses_default_location_when_none_extracted(self) -> None:
+        default = _loc("Gdańsk", 54.35, 18.65)
+        svc = _mock_location_service(default_location=default)
+        mf = _mock_model_factory_with_location(location_name=None)
+        state = _state(user_message="jaka będzie jutro pogoda?")
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is not None
+        assert result["resolved_location"].name == "Gdańsk"
+        assert result["resolved_location"].latitude == 54.35
+        assert result["resolved_location"].longitude == 18.65
+        assert "error" not in result
+
+    @pytest.mark.asyncio
+    async def test_default_location_not_used_when_has_explicit(self) -> None:
+        default = _loc("Gdańsk", 54.35, 18.65)
+        explicit = _loc("Warszawa", 52.22, 21.01)
+        svc = _mock_location_service(resolved=explicit, default_location=default)
+        mf = _mock_model_factory_with_location(location_name="Warszawa")
+        state = _state(user_message="jaka pogoda w Warszawie?")
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is not None
+        assert result["resolved_location"].name == "Warszawa"
+        svc.get_default_location.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_default_location_not_used_when_has_state(self) -> None:
+        default = _loc("Gdańsk", 54.35, 18.65)
+        state_loc = _loc("Kraków", 50.06, 19.94)
+        svc = _mock_location_service(default_location=default)
+        mf = _mock_model_factory_with_location(location_name=None)
+        state = _state(
+            user_message="jaka będzie pogoda?",
+            resolved_location=state_loc,
+        )
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is not None
+        assert result["resolved_location"].name == "Kraków"
+        svc.get_default_location.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_default_location_not_used_when_reply_context(self) -> None:
+        default = _loc("Gdańsk", 54.35, 18.65)
+        svc = _mock_location_service(default_location=default)
+        mf = _mock_model_factory_with_location(location_name=None)
+        state = _state(
+            user_message="a będzie mocno wiało?",
+            reply_context_turns=[{"role": "user", "text": "jaka pogoda w Gdańsku?"}],
+        )
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is None
+        assert "error" not in result
+        svc.get_default_location.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_none_when_no_default(self) -> None:
+        svc = _mock_location_service(default_location=None)
+        mf = _mock_model_factory_with_location(location_name=None)
+        state = _state(user_message="jaka będzie jutro pogoda?")
+        result = await resolve_location_node(state, svc, user_id=1, model_factory=mf)
+        assert result["resolved_location"] is None
+        assert result["error"] is not None
+        assert "lokalizac" in result["error"].lower()
 
 
 class TestStubGraphBackwardsCompat:

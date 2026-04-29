@@ -457,3 +457,85 @@ class TestResolveLocation:
         await service.create_location(1, data)
         ref = await service.resolve_location("Chwarzno", user_id=2)
         assert ref is None
+
+
+class TestGetDefaultLocation:
+    async def test_no_locations_returns_none(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        result = await service.get_default_location(1)
+        assert result is None
+
+    async def test_one_location_returned(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        data = LocationCreate(
+            name="Home", aliases=["dom"], latitude=52.22, longitude=21.01
+        )
+        loc = await service.create_location(1, data)
+        ref = await service.get_default_location(1)
+        assert ref is not None
+        assert ref.id == str(loc.id)
+        assert ref.name == "Home"
+        assert ref.latitude == 52.22
+        assert ref.longitude == 21.01
+
+    async def test_disabled_location_skipped(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        data = LocationCreate(
+            name="Home", aliases=["dom"], latitude=52.22, longitude=21.01
+        )
+        loc = await service.create_location(1, data)
+        await service.disable_location(loc.id)
+        result = await service.get_default_location(1)
+        assert result is None
+
+    async def test_disabled_location_ignored(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        data1 = LocationCreate(
+            name="Work", aliases=["praca"], latitude=54.6, longitude=18.5
+        )
+        data2 = LocationCreate(
+            name="Home", aliases=["dom"], latitude=52.22, longitude=21.01
+        )
+        loc1 = await service.create_location(1, data1)
+        await service.disable_location(loc1.id)
+        await service.create_location(1, data2)
+        ref = await service.get_default_location(1)
+        assert ref is not None
+        assert ref.name == "Home"
+
+    async def test_returns_earliest_created(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        data1 = LocationCreate(
+            name="Home", aliases=["dom"], latitude=52.22, longitude=21.01
+        )
+        data2 = LocationCreate(
+            name="Work", aliases=["praca"], latitude=54.6, longitude=18.5
+        )
+        loc1 = await service.create_location(1, data1)
+        await service.create_location(1, data2)
+        ref = await service.get_default_location(1)
+        assert ref is not None
+        assert ref.id == str(loc1.id)
+        assert ref.name == "Home"
+
+    async def test_does_not_cross_users(
+        self, service: LocationService, session: AsyncSession
+    ) -> None:
+        await _create_user(session, user_id=1)
+        await _create_user(session, user_id=2)
+        data = LocationCreate(
+            name="Home", aliases=["dom"], latitude=52.22, longitude=21.01
+        )
+        await service.create_location(1, data)
+        result = await service.get_default_location(2)
+        assert result is None

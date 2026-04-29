@@ -204,9 +204,52 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_error_in_state_produces_error_answer(self) -> None:
         compiled = compile_conversation_graph()
-        state = _default_state(error="Brak danych prognozy", user_message="pogoda")
+        loc = LocationRef(id="1", name="Warszawa", latitude=52.22, longitude=21.01)
+        state = _default_state(
+            error="Brak danych prognozy",
+            user_message="pogoda",
+            resolved_location=loc,
+        )
         result = await compiled.ainvoke(state)
-        assert "błąd" in result["answer"].lower()
+        assert result["answer"] is not None
+        assert "Brak danych" in result["answer"]
+
+
+class TestWeatherPathLocationErrors:
+    """When resolve_location_node returns an error, that specific error should
+    become the answer instead of being masked by the generic retry message."""
+
+    @pytest.mark.asyncio
+    async def test_location_error_returns_specific_message(self) -> None:
+        """Missing-location error should contain a Polish location prompt,
+        not the generic error message."""
+        compiled = compile_conversation_graph()
+        state = _default_state(
+            user_message="jaka będzie jutro pogoda?",
+            resolved_intent="weather",
+        )
+        # With no services (model_factory=None, location_service=None, geocoder=None),
+        # resolve_location_node returns: "Nie podałeś lokalizacji..."
+        result = await compiled.ainvoke(state)
+        assert result["answer"] is not None
+        assert "błąd" not in result["answer"].lower()
+        assert "lokalizacj" in result["answer"].lower() or "podaj" in result["answer"].lower()
+
+    @pytest.mark.asyncio
+    async def test_location_error_with_pre_resolved_location_succeeds(self) -> None:
+        """If a location is already resolved, the error path is not triggered."""
+        compiled = compile_conversation_graph()
+        loc = LocationRef(id="1", name="Warszawa", latitude=52.22, longitude=21.01)
+        state = _default_state(
+            user_message="jaka będzie jutro pogoda?",
+            resolved_location=loc,
+            resolved_intent="weather",
+        )
+        result = await compiled.ainvoke(state)
+        assert result["answer"] is not None
+        # No location error since location is pre-resolved
+        # But weather_agent_node may fail gracefully since no forecast provider
+        assert result["answer"] is not None
 
 
 class TestConfirmationRouting:

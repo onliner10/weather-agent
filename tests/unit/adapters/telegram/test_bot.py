@@ -4,11 +4,13 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from telegram import Chat, Message, Update, User
 from telegram.ext import ContextTypes
 
 from weather_agent.adapters.telegram.bot import TelegramBot
 from weather_agent.domain.auth import AuthorizationService
+from weather_agent.infrastructure.db.base import Base
 from weather_agent.settings import TelegramSettings
 
 
@@ -302,4 +304,275 @@ class TestNoUserInUpdate:
         update.effective_chat = Chat(id=100, type=Chat.PRIVATE)
         context = _make_context()
         await bot._start_command(update, context)
+        assert True
+
+
+class TestDodajLokCommand:
+    """Tests for the ``/dodaj_lok`` command — home location persistence."""
+
+    @pytest.mark.asyncio
+    async def test_help_mentions_dodaj_lok(self) -> None:
+        """The /help output should list /dodaj_lok."""
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(user_id=42, command_text="/help")
+        context = _make_context()
+        await bot._help_command(update, context)
+        response = update.message.reply_text.call_args[0][0]
+        assert "/dodaj_lok" in response
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_user_gets_denial(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(user_id=999, command_text="/dodaj_lok Dom 52.2297 21.0122")
+        context = _make_context()
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Brak uprawnień" in response
+
+    @pytest.mark.asyncio
+    async def test_missing_args_shows_usage(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok")
+        context = _make_context()
+        context.args = ["Dom"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Użycie" in response
+
+    @pytest.mark.asyncio
+    async def test_invalid_coords_shows_error(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok Dom abc def"
+        )
+        context = _make_context()
+        context.args = ["Dom", "abc", "def"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Nieprawidłowe współrzędne" in response
+
+    @pytest.mark.asyncio
+    async def test_empty_name_shows_error(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok  52.2297 21.0122"
+        )
+        context = _make_context()
+        # Empty string as name token (leading whitespace produces "")
+        context.args = ["", "52.2297", "21.0122"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Nieprawidłowa nazwa" in response
+
+    @pytest.mark.asyncio
+    async def test_no_session_factory_shows_error(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
+        )
+        context = _make_context()
+        context.args = ["Dom", "52.2297", "21.0122"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "błąd wewnętrzny" in response
+
+    @pytest.mark.asyncio
+    async def test_successful_save_with_session_factory(self) -> None:
+        """Happy path: valid args + session_factory → Polish success + DB row."""
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
+        )
+        context = _make_context()
+        context.args = ["Dom", "52.2297", "21.0122"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Zapamiętałem" in response
+        assert "Dom" in response
+
+        # Verify the location was actually persisted
+        from sqlalchemy import select
+
+        from weather_agent.infrastructure.db.base import AuthorizedUser as AU
+        from weather_agent.infrastructure.db.base import Location as LocOrm
+
+        async with factory() as session:
+            user_row = (
+                await session.execute(select(AU).where(AU.telegram_user_id == 42))
+            ).scalar_one_or_none()
+            assert user_row is not None, "AuthorizedUser should have been created"
+
+            location_rows = (
+                await session.execute(
+                    select(LocOrm).where(LocOrm.user_id == user_row.id)
+                )
+            ).scalars().all()
+            assert len(location_rows) == 1
+            assert location_rows[0].name == "Dom"
+            assert location_rows[0].latitude == 52.2297
+            assert location_rows[0].longitude == 21.0122
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_multi_word_name_is_preserved(self) -> None:
+        """Names with spaces (e.g. ``Rogalińska 11 Gdańsk``) should work."""
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(
+            user_id=42,
+            command_text="/dodaj_lok Rogalińska 11 Gdańsk 54.3520 18.6466",
+        )
+        context = _make_context()
+        context.args = ["Rogalińska", "11", "Gdańsk", "54.3520", "18.6466"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Zapamiętałem" in response
+        assert "Rogalińska 11 Gdańsk" in response
+
+        # Verify persistence
+        from sqlalchemy import select
+
+        from weather_agent.infrastructure.db.base import AuthorizedUser as AU
+        from weather_agent.infrastructure.db.base import Location as LocOrm
+
+        async with factory() as session:
+            user_row = (
+                await session.execute(select(AU).where(AU.telegram_user_id == 42))
+            ).scalar_one_or_none()
+            assert user_row is not None
+            location_rows = (
+                await session.execute(
+                    select(LocOrm).where(LocOrm.user_id == user_row.id)
+                )
+            ).scalars().all()
+            assert len(location_rows) == 1
+            assert location_rows[0].name == "Rogalińska 11 Gdańsk"
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_existing_authorized_user_is_reused(self) -> None:
+        """If AuthorizedUser already exists, don't duplicate it."""
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        # Pre-create an AuthorizedUser row
+        from weather_agent.infrastructure.db.base import AuthorizedUser as AU
+
+        async with factory() as session:
+            session.add(AU(id=1, telegram_user_id=42))
+            await session.commit()
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
+        )
+        context = _make_context()
+        context.args = ["Dom", "52.2297", "21.0122"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Zapamiętałem" in response
+
+        # Verify only one AuthorizedUser row
+        from sqlalchemy import select
+
+        async with factory() as session:
+            users = (
+                (await session.execute(select(AU))).scalars().all()
+            )
+            assert len(users) == 1
+            assert users[0].id == 1
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_database_error_shows_friendly_message(self) -> None:
+        """If persistence fails, show a Polish error instead of a traceback."""
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            session_factory=MagicMock(side_effect=RuntimeError("db down")),
+        )
+        bot.setup()
+        update = _make_command_update(
+            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
+        )
+        context = _make_context()
+        context.args = ["Dom", "52.2297", "21.0122"]
+        await bot._dodaj_lok_command(update, context)
+        update.message.reply_text.assert_awaited_once()
+        response = update.message.reply_text.call_args[0][0]
+        assert "Nie udało się" in response
+
+    @pytest.mark.asyncio
+    async def test_no_user_returns_silently(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(settings=settings, auth_service=auth)
+        bot.setup()
+        update = MagicMock(spec=Update)
+        update.effective_user = None
+        context = _make_context()
+        await bot._dodaj_lok_command(update, context)
         assert True

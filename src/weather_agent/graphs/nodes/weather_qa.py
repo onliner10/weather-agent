@@ -690,6 +690,11 @@ async def resolve_location_node(
     if state.get("reply_context_turns"):
         return {"resolved_location": None, **updates}
 
+    if location_service is not None:
+        default = await location_service.get_default_location(user_id)
+        if default is not None:
+            return {"resolved_location": default, **updates}
+
     return {
         "error": (
             'Nie podałeś lokalizacji. Napisz np. „jaka pogoda w Gdańsku jutro"'

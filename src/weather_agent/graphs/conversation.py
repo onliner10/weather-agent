@@ -446,6 +446,11 @@ class ConversationOrchestrator:
             result.update(loc_result)
             state = _merge_state(state, loc_result)
 
+            # Early return for location errors (don't mask specific messages)
+            if state.get("error"):
+                result["answer"] = state["error"]
+                return result
+
             # Resolve time range
             time_result = await resolve_time_range_node(state, self.deps.date_resolver)
             result.update(time_result)

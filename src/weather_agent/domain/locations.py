@@ -236,6 +236,30 @@ class LocationService:
         await self._session.refresh(orm)
         return _orm_to_domain(orm)
 
+    async def get_default_location(self, user_id: int) -> LocationRef | None:
+        """
+        Return the first enabled saved location as a default/home location.
+
+        This is a first-enabled fallback since no explicit home/default flag exists
+        in the schema. If an explicit default/home flag is needed in the future,
+        the schema would need migration to support it.
+        """
+        stmt = (
+            select(LocationORM)
+            .where(LocationORM.user_id == user_id, LocationORM.enabled.is_(True))
+            .order_by(LocationORM.id)
+        )
+        result = await self._session.execute(stmt)
+        orm = result.scalars().first()
+        if orm is None:
+            return None
+        return LocationRef(
+            id=str(orm.id),
+            name=orm.name,
+            latitude=orm.latitude,
+            longitude=orm.longitude,
+        )
+
     async def resolve_location(
         self, query: str, user_id: int
     ) -> LocationRef | None:
