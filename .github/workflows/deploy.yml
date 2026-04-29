@@ -119,4 +119,5 @@ jobs:
              if docker compose version >/dev/null 2>&1; then compose='docker compose'; else compose='docker-compose'; fi && \
              \$compose --env-file .deploy.env -f docker-compose.prod.yml pull && \
              \$compose --env-file .deploy.env -f docker-compose.prod.yml --profile migrate run --rm weather-agent-migrate && \
+             (\$compose --env-file .deploy.env -f docker-compose.prod.yml rm -sf weather-agent-bot weather-agent-worker || true) && \
              \$compose --env-file .deploy.env -f docker-compose.prod.yml up -d --remove-orphans" <<< "$GHCR_TOKEN"
