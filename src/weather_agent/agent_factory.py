@@ -68,6 +68,7 @@ _WARSAW = ZoneInfo("Europe/Warsaw")
 
 def build_context_suffix(
     pending_confirmation: dict[str, Any] | None = None,
+    last_forecast_context: dict[str, Any] | None = None,
 ) -> str:
     parts: list[str] = []
 
@@ -75,6 +76,18 @@ def build_context_suffix(
     parts.append(
         f"Bieżąca data i godzina w strefie Europe/Warsaw: {now.strftime('%Y-%m-%d %H:%M')}."
     )
+
+    if last_forecast_context:
+        loc = last_forecast_context.get("location_name", "?")
+        sd = last_forecast_context.get("start_date", "?")
+        ed = last_forecast_context.get("end_date", "?")
+        vars_list = last_forecast_context.get("variables", [])
+        vars_str = ", ".join(vars_list) if vars_list else "?"
+        parts.append(
+            f"OSTATNIA PROGNOZA: {loc}, zakres {sd} – {ed} (zmienne: {vars_str}). "
+            "Jeśli użytkownik pyta follow-upowo bez zmiany lokalizacji lub zakresu, "
+            "odziedzicz lokalizację i zakres z ostatniej prognozy."
+        )
 
     if pending_confirmation:
         action = pending_confirmation.get("action", "create_rule")

@@ -449,6 +449,42 @@ class TestTurnPersistence:
         assert user_turn["message_id"] == 50
 
 
+class TestLastForecast:
+    @pytest.mark.asyncio()
+    async def test_store_and_load_last_forecast(self, memory_service: ThreadMemoryService) -> None:
+        fc = {
+            "location_name": "Gdańsk",
+            "start_date": "2026-04-30",
+            "end_date": "2026-04-30",
+            "variables": ["temperature_2m_c"],
+        }
+        await memory_service.store_last_forecast("100:1", fc)
+        loaded = await memory_service.load_last_forecast("100:1")
+        assert loaded == fc
+
+    @pytest.mark.asyncio()
+    async def test_no_forecast_returns_none(self, memory_service: ThreadMemoryService) -> None:
+        result = await memory_service.load_last_forecast("100:1")
+        assert result is None
+
+    @pytest.mark.asyncio()
+    async def test_forecast_scoped_to_thread(self, memory_service: ThreadMemoryService) -> None:
+        fc = {"location_name": "Gdańsk", "start_date": "2026-04-30", "end_date": "2026-04-30"}
+        await memory_service.store_last_forecast("100:1", fc)
+        result = await memory_service.load_last_forecast("100:2")
+        assert result is None
+
+    @pytest.mark.asyncio()
+    async def test_forecast_overwrites_previous(self, memory_service: ThreadMemoryService) -> None:
+        fc1 = {"location_name": "Gdańsk", "start_date": "2026-04-29", "end_date": "2026-04-29"}
+        fc2 = {"location_name": "Warszawa", "start_date": "2026-05-01", "end_date": "2026-05-01"}
+        await memory_service.store_last_forecast("100:1", fc1)
+        await memory_service.store_last_forecast("100:1", fc2)
+        loaded = await memory_service.load_last_forecast("100:1")
+        assert loaded == fc2
+        assert loaded["location_name"] == "Warszawa"
+
+
 class TestReplyAnchorLookup:
     @pytest.mark.asyncio()
     async def test_reply_anchor_found_by_message_id(

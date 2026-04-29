@@ -23,7 +23,6 @@ from weather_agent.observability.metrics import (
     CONVERSATION_FAILURES_TOTAL,
     CONVERSATION_TURN_DURATION_SECONDS,
     CONVERSATION_TURNS_TOTAL,
-    REPLY_CONTEXT_HITS_TOTAL,
     REPLY_SEND_DURATION_SECONDS,
     REPLY_SEND_TOTAL,
 )
@@ -112,8 +111,12 @@ async def make_message_handler(services: BotServices) -> Any:
                     weather_toolbox.to_langchain_tools() + rules_toolbox.to_langchain_tools()
                 )
 
+                last_forecast = await memory_service.load_last_forecast(context_key)
                 pending_confirmation = await memory_service.get_pending_confirmation(context_key)
-                context_suffix = build_context_suffix(pending_confirmation)
+                context_suffix = build_context_suffix(
+                    pending_confirmation,
+                    last_forecast_context=last_forecast,
+                )
 
                 model = services.model_factory.create_chat_model()
 
@@ -124,13 +127,9 @@ async def make_message_handler(services: BotServices) -> Any:
                 )
 
                 messages: list[BaseMessage] = []
-                reply_turns_data = None
-                if reply_to_message_id is not None:
-                    REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()
-                    reply_turns_data = await memory_service.load_turns(context_key)
-
-                if reply_turns_data:
-                    for turn in reply_turns_data:
+                conversation_turns = await memory_service.load_turns(context_key)
+                if conversation_turns:
+                    for turn in conversation_turns:
                         role = turn.get("role")
                         content = turn.get("text") or turn.get("answer_summary")
                         if content and role == "user":
@@ -149,6 +148,7 @@ async def make_message_handler(services: BotServices) -> Any:
 
                 CONVERSATION_TURNS_TOTAL.inc()
                 turn_start = time.perf_counter()
+                forecast_context = None
                 try:
                     result = await agent.ainvoke(
                         {"messages": messages},
@@ -161,6 +161,7 @@ async def make_message_handler(services: BotServices) -> Any:
                     answer = final.content if hasattr(final, "content") else str(final)
                     if not answer:
                         answer = "Przepraszam, nie udało się przetworzyć zapytania."
+                    forecast_context = _extract_forecast_context(result["messages"])
                 except Exception as exc:
                     CONVERSATION_FAILURES_TOTAL.inc()
                     logger.exception(
@@ -171,6 +172,9 @@ async def make_message_handler(services: BotServices) -> Any:
                     answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
                 finally:
                     CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+
+                if forecast_context:
+                    await memory_service.store_last_forecast(context_key, forecast_context)
 
                 from weather_agent.application.conversation_models import PendingConfirmation as _PC
 
@@ -220,6 +224,23 @@ async def make_message_handler(services: BotServices) -> Any:
 
     logger.info("message_handler_ready")
     return message_handler
+
+
+def _extract_forecast_context(messages: list[Any]) -> dict[str, Any] | None:
+    for msg in messages:
+        tool_calls = getattr(msg, "tool_calls", None)
+        if not tool_calls:
+            continue
+        for tc in tool_calls:
+            if getattr(tc, "name", None) == "get_forecast":
+                args = getattr(tc, "args", {}) or {}
+                return {
+                    "location_name": args.get("location_name", ""),
+                    "start_date": args.get("start_date", ""),
+                    "end_date": args.get("end_date", ""),
+                    "variables": args.get("variables", []),
+                }
+    return None
 
 
 async def _save_turn(

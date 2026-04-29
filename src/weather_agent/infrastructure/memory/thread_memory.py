@@ -45,6 +45,33 @@ class ThreadMemoryService:
                 return None
         return confirmation if isinstance(confirmation, dict) else None
 
+    async def store_last_forecast(
+        self, context_key: str, forecast_context: dict[str, Any]
+    ) -> None:
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
+        metadata = dict(ctx.metadata)
+        metadata["last_forecast"] = forecast_context
+        metadata["last_forecast_stored_at"] = datetime.now(UTC).isoformat()
+        await self._context_service.update_context(context_key, metadata)
+
+    async def load_last_forecast(
+        self, context_key: str, ttl_hours: int = 24
+    ) -> dict[str, Any] | None:
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
+        forecast = ctx.metadata.get("last_forecast")
+        if forecast is None:
+            return None
+        stored_at_raw = ctx.metadata.get("last_forecast_stored_at")
+        if stored_at_raw is not None and isinstance(stored_at_raw, str):
+            stored_at = datetime.fromisoformat(stored_at_raw)
+            if datetime.now(UTC) - stored_at > timedelta(hours=ttl_hours):
+                metadata = dict(ctx.metadata)
+                metadata.pop("last_forecast", None)
+                metadata.pop("last_forecast_stored_at", None)
+                await self._context_service.update_context(context_key, metadata)
+                return None
+        return forecast if isinstance(forecast, dict) else None
+
     async def clear_pending_confirmation(self, context_key: str) -> None:
         ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
