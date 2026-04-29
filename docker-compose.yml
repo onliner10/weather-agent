@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["python", "-m", "weather_agent", "bot"]
+    command: ["bot"]
     depends_on:
       postgres-timescaledb:
         condition: service_healthy
@@ -30,7 +30,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["python", "-m", "weather_agent", "worker"]
+    command: ["worker"]
     depends_on:
       postgres-timescaledb:
         condition: service_healthy

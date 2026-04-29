@@ -1,0 +1,45 @@
+services:
+  weather-agent-bot:
+    image: ${WEATHER_AGENT_IMAGE:?Set WEATHER_AGENT_IMAGE}
+    command: ["bot"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:8080/health', timeout=5).raise_for_status()\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  weather-agent-worker:
+    image: ${WEATHER_AGENT_IMAGE:?Set WEATHER_AGENT_IMAGE}
+    command: ["worker"]
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:8081/health', timeout=5).raise_for_status()\""]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  weather-agent-migrate:
+    image: ${WEATHER_AGENT_IMAGE:?Set WEATHER_AGENT_IMAGE}
+    entrypoint: ["alembic"]
+    command: ["upgrade", "head"]
+    env_file:
+      - .env
+    profiles:
+      - migrate

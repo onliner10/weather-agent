@@ -45,9 +45,7 @@ class ThreadMemoryService:
                 return None
         return confirmation if isinstance(confirmation, dict) else None
 
-    async def store_last_forecast(
-        self, context_key: str, forecast_context: dict[str, Any]
-    ) -> None:
+    async def store_last_forecast(self, context_key: str, forecast_context: dict[str, Any]) -> None:
         ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
         metadata["last_forecast"] = forecast_context

@@ -254,7 +254,6 @@ class WeatherToolbox:
         if not variables:
             variables = list(WeatherVariable)
 
-
         provider_name = getattr(self.forecast_provider, "provider", "unknown")
         start = _time.perf_counter()
         try:

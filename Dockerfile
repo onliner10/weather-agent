@@ -6,13 +6,15 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-install-project
 
 FROM python:3.12-slim
 
 WORKDIR /app
 
 COPY --from=builder /app/.venv /app/.venv
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/alembic.ini
 COPY src/ /app/src/
 
 ENV PYTHONPATH=/app/src
