@@ -190,7 +190,7 @@ class _BaseImgwWarningsProvider:
             except WeatherProviderResponseError:
                 raise
             if attempt < _MAX_RETRIES - 1:
-                backoff = _BASE_BACKOFF_SECONDS * (2 ** attempt)
+                backoff = _BASE_BACKOFF_SECONDS * (2**attempt)
                 await asyncio.sleep(backoff)
         raise last_error  # type: ignore[misc]
 
@@ -226,9 +226,7 @@ class _BaseImgwWarningsProvider:
             ) from None
 
         if not isinstance(data, list):
-            raise WeatherProviderResponseError(
-                self._provider_name, "Response is not a JSON array"
-            )
+            raise WeatherProviderResponseError(self._provider_name, "Response is not a JSON array")
 
         return data
 

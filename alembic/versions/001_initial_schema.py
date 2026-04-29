@@ -5,6 +5,7 @@ Revises: None
 Create Date: 2026-04-28
 
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -191,15 +192,11 @@ def upgrade() -> None:
         "notification_rules",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("short_id", sa.String(10), nullable=False, unique=True),
-        sa.Column(
-            "user_id", sa.Integer(), sa.ForeignKey("authorized_users.id"), nullable=False
-        ),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("authorized_users.id"), nullable=False),
         sa.Column("telegram_chat_id", sa.Integer(), nullable=False),
         sa.Column("telegram_message_thread_id", sa.Integer(), nullable=True),
         sa.Column("location_id", sa.Integer(), sa.ForeignKey("locations.id"), nullable=False),
-        sa.Column(
-            "expression_language", sa.String(20), nullable=False, server_default="cel"
-        ),
+        sa.Column("expression_language", sa.String(20), nullable=False, server_default="cel"),
         sa.Column("expression", sa.Text(), nullable=False),
         sa.Column("schedule", sa.String(200), nullable=True),
         sa.Column("lead_time_minutes", sa.Integer(), nullable=True),
@@ -227,9 +224,7 @@ def upgrade() -> None:
     op.create_table(
         "rule_evaluation_runs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column(
-            "rule_id", sa.Integer(), sa.ForeignKey("notification_rules.id"), nullable=False
-        ),
+        sa.Column("rule_id", sa.Integer(), sa.ForeignKey("notification_rules.id"), nullable=False),
         sa.Column(
             "snapshot_id",
             sa.Integer(),
@@ -250,9 +245,7 @@ def upgrade() -> None:
     op.create_table(
         "notification_events",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column(
-            "short_id", sa.String(10), nullable=False, unique=True
-        ),
+        sa.Column("short_id", sa.String(10), nullable=False, unique=True),
         sa.Column(
             "rule_id",
             sa.Integer(),
@@ -268,9 +261,7 @@ def upgrade() -> None:
         sa.Column("telegram_chat_id", sa.Integer(), nullable=False),
         sa.Column("telegram_message_thread_id", sa.Integer(), nullable=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "suppressed", sa.Boolean(), nullable=False, server_default=sa.text("false")
-        ),
+        sa.Column("suppressed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("suppress_reason", sa.Text(), nullable=True),
         sa.Column("payload_hash", sa.String(64), nullable=True),
         sa.Column("message_text", sa.Text(), nullable=True),

@@ -356,9 +356,7 @@ class TestDodajLokCommand:
         auth = AuthorizationService(allowed_user_ids=[42])
         bot = TelegramBot(settings=settings, auth_service=auth)
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok Dom abc def"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom abc def")
         context = _make_context()
         context.args = ["Dom", "abc", "def"]
         await bot._dodaj_lok_command(update, context)
@@ -372,9 +370,7 @@ class TestDodajLokCommand:
         auth = AuthorizationService(allowed_user_ids=[42])
         bot = TelegramBot(settings=settings, auth_service=auth)
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok  52.2297 21.0122"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok  52.2297 21.0122")
         context = _make_context()
         # Empty string as name token (leading whitespace produces "")
         context.args = ["", "52.2297", "21.0122"]
@@ -389,9 +385,7 @@ class TestDodajLokCommand:
         auth = AuthorizationService(allowed_user_ids=[42])
         bot = TelegramBot(settings=settings, auth_service=auth)
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
         context.args = ["Dom", "52.2297", "21.0122"]
         await bot._dodaj_lok_command(update, context)
@@ -415,9 +409,7 @@ class TestDodajLokCommand:
             session_factory=factory,
         )
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
         context.args = ["Dom", "52.2297", "21.0122"]
         await bot._dodaj_lok_command(update, context)
@@ -439,10 +431,10 @@ class TestDodajLokCommand:
             assert user_row is not None, "AuthorizedUser should have been created"
 
             location_rows = (
-                await session.execute(
-                    select(LocOrm).where(LocOrm.user_id == user_row.id)
-                )
-            ).scalars().all()
+                (await session.execute(select(LocOrm).where(LocOrm.user_id == user_row.id)))
+                .scalars()
+                .all()
+            )
             assert len(location_rows) == 1
             assert location_rows[0].name == "Dom"
             assert location_rows[0].latitude == 52.2297
@@ -490,10 +482,10 @@ class TestDodajLokCommand:
             ).scalar_one_or_none()
             assert user_row is not None
             location_rows = (
-                await session.execute(
-                    select(LocOrm).where(LocOrm.user_id == user_row.id)
-                )
-            ).scalars().all()
+                (await session.execute(select(LocOrm).where(LocOrm.user_id == user_row.id)))
+                .scalars()
+                .all()
+            )
             assert len(location_rows) == 1
             assert location_rows[0].name == "Rogalińska 11 Gdańsk"
 
@@ -522,9 +514,7 @@ class TestDodajLokCommand:
             session_factory=factory,
         )
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
         context.args = ["Dom", "52.2297", "21.0122"]
         await bot._dodaj_lok_command(update, context)
@@ -536,9 +526,7 @@ class TestDodajLokCommand:
         from sqlalchemy import select
 
         async with factory() as session:
-            users = (
-                (await session.execute(select(AU))).scalars().all()
-            )
+            users = (await session.execute(select(AU))).scalars().all()
             assert len(users) == 1
             assert users[0].id == 1
 
@@ -555,9 +543,7 @@ class TestDodajLokCommand:
             session_factory=MagicMock(side_effect=RuntimeError("db down")),
         )
         bot.setup()
-        update = _make_command_update(
-            user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122"
-        )
+        update = _make_command_update(user_id=42, command_text="/dodaj_lok Dom 52.2297 21.0122")
         context = _make_context()
         context.args = ["Dom", "52.2297", "21.0122"]
         await bot._dodaj_lok_command(update, context)

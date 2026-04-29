@@ -35,9 +35,7 @@ class TestLocationRef:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            LocationRef(
-                id="x", name="X", latitude=0.0, longitude=0.0, unexpected=True
-            )
+            LocationRef(id="x", name="X", latitude=0.0, longitude=0.0, unexpected=True)
 
 
 class TestTimeRange:

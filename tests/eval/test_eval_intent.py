@@ -159,9 +159,13 @@ async def test_location_resolution(case: EvalCase) -> None:
     mock_loc = _loc(name=case.expected_location, lat=54.0, lon=18.0)
     fallback_locations = [
         Location(
-            id=1, name=case.expected_location, aliases=[],
-            latitude=54.0, longitude=18.0,
-            description=None, enabled=True,
+            id=1,
+            name=case.expected_location,
+            aliases=[],
+            latitude=54.0,
+            longitude=18.0,
+            description=None,
+            enabled=True,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
@@ -190,9 +194,7 @@ async def test_location_resolution(case: EvalCase) -> None:
     )
 
 
-RESPONSE_PATTERN_CASES = [
-    c for c in EVAL_CASES if c.expected_response_pattern is not None
-]
+RESPONSE_PATTERN_CASES = [c for c in EVAL_CASES if c.expected_response_pattern is not None]
 
 
 @pytest.mark.parametrize(
@@ -279,10 +281,12 @@ async def _verify_rule_response_pattern(case: EvalCase) -> None:
     cel_expr = case.expected_cel or 'max("wind_speed_10m_ms", weekend()) > 10.0'
     import json
 
-    mock_response.content = json.dumps({
-        "cel_expression": cel_expr,
-        "explanation": "Test explanation",
-    })
+    mock_response.content = json.dumps(
+        {
+            "cel_expression": cel_expr,
+            "explanation": "Test explanation",
+        }
+    )
     mock_chat.ainvoke = AsyncMock(return_value=mock_response)
     mock_model_factory.create_chat_model = lambda: mock_chat
 
@@ -302,9 +306,7 @@ async def _verify_rule_response_pattern(case: EvalCase) -> None:
     pattern = case.expected_response_pattern
     assert re.search(pattern, answer, re.IGNORECASE) or (
         pending is not None and "CEL" in str(pending)
-    ), (
-        f"Case {case.id}: response {answer!r} does not match pattern {pattern!r}"
-    )
+    ), f"Case {case.id}: response {answer!r} does not match pattern {pattern!r}"
 
 
 async def _verify_command_response_pattern(case: EvalCase) -> None:
@@ -351,9 +353,13 @@ async def _verify_location_response_pattern(case: EvalCase) -> None:
     mock_loc = _loc(name=case.expected_location)
     fallback_locations = [
         Location(
-            id=1, name=case.expected_location, aliases=[],
-            latitude=54.0, longitude=18.0,
-            description=None, enabled=True,
+            id=1,
+            name=case.expected_location,
+            aliases=[],
+            latitude=54.0,
+            longitude=18.0,
+            description=None,
+            enabled=True,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         )

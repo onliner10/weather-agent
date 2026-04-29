@@ -190,9 +190,7 @@ async def async_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 @pytest_asyncio.fixture()
 async def async_session(async_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    session_factory = async_sessionmaker(
-        async_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
         async with session.begin():
             yield session
@@ -219,17 +217,13 @@ class TestAuditLogger:
             user_id=1,
             details={"rule_id": "abc123"},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.event_type == "rule_created"
         assert row.user_id == 1
 
     @pytest.mark.asyncio()
-    async def test_log_event_stores_correlation_id(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_stores_correlation_id(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         corr_id = generate_correlation_id()
         audit_id = await logger.log_event(
@@ -238,33 +232,25 @@ class TestAuditLogger:
             correlation_id=corr_id,
             details={"provider": "open-meteo"},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.details["correlation_id"] == corr_id
         assert row.details["provider"] == "open-meteo"
 
     @pytest.mark.asyncio()
-    async def test_log_event_stores_context_key(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_stores_context_key(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         audit_id = await logger.log_event(
             event_type="notification_sent",
             user_id=42,
             context_key="chat:123:456",
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.context_key == "chat:123:456"
 
     @pytest.mark.asyncio()
-    async def test_log_event_stores_details_dict(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_stores_details_dict(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         details = {"rule_id": "r1", "expression": "temp > 30", "result": True}
         audit_id = await logger.log_event(
@@ -272,59 +258,45 @@ class TestAuditLogger:
             user_id=1,
             details=details,
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.details["rule_id"] == "r1"
         assert row.details["expression"] == "temp > 30"
         assert row.details["result"] is True
 
     @pytest.mark.asyncio()
-    async def test_log_event_rejects_invalid_type(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_rejects_invalid_type(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         with pytest.raises(ValueError, match="Invalid audit event type"):
             await logger.log_event(event_type="invalid_event_type")
 
     @pytest.mark.asyncio()
-    async def test_log_event_with_none_optionals(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_with_none_optionals(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         audit_id = await logger.log_event(
             event_type="unauthorized_attempt",
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.event_type == "unauthorized_attempt"
         assert row.user_id is None
         assert row.context_key is None
 
     @pytest.mark.asyncio()
-    async def test_log_event_redacts_secrets_in_details(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_redacts_secrets_in_details(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         audit_id = await logger.log_event(
             event_type="authorized_message",
             user_id=42,
             details={"api_key": "secret-key", "normal_field": "visible"},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.details["api_key"] == "[REDACTED]"
         assert row.details["normal_field"] == "visible"
 
     @pytest.mark.asyncio()
-    async def test_log_event_truncates_long_values(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_log_event_truncates_long_values(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         long_value = "x" * 1000
         audit_id = await logger.log_event(
@@ -332,9 +304,7 @@ class TestAuditLogger:
             user_id=42,
             details={"prompt": long_value},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         stored = row.details["prompt"]
         assert isinstance(stored, str)
@@ -355,42 +325,32 @@ class TestAuditLogger:
             event_type="notification_suppressed",
             user_id=1,
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.created_at is not None
 
     @pytest.mark.asyncio()
-    async def test_confirmation_accepted_event(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_confirmation_accepted_event(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         audit_id = await logger.log_event(
             event_type="confirmation_accepted",
             user_id=42,
             details={"rule_short_id": "abc"},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.event_type == "confirmation_accepted"
         assert row.details["rule_short_id"] == "abc"
 
     @pytest.mark.asyncio()
-    async def test_confirmation_declined_event(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_confirmation_declined_event(self, async_session: AsyncSession) -> None:
         logger = AuditLogger(async_session)
         audit_id = await logger.log_event(
             event_type="confirmation_declined",
             user_id=42,
             details={"rule_short_id": "xyz"},
         )
-        result = await async_session.execute(
-            select(AuditLog).where(AuditLog.id == audit_id)
-        )
+        result = await async_session.execute(select(AuditLog).where(AuditLog.id == audit_id))
         row = result.scalar_one()
         assert row.event_type == "confirmation_declined"
 

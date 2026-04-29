@@ -259,9 +259,7 @@ class TestListRules:
 
 
 class TestGetRule:
-    async def test_get_by_id(
-        self, service: NotificationRuleService, session: AsyncSession
-    ) -> None:
+    async def test_get_by_id(self, service: NotificationRuleService, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         data = RuleCreate(
@@ -347,9 +345,7 @@ class TestUpdateRule:
         )
         rule = await service.create_rule(1, data)
         with pytest.raises(CELValidationError):
-            await service.update_rule(
-                rule.id, RuleUpdate(expression="bad_fn(123)")
-            )
+            await service.update_rule(rule.id, RuleUpdate(expression="bad_fn(123)"))
 
     async def test_update_no_cel_validation_when_expression_unchanged(
         self, service: NotificationRuleService, session: AsyncSession
@@ -363,9 +359,7 @@ class TestUpdateRule:
             description="original",
         )
         rule = await service.create_rule(1, data)
-        updated = await service.update_rule(
-            rule.id, RuleUpdate(description="updated desc")
-        )
+        updated = await service.update_rule(rule.id, RuleUpdate(description="updated desc"))
         assert updated.description == "updated desc"
         assert updated.expression == rule.expression
 
@@ -386,9 +380,7 @@ class TestUpdateRule:
             expression='max("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
-        updated = await service.update_rule(
-            rule.id, RuleUpdate(cooldown_minutes=30)
-        )
+        updated = await service.update_rule(rule.id, RuleUpdate(cooldown_minutes=30))
         assert updated.cooldown_minutes == 30
 
 
@@ -471,9 +463,7 @@ class TestDeleteRule:
         result = await service.delete_rule(rule_orm.id)
         assert result is True
 
-        stmt = sa_select(NotificationEventORM).where(
-            NotificationEventORM.id == event_orm.id
-        )
+        stmt = sa_select(NotificationEventORM).where(NotificationEventORM.id == event_orm.id)
         res = await session.execute(stmt)
         surviving_event = res.scalar_one_or_none()
         assert surviving_event is not None

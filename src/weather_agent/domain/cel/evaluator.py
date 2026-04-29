@@ -17,10 +17,21 @@ _WARSAW = ZoneInfo("Europe/Warsaw")
 
 _DataDict = dict[str, Any]
 
-_AGGREGATION_METRIC_FUNCTIONS = frozenset({
-    "min", "max", "avg", "sum", "median", "stddev", "pctl",
-    "delta", "abs_delta", "rate_of_change", "forecast_delta",
-})
+_AGGREGATION_METRIC_FUNCTIONS = frozenset(
+    {
+        "min",
+        "max",
+        "avg",
+        "sum",
+        "median",
+        "stddev",
+        "pctl",
+        "delta",
+        "abs_delta",
+        "rate_of_change",
+        "forecast_delta",
+    }
+)
 
 _HOURLY_RESOLUTION_MINUTES = 60
 
@@ -131,9 +142,7 @@ def _previous_snapshot() -> SnapshotRef:
     return SnapshotRef("previous")
 
 
-def _points_in_range(
-    points: list[_DataDict], time_range: TimeRangeValue
-) -> list[_DataDict]:
+def _points_in_range(points: list[_DataDict], time_range: TimeRangeValue) -> list[_DataDict]:
     result: list[_DataDict] = []
     for point in points:
         target_time = point.get("target_time")
@@ -432,6 +441,7 @@ class _SafeEvaluator(ast.NodeVisitor):
             if op_func is None:
                 raise CELEvalError(f"Unsupported boolean op: {type(node.op).__name__}")
             from functools import reduce
+
             return reduce(op_func, values)
         if isinstance(node, ast.Call):
             return self._eval_call(node)
@@ -532,9 +542,7 @@ class _SafeEvaluator(ast.NodeVisitor):
             raise CELEvalError(f"{call_node.func} requires (condition, range) arguments")
         condition_arg = call_node.args[0]
         range_arg = self._eval_node(call_node.args[1])
-        condition_expr = ast.fix_missing_locations(
-            ast.Expression(body=condition_arg)
-        )
+        condition_expr = ast.fix_missing_locations(ast.Expression(body=condition_arg))
         return func(condition_expr, range_arg, self._data, self._namespace)
 
 

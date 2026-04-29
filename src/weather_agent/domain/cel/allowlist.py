@@ -46,9 +46,7 @@ ALLOWED_FUNCTIONS: dict[str, list[str]] = {
 ALLOWED_METRICS: list[str] = [v.value for v in WeatherVariable]
 
 ALL_ALLOWED_FUNCTION_NAMES: set[str] = {
-    name
-    for names in ALLOWED_FUNCTIONS.values()
-    for name in names
+    name for names in ALLOWED_FUNCTIONS.values() for name in names
 }
 
 

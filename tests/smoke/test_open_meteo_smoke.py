@@ -46,11 +46,7 @@ async def test_open_meteo_forecast_today() -> None:
         f"Expected at least 1 forecast point for Warsaw today, got {len(result.points)}"
     )
 
-    non_none_count = sum(
-        1
-        for p in result.points
-        if p.temperature_2m_c is not None
-    )
+    non_none_count = sum(1 for p in result.points if p.temperature_2m_c is not None)
     assert non_none_count > 0, (
         f"Expected some points with non-None temperature_2m_c, "
         f"but all {len(result.points)} points had None. "

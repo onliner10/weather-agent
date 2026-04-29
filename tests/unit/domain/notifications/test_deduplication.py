@@ -160,7 +160,7 @@ class TestDedupeKey:
         key = compute_dedupe_key(
             rule_id=1,
             location_id=10,
-            expression='temperature_2m_c > 30',
+            expression="temperature_2m_c > 30",
             window_start=datetime(2025, 6, 1, 12, 0, tzinfo=UTC),
             window_end=datetime(2025, 6, 1, 18, 0, tzinfo=UTC),
         )
@@ -170,30 +170,42 @@ class TestDedupeKey:
 
     def test_compute_dedupe_key_same_expression_same_hash(self) -> None:
         key1 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="temp > 30",
+            rule_id=1,
+            location_id=1,
+            expression="temp > 30",
         )
         key2 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="temp > 30",
+            rule_id=1,
+            location_id=1,
+            expression="temp > 30",
         )
         assert key1.expression_hash == key2.expression_hash
 
     def test_compute_dedupe_key_different_expression_different_hash(self) -> None:
         key1 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="temp > 30",
+            rule_id=1,
+            location_id=1,
+            expression="temp > 30",
         )
         key2 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="wind > 10",
+            rule_id=1,
+            location_id=1,
+            expression="wind > 10",
         )
         assert key1.expression_hash != key2.expression_hash
 
     def test_compute_dedupe_key_includes_window(self) -> None:
         key1 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="temp > 30",
+            rule_id=1,
+            location_id=1,
+            expression="temp > 30",
             window_start=datetime(2025, 1, 1, tzinfo=UTC),
             window_end=datetime(2025, 1, 2, tzinfo=UTC),
         )
         key2 = compute_dedupe_key(
-            rule_id=1, location_id=1, expression="temp > 30",
+            rule_id=1,
+            location_id=1,
+            expression="temp > 30",
             window_start=datetime(2025, 6, 1, tzinfo=UTC),
             window_end=datetime(2025, 6, 2, tzinfo=UTC),
         )
@@ -229,9 +241,7 @@ class TestSignificantChange:
 
 
 class TestNotificationDeduplicator:
-    async def test_no_suppression_when_no_prior_events(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_no_suppression_when_no_prior_events(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -281,9 +291,7 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_cooldown_not_expired_suppresses(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_cooldown_not_expired_suppresses(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session, cooldown_minutes=60)
@@ -332,9 +340,7 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_duplicate_dedupe_key_suppresses(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_duplicate_dedupe_key_suppresses(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session)
@@ -422,9 +428,7 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_payload_hash_unchanged_suppresses(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_payload_hash_unchanged_suppresses(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session, cooldown_minutes=5)
@@ -489,9 +493,7 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_suppressed_events_not_counted_for_cooldown(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_suppressed_events_not_counted_for_cooldown(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session, cooldown_minutes=60)
@@ -518,15 +520,11 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_snooze_takes_priority_over_cooldown(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_snooze_takes_priority_over_cooldown(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         snooze_until = datetime.now(UTC) + timedelta(hours=2)
-        rule_orm = await _create_rule_orm(
-            session, cooldown_minutes=5, snooze_until=snooze_until
-        )
+        rule_orm = await _create_rule_orm(session, cooldown_minutes=5, snooze_until=snooze_until)
 
         sent_at = datetime.now(UTC) - timedelta(hours=3)
         await _create_event_orm(
@@ -549,9 +547,7 @@ class TestNotificationDeduplicator:
         assert suppressed is True
         assert "snoozed" in reason
 
-    async def test_dry_run_shows_suppression_status(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_dry_run_shows_suppression_status(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         snooze_until = datetime.now(UTC) + timedelta(hours=2)
@@ -611,9 +607,7 @@ class TestNotificationDeduplicator:
         assert suppressed is False
         assert reason is None
 
-    async def test_dry_run_cooldown_shows_would_suppress(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_dry_run_cooldown_shows_would_suppress(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session, cooldown_minutes=60)
@@ -638,9 +632,7 @@ class TestNotificationDeduplicator:
         assert suppressed is True
         assert "cooldown" in (reason or "")
 
-    async def test_sequential_checks_cooldown_blocks_both(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_sequential_checks_cooldown_blocks_both(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         rule_orm = await _create_rule_orm(session, cooldown_minutes=60)
@@ -657,12 +649,22 @@ class TestNotificationDeduplicator:
         rule = _make_rule(cooldown_minutes=60)
 
         dedup = NotificationDeduplicator(session)
-        suppressed1, _ = await dedup.should_suppress(rule, NotificationCandidate(
-            rule_id=1, location_id=1, expression=rule.expression,
-        ))
+        suppressed1, _ = await dedup.should_suppress(
+            rule,
+            NotificationCandidate(
+                rule_id=1,
+                location_id=1,
+                expression=rule.expression,
+            ),
+        )
         assert suppressed1 is True
 
-        suppressed2, _ = await dedup.should_suppress(rule, NotificationCandidate(
-            rule_id=1, location_id=1, expression=rule.expression,
-        ))
+        suppressed2, _ = await dedup.should_suppress(
+            rule,
+            NotificationCandidate(
+                rule_id=1,
+                location_id=1,
+                expression=rule.expression,
+            ),
+        )
         assert suppressed2 is True

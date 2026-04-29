@@ -78,9 +78,7 @@ class TestPendingConfirmation:
         assert result_b is None
 
     @pytest.mark.asyncio()
-    async def test_clear_pending_confirmation(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_clear_pending_confirmation(self, memory_service: ThreadMemoryService) -> None:
         await memory_service.store_pending_confirmation("100:1", {"action": "test"})
         await memory_service.clear_pending_confirmation("100:1")
         result = await memory_service.get_pending_confirmation("100:1")
@@ -106,9 +104,7 @@ class TestPendingConfirmation:
         assert result == confirmation
 
     @pytest.mark.asyncio()
-    async def test_no_confirmation_returns_none(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_no_confirmation_returns_none(self, memory_service: ThreadMemoryService) -> None:
         result = await memory_service.get_pending_confirmation("999:1")
         assert result is None
 
@@ -143,9 +139,7 @@ class TestExpiredContext:
         assert result == confirmation
 
     @pytest.mark.asyncio()
-    async def test_custom_ttl_overrides_default(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_custom_ttl_overrides_default(self, async_session: AsyncSession) -> None:
         context_service = TelegramContextService(async_session)
         memory = ThreadMemoryService(context_service, default_ttl_days=14)
 
@@ -188,9 +182,7 @@ class TestNewThreadCleanState:
 
 class TestRetentionConfigurable:
     @pytest.mark.asyncio()
-    async def test_custom_default_ttl(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_custom_default_ttl(self, async_session: AsyncSession) -> None:
         context_service = TelegramContextService(async_session)
         memory = ThreadMemoryService(context_service, default_ttl_days=7)
 
@@ -209,9 +201,7 @@ class TestRetentionConfigurable:
 
 class TestTurnPersistence:
     @pytest.mark.asyncio()
-    async def test_save_and_load_user_turn(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_save_and_load_user_turn(self, memory_service: ThreadMemoryService) -> None:
         turn = {
             "message_id": 42,
             "role": "user",
@@ -227,9 +217,7 @@ class TestTurnPersistence:
         assert turns[0]["timestamp"] is not None
 
     @pytest.mark.asyncio()
-    async def test_save_and_load_bot_turn(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_save_and_load_bot_turn(self, memory_service: ThreadMemoryService) -> None:
         turn = {
             "message_id": 43,
             "role": "bot",
@@ -244,9 +232,7 @@ class TestTurnPersistence:
         assert turns[0]["answer_summary"] == "W Chwarznie 18°C, wiatr 8 m/s."
 
     @pytest.mark.asyncio()
-    async def test_save_multiple_turns_in_order(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_save_multiple_turns_in_order(self, memory_service: ThreadMemoryService) -> None:
         user_turn = {
             "message_id": 1,
             "role": "user",
@@ -276,27 +262,34 @@ class TestTurnPersistence:
         assert turns[2]["message_id"] == 3
 
     @pytest.mark.asyncio()
-    async def test_find_turn_by_message_id(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 10,
-            "role": "user",
-            "text": "pogoda?",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:1", {
-            "message_id": 11,
-            "role": "bot",
-            "answer_summary": "Słońce.",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:1", {
-            "message_id": 12,
-            "role": "user",
-            "text": "a wiatr?",
-            "timestamp": None,
-        })
+    async def test_find_turn_by_message_id(self, memory_service: ThreadMemoryService) -> None:
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 10,
+                "role": "user",
+                "text": "pogoda?",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 11,
+                "role": "bot",
+                "answer_summary": "Słońce.",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 12,
+                "role": "user",
+                "text": "a wiatr?",
+                "timestamp": None,
+            },
+        )
 
         found = await memory_service.find_turn_by_message_id("100:1", 11)
         assert found is not None
@@ -307,57 +300,68 @@ class TestTurnPersistence:
     async def test_find_turn_by_message_id_not_found(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 10,
-            "role": "user",
-            "text": "pogoda?",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 10,
+                "role": "user",
+                "text": "pogoda?",
+                "timestamp": None,
+            },
+        )
         assert await memory_service.find_turn_by_message_id("100:1", 999) is None
 
     @pytest.mark.asyncio()
     async def test_find_turn_by_message_id_returns_last_match(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 10,
-            "role": "user",
-            "text": "pogoda?",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:1", {
-            "message_id": 10,
-            "role": "bot",
-            "answer_summary": "Pierwsza odpowiedź",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 10,
+                "role": "user",
+                "text": "pogoda?",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 10,
+                "role": "bot",
+                "answer_summary": "Pierwsza odpowiedź",
+                "timestamp": None,
+            },
+        )
         found = await memory_service.find_turn_by_message_id("100:1", 10)
         assert found is not None
         assert found["role"] == "bot"
 
     @pytest.mark.asyncio()
-    async def test_no_turns_returns_empty_list(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
+    async def test_no_turns_returns_empty_list(self, memory_service: ThreadMemoryService) -> None:
         turns = await memory_service.load_turns("999:1")
         assert turns == []
 
     @pytest.mark.asyncio()
-    async def test_turns_are_thread_scoped(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 1,
-            "role": "user",
-            "text": "pogoda w Gdańsku?",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:2", {
-            "message_id": 1,
-            "role": "user",
-            "text": "pogoda w Warszawie?",
-            "timestamp": None,
-        })
+    async def test_turns_are_thread_scoped(self, memory_service: ThreadMemoryService) -> None:
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "pogoda w Gdańsku?",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:2",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "pogoda w Warszawie?",
+                "timestamp": None,
+            },
+        )
 
         turns_1 = await memory_service.load_turns("100:1")
         turns_2 = await memory_service.load_turns("100:2")
@@ -367,19 +371,20 @@ class TestTurnPersistence:
         assert turns_2[0]["text"] == "pogoda w Warszawie?"
 
     @pytest.mark.asyncio()
-    async def test_turns_bounded_at_max(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_turns_bounded_at_max(self, async_session: AsyncSession) -> None:
         context_service = TelegramContextService(async_session)
         memory = ThreadMemoryService(context_service, default_ttl_days=14)
 
         for i in range(25):
-            await memory.save_turn("100:1", {
-                "message_id": i,
-                "role": "user",
-                "text": f"wiadomość {i}",
-                "timestamp": None,
-            })
+            await memory.save_turn(
+                "100:1",
+                {
+                    "message_id": i,
+                    "role": "user",
+                    "text": f"wiadomość {i}",
+                    "timestamp": None,
+                },
+            )
 
         turns = await memory.load_turns("100:1")
         assert len(turns) == 20
@@ -387,18 +392,19 @@ class TestTurnPersistence:
         assert turns[-1]["message_id"] == 24
 
     @pytest.mark.asyncio()
-    async def test_expired_turns_are_ignored(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_expired_turns_are_ignored(self, async_session: AsyncSession) -> None:
         context_service = TelegramContextService(async_session)
         memory = ThreadMemoryService(context_service, default_ttl_days=14)
 
-        await memory.save_turn("100:1", {
-            "message_id": 1,
-            "role": "user",
-            "text": "pogoda?",
-            "timestamp": None,
-        })
+        await memory.save_turn(
+            "100:1",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "pogoda?",
+                "timestamp": None,
+            },
+        )
 
         ctx = await context_service.get_or_create_context(100, 1)
         metadata = dict(ctx.metadata)
@@ -413,18 +419,24 @@ class TestTurnPersistence:
     async def test_update_last_bot_turn_message_id(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 50,
-            "role": "user",
-            "text": "pogoda jutro?",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:1", {
-            "message_id": None,
-            "role": "bot",
-            "answer_summary": "Jutro 20°C.",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 50,
+                "role": "user",
+                "text": "pogoda jutro?",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": None,
+                "role": "bot",
+                "answer_summary": "Jutro 20°C.",
+                "timestamp": None,
+            },
+        )
 
         await memory_service.update_last_bot_turn_message_id("100:1", 51)
 
@@ -442,18 +454,24 @@ class TestReplyAnchorLookup:
     async def test_reply_anchor_found_by_message_id(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 10,
-            "role": "user",
-            "text": "pogoda w Chwarznie?",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:1", {
-            "message_id": 11,
-            "role": "bot",
-            "answer_summary": "W Chwarznie 18°C, wiatr 8 m/s.",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 10,
+                "role": "user",
+                "text": "pogoda w Chwarznie?",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 11,
+                "role": "bot",
+                "answer_summary": "W Chwarznie 18°C, wiatr 8 m/s.",
+                "timestamp": None,
+            },
+        )
 
         anchor = await memory_service.find_turn_by_message_id("100:1", 11)
         assert anchor is not None
@@ -464,12 +482,15 @@ class TestReplyAnchorLookup:
     async def test_reply_anchor_cross_thread_not_found(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 11,
-            "role": "bot",
-            "answer_summary": "Odpowiedź w wątku 1",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 11,
+                "role": "bot",
+                "answer_summary": "Odpowiedź w wątku 1",
+                "timestamp": None,
+            },
+        )
 
         anchor = await memory_service.find_turn_by_message_id("100:2", 11)
         assert anchor is None
@@ -478,12 +499,15 @@ class TestReplyAnchorLookup:
     async def test_reply_anchor_cross_chat_not_found(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 11,
-            "role": "bot",
-            "answer_summary": "Odpowiedź w czacie 100",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 11,
+                "role": "bot",
+                "answer_summary": "Odpowiedź w czacie 100",
+                "timestamp": None,
+            },
+        )
 
         anchor = await memory_service.find_turn_by_message_id("200:1", 11)
         assert anchor is None
@@ -491,21 +515,25 @@ class TestReplyAnchorLookup:
 
 class TestThreadTopicIsolation:
     @pytest.mark.asyncio()
-    async def test_turns_isolated_by_thread(
-        self, memory_service: ThreadMemoryService
-    ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 1,
-            "role": "user",
-            "text": "wątek 1",
-            "timestamp": None,
-        })
-        await memory_service.save_turn("100:2", {
-            "message_id": 1,
-            "role": "user",
-            "text": "wątek 2",
-            "timestamp": None,
-        })
+    async def test_turns_isolated_by_thread(self, memory_service: ThreadMemoryService) -> None:
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "wątek 1",
+                "timestamp": None,
+            },
+        )
+        await memory_service.save_turn(
+            "100:2",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "wątek 2",
+                "timestamp": None,
+            },
+        )
 
         turns_1 = await memory_service.load_turns("100:1")
         turns_2 = await memory_service.load_turns("100:2")
@@ -518,12 +546,15 @@ class TestThreadTopicIsolation:
     async def test_fallback_context_key_no_thread(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("200", {
-            "message_id": 1,
-            "role": "user",
-            "text": "brak wątku",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "200",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "brak wątku",
+                "timestamp": None,
+            },
+        )
 
         turns = await memory_service.load_turns("200")
         assert len(turns) == 1
@@ -540,12 +571,15 @@ class TestThreadTopicIsolation:
     async def test_thread_turns_do_not_leak_to_chat_fallback(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100:1", {
-            "message_id": 1,
-            "role": "user",
-            "text": "wątek",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100:1",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "wątek",
+                "timestamp": None,
+            },
+        )
         turns = await memory_service.load_turns("100")
         assert turns == []
 
@@ -553,11 +587,14 @@ class TestThreadTopicIsolation:
     async def test_chat_fallback_turns_do_not_leak_to_thread(
         self, memory_service: ThreadMemoryService
     ) -> None:
-        await memory_service.save_turn("100", {
-            "message_id": 1,
-            "role": "user",
-            "text": "czat",
-            "timestamp": None,
-        })
+        await memory_service.save_turn(
+            "100",
+            {
+                "message_id": 1,
+                "role": "user",
+                "text": "czat",
+                "timestamp": None,
+            },
+        )
         turns = await memory_service.load_turns("100:1")
         assert turns == []

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -160,16 +160,16 @@ LAST_SUCCESSFUL_FORECAST_REFRESH_TIMESTAMP_SECONDS = Gauge(
 
 def _get_value(metric: Counter | Gauge) -> float:
     """Return the current value of a single-label-less metric."""
-    return metric._value.get()  # type: ignore[attr-defined]
+    return cast(float, metric._value.get())
 
 
 def _get_labeled_value(metric: Counter, **labels: str) -> float:
     """Return the current value of a labeled counter."""
-    return metric.labels(**labels)._value.get()  # type: ignore[attr-defined]
+    return cast(float, metric.labels(**labels)._value.get())
 
 
 def _count_histogram_observations(metric: Histogram, **labels: str) -> float:
     """Return the current observation count of a histogram."""
     if labels:
-        return metric.labels(**labels)._sum.get()  # type: ignore[attr-defined]
-    return metric._sum.get()  # type: ignore[attr-defined]
+        return cast(float, metric.labels(**labels)._sum.get())
+    return cast(float, metric._sum.get())

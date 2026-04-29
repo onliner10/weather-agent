@@ -50,21 +50,14 @@ class LocationAliasConflictError(Exception):
     def __init__(self, alias: str, conflicting_location_id: int) -> None:
         self.alias = alias
         self.conflicting_location_id = conflicting_location_id
-        super().__init__(
-            f"Alias '{alias}' already used by location {conflicting_location_id}"
-        )
+        super().__init__(f"Alias '{alias}' already used by location {conflicting_location_id}")
 
 
 class LocationNameConflictError(Exception):
     def __init__(self, name: str, conflicting_location_id: int) -> None:
         self.name = name
         self.conflicting_location_id = conflicting_location_id
-        super().__init__(
-            f"Name '{name}' already used by location {conflicting_location_id}"
-        )
-
-
-
+        super().__init__(f"Name '{name}' already used by location {conflicting_location_id}")
 
 
 def _orm_to_domain(orm: LocationORM) -> Location:
@@ -153,9 +146,7 @@ class LocationService:
                 existing_norm = normalize_for_matching(existing_alias)
                 if existing_norm in new_norms:
                     matching_alias = next(
-                        a
-                        for a in aliases
-                        if normalize_for_matching(a) == existing_norm
+                        a for a in aliases if normalize_for_matching(a) == existing_norm
                     )
                     raise LocationAliasConflictError(matching_alias, loc.id)
 
@@ -178,9 +169,7 @@ class LocationService:
         await self._session.refresh(orm)
         return _orm_to_domain(orm)
 
-    async def list_locations(
-        self, user_id: int, include_disabled: bool = False
-    ) -> list[Location]:
+    async def list_locations(self, user_id: int, include_disabled: bool = False) -> list[Location]:
         stmt = select(LocationORM).where(LocationORM.user_id == user_id)
         if not include_disabled:
             stmt = stmt.where(LocationORM.enabled.is_(True))
@@ -193,9 +182,7 @@ class LocationService:
             return None
         return _orm_to_domain(orm)
 
-    async def update_location(
-        self, location_id: int, data: LocationUpdate
-    ) -> Location:
+    async def update_location(self, location_id: int, data: LocationUpdate) -> Location:
         orm = await self._session.get(LocationORM, location_id)
         if orm is None:
             raise ValueError(f"Location {location_id} not found")
@@ -203,9 +190,7 @@ class LocationService:
             await self._check_name_conflict(orm.user_id, data.name, exclude_id=location_id)
             orm.name = data.name
         if data.aliases is not None:
-            await self._check_alias_conflicts(
-                orm.user_id, data.aliases, exclude_id=location_id
-            )
+            await self._check_alias_conflicts(orm.user_id, data.aliases, exclude_id=location_id)
             orm.aliases = data.aliases
         if data.latitude is not None:
             orm.latitude = data.latitude
@@ -224,9 +209,7 @@ class LocationService:
         orm = await self._session.get(LocationORM, location_id)
         if orm is None:
             return False
-        await self._session.execute(
-            delete(LocationORM).where(LocationORM.id == location_id)
-        )
+        await self._session.execute(delete(LocationORM).where(LocationORM.id == location_id))
         await self._session.flush()
         return True
 
@@ -277,9 +260,7 @@ class LocationService:
             longitude=orm.longitude,
         )
 
-    async def resolve_location(
-        self, query: str, user_id: int
-    ) -> LocationRef | None:
+    async def resolve_location(self, query: str, user_id: int) -> LocationRef | None:
         stmt = select(LocationORM).where(
             LocationORM.user_id == user_id, LocationORM.enabled.is_(True)
         )

@@ -40,9 +40,7 @@ def _end_of_day(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, 23, 59, tzinfo=_WARSAW)
 
 
-def _nearest_upcoming_weekend(
-    now: datetime, next_weekend: bool = False
-) -> tuple[date, date]:
+def _nearest_upcoming_weekend(now: datetime, next_weekend: bool = False) -> tuple[date, date]:
     today = now.date()
     weekday = today.weekday()
 
@@ -183,9 +181,7 @@ class DateResolver:
 
         return None
 
-    async def _resolve_majowka(
-        self, now: datetime, today: date
-    ) -> ResolvedTimeRange:
+    async def _resolve_majowka(self, now: datetime, today: date) -> ResolvedTimeRange:
         year = now.year
         if today.month > 5:
             year += 1
@@ -228,9 +224,7 @@ class DateResolver:
             explanation=f"Majówka ({start_date.isoformat()} – {end_date.isoformat()})",
         )
 
-    async def _try_explicit_date_range(
-        self, t: str
-    ) -> ResolvedTimeRange | None:
+    async def _try_explicit_date_range(self, t: str) -> ResolvedTimeRange | None:
         m = re.match(r"^(\d{4}-\d{2}-\d{2})$", t)
         if m:
             try:
@@ -243,9 +237,7 @@ class DateResolver:
             except ValueError:
                 return None
 
-        m = re.match(
-            r"^(\d{4}-\d{2}-\d{2})\s*[-–—]\s*(\d{4}-\d{2}-\d{2})$", t
-        )
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})\s*[-–—]\s*(\d{4}-\d{2}-\d{2})$", t)
         if m:
             try:
                 start_d = date.fromisoformat(m.group(1))

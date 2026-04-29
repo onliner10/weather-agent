@@ -126,8 +126,7 @@ class TestStructuralTyping:
                 time_range: TimeRange,
                 variables: list[WeatherVariable],
                 resolution: ForecastResolution,
-            ) -> ForecastResult:
-                ...
+            ) -> ForecastResult: ...
 
         provider: ForecastProvider = MyProvider()
         assert callable(provider.get_forecast)
@@ -139,8 +138,7 @@ class TestStructuralTyping:
                 location: LocationRef,
                 radius_km: float,
                 variables: list[WeatherVariable],
-            ) -> ObservationResult:
-                ...
+            ) -> ObservationResult: ...
 
         provider: ObservationProvider = MyProvider()
         assert callable(provider.get_observations)
@@ -151,8 +149,7 @@ class TestStructuralTyping:
                 self,
                 location: LocationRef,
                 time_range: TimeRange,
-            ) -> list[WeatherWarning]:
-                ...
+            ) -> list[WeatherWarning]: ...
 
         provider: WarningProvider = MyProvider()
         assert callable(provider.get_warnings)

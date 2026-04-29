@@ -105,9 +105,7 @@ class ImgwSynopProvider:
             raise WeatherProviderUnavailableError(_PROVIDER) from None
 
         if response.status_code != 200:
-            raise WeatherProviderResponseError(
-                _PROVIDER, f"HTTP {response.status_code}"
-            )
+            raise WeatherProviderResponseError(_PROVIDER, f"HTTP {response.status_code}")
 
         try:
             stations: list[dict[str, object]] = response.json()
@@ -115,9 +113,7 @@ class ImgwSynopProvider:
             raise WeatherProviderResponseError(_PROVIDER, f"Invalid JSON: {exc}") from exc
 
         if not isinstance(stations, list):
-            raise WeatherProviderResponseError(
-                _PROVIDER, "Expected a list of stations"
-            )
+            raise WeatherProviderResponseError(_PROVIDER, "Expected a list of stations")
 
         points: list[ObservationPoint] = []
         for station in stations:
@@ -127,9 +123,7 @@ class ImgwSynopProvider:
             coords = STATION_COORDINATES.get(station_id)
             distance: float | None = None
             if coords:
-                distance = haversine_km(
-                    location.latitude, location.longitude, coords[0], coords[1]
-                )
+                distance = haversine_km(location.latitude, location.longitude, coords[0], coords[1])
                 if distance > radius_km:
                     continue
             else:

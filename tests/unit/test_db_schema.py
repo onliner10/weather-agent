@@ -240,9 +240,7 @@ class TestObservations:
 
     def test_not_nullable_fields(self, inspector: Inspector) -> None:
         cols = {c["name"]: c for c in inspector.get_columns("observations")}
-        not_null_fields = [
-            "provider", "observed_at", "location_id", "fetched_at", "raw_payload"
-        ]
+        not_null_fields = ["provider", "observed_at", "location_id", "fetched_at", "raw_payload"]
         for not_null_field in not_null_fields:
             msg = f"{not_null_field} should not be nullable"
             assert cols[not_null_field]["nullable"] is False, msg

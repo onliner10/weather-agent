@@ -17,6 +17,7 @@ build/
 *.egg-info/
 
 # Local configuration
+.junie/
 .env
 .env.*
 !.env.example

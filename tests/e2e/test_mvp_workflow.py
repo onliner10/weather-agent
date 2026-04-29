@@ -398,10 +398,13 @@ class TestMVPWorkflow:
         # resolved_location/resolved_time_range are no longer populated by
         # the weather path — the LLM selects tool call parameters directly.
         # Assert that the answer indicates weather info was returned instead.
-        assert any(
-            kw in (result.get("answer") or "").lower()
-            for kw in ("pogod", "wiar", "temp", "deszcz", "wiatr", "burz", "chmur")
-        ) or "niedostępna" in (result.get("answer") or "").lower()
+        assert (
+            any(
+                kw in (result.get("answer") or "").lower()
+                for kw in ("pogod", "wiar", "temp", "deszcz", "wiatr", "burz", "chmur")
+            )
+            or "niedostępna" in (result.get("answer") or "").lower()
+        )
 
         # ================================================================
         # 4-5. User asks for notification rule (LLM proposes CEL)

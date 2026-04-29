@@ -61,7 +61,7 @@ class TestUnknownFunctionRejection:
 
     def test_all_time_functions_pass(self) -> None:
         for func in ["now", "today", "tomorrow", "weekend", "previous_snapshot"]:
-            result = validate_expression(f'{func}() != None')
+            result = validate_expression(f"{func}() != None")
             assert result.valid, f"Function {func} failed validation"
 
     def test_all_change_trend_functions_pass(self) -> None:

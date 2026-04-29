@@ -48,7 +48,9 @@ class OpenMeteoDwdIconProvider:
             from weather_agent.settings import OpenMeteoSettings
 
             settings = OpenMeteoSettings()
-        self._base_url: str = getattr(settings, "base_url", "https://api.open-meteo.com/v1/forecast")
+        self._base_url: str = getattr(
+            settings, "base_url", "https://api.open-meteo.com/v1/forecast"
+        )
         self._model: str = getattr(settings, "model", _DWD_ICON_MODEL)
         self._timeout_seconds: int = getattr(settings, "timeout_seconds", 15)
 
@@ -87,7 +89,7 @@ class OpenMeteoDwdIconProvider:
             except WeatherProviderResponseError:
                 raise
             if attempt < _MAX_RETRIES - 1:
-                backoff = _BASE_BACKOFF_SECONDS * (2 ** attempt)
+                backoff = _BASE_BACKOFF_SECONDS * (2**attempt)
                 await asyncio.sleep(backoff)
         raise last_error  # type: ignore[misc]
 
@@ -101,9 +103,7 @@ class OpenMeteoDwdIconProvider:
         except httpx.ConnectError:
             raise WeatherProviderUnavailableError(_PROVIDER_NAME) from None
         except httpx.HTTPError as exc:
-            raise WeatherProviderUnavailableError(
-                _PROVIDER_NAME, f"HTTP error: {exc}"
-            ) from exc
+            raise WeatherProviderUnavailableError(_PROVIDER_NAME, f"HTTP error: {exc}") from exc
 
         if response.status_code >= 500:
             raise WeatherProviderResponseError(
@@ -123,9 +123,7 @@ class OpenMeteoDwdIconProvider:
             ) from exc
 
         if not isinstance(data, dict):
-            raise WeatherProviderResponseError(
-                _PROVIDER_NAME, "Response is not a JSON object"
-            )
+            raise WeatherProviderResponseError(_PROVIDER_NAME, "Response is not a JSON object")
 
         return data
 

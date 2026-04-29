@@ -68,7 +68,7 @@ class TestMainEntryPoint:
 
 class TestRunMigrations:
     def test_run_migrations_calls_alembic_upgrade(self) -> None:
-        from weather_agent.__main__ import run_migrations
+        from weather_agent.infrastructure.db.setup import run_migrations
 
         with patch("alembic.command.upgrade") as mock_upgrade:
             run_migrations()
@@ -77,7 +77,7 @@ class TestRunMigrations:
             assert args[0][1] == "head"
 
     def test_run_migrations_propagates_errors(self) -> None:
-        from weather_agent.__main__ import run_migrations
+        from weather_agent.infrastructure.db.setup import run_migrations
 
         with patch(
             "alembic.command.upgrade",
@@ -89,35 +89,45 @@ class TestRunMigrations:
 
 class TestDatabaseUrlNormalization:
     def test_normalizes_postgresql_url(self) -> None:
-        from weather_agent.__main__ import _normalize_database_url
+        from weather_agent.infrastructure.db.setup import (
+            normalize_database_url as _normalize_database_url,
+        )
 
         url = "postgresql://user:pass@localhost/db"
         result = _normalize_database_url(url)
         assert result == "postgresql+psycopg_async://user:pass@localhost/db"
 
     def test_normalizes_postgres_url(self) -> None:
-        from weather_agent.__main__ import _normalize_database_url
+        from weather_agent.infrastructure.db.setup import (
+            normalize_database_url as _normalize_database_url,
+        )
 
         url = "postgres://user:pass@localhost/db"
         result = _normalize_database_url(url)
         assert result == "postgresql+psycopg_async://user:pass@localhost/db"
 
     def test_normalizes_psycopg_url(self) -> None:
-        from weather_agent.__main__ import _normalize_database_url
+        from weather_agent.infrastructure.db.setup import (
+            normalize_database_url as _normalize_database_url,
+        )
 
         url = "postgresql+psycopg://user:pass@localhost/db"
         result = _normalize_database_url(url)
         assert result == "postgresql+psycopg_async://user:pass@localhost/db"
 
     def test_leaves_async_url_unchanged(self) -> None:
-        from weather_agent.__main__ import _normalize_database_url
+        from weather_agent.infrastructure.db.setup import (
+            normalize_database_url as _normalize_database_url,
+        )
 
         url = "postgresql+psycopg_async://user:pass@localhost/db"
         result = _normalize_database_url(url)
         assert result == url
 
     def test_leaves_other_schemes_unchanged(self) -> None:
-        from weather_agent.__main__ import _normalize_database_url
+        from weather_agent.infrastructure.db.setup import (
+            normalize_database_url as _normalize_database_url,
+        )
 
         url = "sqlite+aiosqlite:///test.db"
         result = _normalize_database_url(url)
@@ -126,7 +136,9 @@ class TestDatabaseUrlNormalization:
 
 class TestHomeLocationSaveHelpers:
     def test_extracts_address_from_zapamietaj_message(self) -> None:
-        from weather_agent.__main__ import _extract_home_location_request
+        from weather_agent.adapters.telegram.home_location import (
+            extract_home_location_request as _extract_home_location_request,
+        )
 
         result = _extract_home_location_request(
             "Zapamiętaj moją lokalizację domową jako Rogalińska 11, Gdańsk."
@@ -134,7 +146,9 @@ class TestHomeLocationSaveHelpers:
         assert result == "Rogalińska 11, Gdańsk"
 
     def test_ignores_weather_question(self) -> None:
-        from weather_agent.__main__ import _extract_home_location_request
+        from weather_agent.adapters.telegram.home_location import (
+            extract_home_location_request as _extract_home_location_request,
+        )
 
         assert _extract_home_location_request("jaka pogoda za dwa dni?") is None
 
@@ -143,13 +157,13 @@ class TestHomeLocationSaveHelpers:
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-        from weather_agent.__main__ import (
-            _get_or_create_authorized_user_id,
-            _handle_home_location_save_message,
+        from weather_agent.adapters.telegram.home_location import (
+            handle_home_location_save_message as _handle_home_location_save_message,
         )
         from weather_agent.domain.locations import LocationService
         from weather_agent.domain.weather import LocationRef
         from weather_agent.infrastructure.db.base import AuthorizedUser, Base, Location
+        from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
         async with engine.begin() as conn:
@@ -167,7 +181,8 @@ class TestHomeLocationSaveHelpers:
         )
 
         async with factory() as session:
-            db_user_id = await _get_or_create_authorized_user_id(session, 7431473393)
+            auth_repo = AuthRepository(session)
+            db_user_id = await auth_repo.get_or_create_authorized_user_id(7431473393)
             answer = await _handle_home_location_save_message(
                 "Zapamiętaj moją lokalizację domową jako Rogalińska 11, Gdańsk.",
                 db_user_id,
@@ -179,9 +194,7 @@ class TestHomeLocationSaveHelpers:
         async with factory() as session:
             user = (
                 await session.execute(
-                    select(AuthorizedUser).where(
-                        AuthorizedUser.telegram_user_id == 7431473393
-                    )
+                    select(AuthorizedUser).where(AuthorizedUser.telegram_user_id == 7431473393)
                 )
             ).scalar_one()
             location = (
@@ -199,7 +212,7 @@ class TestHomeLocationSaveHelpers:
 
 class TestMissingConfiguration:
     def test_missing_env_vars_exits_with_error(self) -> None:
-        from weather_agent.__main__ import _BotServices
+        from weather_agent.infrastructure.services import BotServices as _BotServices
 
         with patch(
             "weather_agent.settings.load_settings",
@@ -212,7 +225,7 @@ class TestMissingConfiguration:
     def test_missing_settings_produces_clear_error_message(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from weather_agent.__main__ import _BotServices
+        from weather_agent.infrastructure.services import BotServices as _BotServices
 
         with patch(
             "weather_agent.settings.load_settings",
@@ -227,7 +240,7 @@ class TestMissingConfiguration:
 
 class TestCmdBot:
     def test_cmd_bot_calls_run_migrations(self) -> None:
-        from weather_agent.__main__ import cmd_bot
+        from weather_agent.cmd.bot import cmd_bot
 
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
@@ -235,9 +248,10 @@ class TestCmdBot:
         mock_services.settings.observability.enabled = False
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
-            patch("weather_agent.__main__.run_migrations") as mock_migrate,
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
+            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.run_migrations") as mock_migrate,
+            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot"),
         ):
             mock_asyncio.new_event_loop.return_value = MagicMock()
@@ -247,7 +261,7 @@ class TestCmdBot:
             mock_migrate.assert_called_once()
 
     def test_cmd_bot_creates_and_runs_telegram_bot(self) -> None:
-        from weather_agent.__main__ import cmd_bot
+        from weather_agent.cmd.bot import cmd_bot
 
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
@@ -255,9 +269,10 @@ class TestCmdBot:
         mock_services.settings.observability.enabled = False
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
-            patch("weather_agent.__main__.run_migrations"),
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
+            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.run_migrations"),
+            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
         ):
             mock_bot = MagicMock()
@@ -271,7 +286,7 @@ class TestCmdBot:
             mock_bot.run.assert_called_once()
 
     def test_cmd_bot_migration_failure_is_warned(self) -> None:
-        from weather_agent.__main__ import cmd_bot
+        from weather_agent.cmd.bot import cmd_bot
 
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
@@ -279,12 +294,13 @@ class TestCmdBot:
         mock_services.settings.observability.enabled = False
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
+            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
             patch(
-                "weather_agent.__main__.run_migrations",
+                "weather_agent.cmd.bot.run_migrations",
                 side_effect=RuntimeError("db not found"),
             ),
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
         ):
             mock_bot = MagicMock()
@@ -296,7 +312,7 @@ class TestCmdBot:
             mock_bot.setup.assert_called_once()
 
     def test_cmd_bot_starts_observability_server_when_enabled(self) -> None:
-        from weather_agent.__main__ import cmd_bot
+        from weather_agent.cmd.bot import cmd_bot
 
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
@@ -305,11 +321,12 @@ class TestCmdBot:
         mock_services.settings.observability.bot_port = 9999
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
-            patch("weather_agent.__main__.run_migrations"),
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
+            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.run_migrations"),
+            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot"),
-            patch("weather_agent.__main__.start_observability_server") as mock_start_server,
+            patch("weather_agent.cmd.bot.start_observability_server") as mock_start_server,
         ):
             mock_asyncio.new_event_loop.return_value = MagicMock()
             mock_asyncio.run = MagicMock()
@@ -323,23 +340,24 @@ class TestCmdBot:
 
 class TestCmdWorker:
     def test_cmd_worker_calls_run_migrations(self) -> None:
-        from weather_agent.__main__ import cmd_worker
+        from weather_agent.cmd.worker import cmd_worker
 
         mock_services = MagicMock()
         mock_services.settings.scheduler = MagicMock()
         mock_services.settings.observability.enabled = False
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
-            patch("weather_agent.__main__.run_migrations") as mock_migrate,
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
+            patch("weather_agent.cmd.worker.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.worker.run_migrations") as mock_migrate,
+            patch("weather_agent.cmd.worker.asyncio") as mock_asyncio,
         ):
             mock_asyncio.run = MagicMock()
             cmd_worker(MagicMock())
             mock_migrate.assert_called_once()
 
     def test_cmd_worker_starts_observability_server_when_enabled(self) -> None:
-        from weather_agent.__main__ import cmd_worker
+        from weather_agent.cmd.worker import cmd_worker
 
         mock_services = MagicMock()
         mock_services.settings.scheduler = MagicMock()
@@ -347,10 +365,11 @@ class TestCmdWorker:
         mock_services.settings.observability.worker_port = 9998
 
         with (
-            patch("weather_agent.__main__._BotServices", return_value=mock_services),
-            patch("weather_agent.__main__.run_migrations"),
-            patch("weather_agent.__main__.asyncio") as mock_asyncio,
-            patch("weather_agent.__main__.start_observability_server") as mock_start_server,
+            patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
+            patch("weather_agent.cmd.worker.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.worker.run_migrations"),
+            patch("weather_agent.cmd.worker.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.worker.start_observability_server") as mock_start_server,
         ):
             mock_asyncio.run = MagicMock()
             cmd_worker(MagicMock())
@@ -364,13 +383,18 @@ class TestCreateEngine:
     def test_create_engine_returns_async_engine(self) -> None:
         from sqlalchemy.ext.asyncio import AsyncEngine as AE
 
-        from weather_agent.__main__ import _create_engine
+        from weather_agent.infrastructure.db.setup import create_engine as _create_engine
 
         engine = _create_engine("sqlite+aiosqlite:///test.db")
         assert isinstance(engine, AE)
 
     def test_create_session_factory_returns_sessionmaker(self) -> None:
-        from weather_agent.__main__ import _create_engine, _create_session_factory
+        from weather_agent.infrastructure.db.setup import (
+            create_engine as _create_engine,
+        )
+        from weather_agent.infrastructure.db.setup import (
+            create_session_factory as _create_session_factory,
+        )
 
         engine = _create_engine("sqlite+aiosqlite:///test.db")
         factory = _create_session_factory(engine)
@@ -380,7 +404,12 @@ class TestCreateEngine:
 class TestSessionFactory:
     @pytest.mark.asyncio
     async def test_session_factory_creates_working_session(self) -> None:
-        from weather_agent.__main__ import _create_engine, _create_session_factory
+        from weather_agent.infrastructure.db.setup import (
+            create_engine as _create_engine,
+        )
+        from weather_agent.infrastructure.db.setup import (
+            create_session_factory as _create_session_factory,
+        )
 
         engine = _create_engine("sqlite+aiosqlite:///test.db")
         factory = _create_session_factory(engine)
@@ -393,7 +422,12 @@ class TestSessionFactory:
 
     @pytest.mark.asyncio
     async def test_session_rollback_on_error(self) -> None:
-        from weather_agent.__main__ import _create_engine, _create_session_factory
+        from weather_agent.infrastructure.db.setup import (
+            create_engine as _create_engine,
+        )
+        from weather_agent.infrastructure.db.setup import (
+            create_session_factory as _create_session_factory,
+        )
 
         engine = _create_engine("sqlite+aiosqlite:///test.db")
         factory = _create_session_factory(engine)

@@ -42,10 +42,12 @@ def _mock_model_factory_with_cel(
     factory = AsyncMock()
     chat = AsyncMock()
     response = AsyncMock()
-    response.content = json.dumps({
-        "cel_expression": cel_expression,
-        "explanation": explanation,
-    })
+    response.content = json.dumps(
+        {
+            "cel_expression": cel_expression,
+            "explanation": explanation,
+        }
+    )
     chat.ainvoke = AsyncMock(return_value=response)
     factory.create_chat_model = lambda: chat
     return factory
@@ -191,9 +193,7 @@ class TestProposeCelRuleNodeWithMockedLLM:
 
 class TestCELEvalDatasetCompleteness:
     def test_at_least_20_cases(self) -> None:
-        assert len(EVAL_CASES) >= 20, (
-            f"Expected at least 20 eval cases, got {len(EVAL_CASES)}"
-        )
+        assert len(EVAL_CASES) >= 20, f"Expected at least 20 eval cases, got {len(EVAL_CASES)}"
 
     def test_all_categories_covered(self) -> None:
         categories = {c.category for c in EVAL_CASES}

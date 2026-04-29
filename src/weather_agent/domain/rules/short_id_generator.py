@@ -4,9 +4,7 @@ import random
 import string
 
 _ALPHABET = string.digits + string.ascii_uppercase
-_ALPHABET_NO_AMBIGUOUS = "".join(
-    c for c in _ALPHABET if c not in {"0", "O", "1", "I", "L"}
-)
+_ALPHABET_NO_AMBIGUOUS = "".join(c for c in _ALPHABET if c not in {"0", "O", "1", "I", "L"})
 
 _VALID_PREFIXES = {"R", "E"}
 

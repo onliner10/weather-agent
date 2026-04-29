@@ -27,9 +27,7 @@ def _cutoff(days: int) -> datetime:
 
 
 class RetentionService:
-    def __init__(
-        self, session: AsyncSession, settings: RetentionSettings
-    ) -> None:
+    def __init__(self, session: AsyncSession, settings: RetentionSettings) -> None:
         self._session = session
         self._settings = settings
 
@@ -42,9 +40,9 @@ class RetentionService:
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(TelegramContext).where(
-                        TelegramContext.updated_at < cutoff
-                    )
+                    select(func.count())
+                    .select_from(TelegramContext)
+                    .where(TelegramContext.updated_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_thread_memory", days=days, would_delete=count)
@@ -67,25 +65,21 @@ class RetentionService:
         days = older_than_days if older_than_days is not None else self._settings.raw_forecast_days
         cutoff = _cutoff(days)
 
-        snapshot_ids_stmt = select(ForecastSnapshot.id).where(
-            ForecastSnapshot.fetched_at < cutoff
-        )
+        snapshot_ids_stmt = select(ForecastSnapshot.id).where(ForecastSnapshot.fetched_at < cutoff)
 
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(ForecastSnapshot).where(
-                        ForecastSnapshot.fetched_at < cutoff
-                    )
+                    select(func.count())
+                    .select_from(ForecastSnapshot)
+                    .where(ForecastSnapshot.fetched_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_raw_forecasts", days=days, would_delete_snapshots=count)
             return count
 
         await self._session.execute(
-            delete(ForecastPoint).where(
-                ForecastPoint.snapshot_id.in_(snapshot_ids_stmt)
-            )
+            delete(ForecastPoint).where(ForecastPoint.snapshot_id.in_(snapshot_ids_stmt))
         )
         snapshots_result = cast(
             CursorResult[Any],
@@ -111,9 +105,9 @@ class RetentionService:
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(Observation).where(
-                        Observation.observed_at < cutoff
-                    )
+                    select(func.count())
+                    .select_from(Observation)
+                    .where(Observation.observed_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_aggregated_weather", days=days, would_delete=count)
@@ -134,18 +128,16 @@ class RetentionService:
         self, older_than_days: int | None = None, *, dry_run: bool = False
     ) -> int:
         days = (
-            older_than_days
-            if older_than_days is not None
-            else self._settings.notification_log_days
+            older_than_days if older_than_days is not None else self._settings.notification_log_days
         )
         cutoff = _cutoff(days)
 
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(NotificationEvent).where(
-                        NotificationEvent.created_at < cutoff
-                    )
+                    select(func.count())
+                    .select_from(NotificationEvent)
+                    .where(NotificationEvent.created_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_notification_log", days=days, would_delete=count)
@@ -171,9 +163,7 @@ class RetentionService:
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(AuditLog).where(
-                        AuditLog.created_at < cutoff
-                    )
+                    select(func.count()).select_from(AuditLog).where(AuditLog.created_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_audit_log", days=days, would_delete=count)
@@ -181,9 +171,7 @@ class RetentionService:
 
         result = cast(
             CursorResult[Any],
-            await self._session.execute(
-                delete(AuditLog).where(AuditLog.created_at < cutoff)
-            ),
+            await self._session.execute(delete(AuditLog).where(AuditLog.created_at < cutoff)),
         )
         await self._session.flush()
         deleted = result.rowcount
@@ -199,9 +187,9 @@ class RetentionService:
         if dry_run:
             count = (
                 await self._session.execute(
-                    select(func.count()).select_from(RuleEvaluationRun).where(
-                        RuleEvaluationRun.created_at < cutoff
-                    )
+                    select(func.count())
+                    .select_from(RuleEvaluationRun)
+                    .where(RuleEvaluationRun.created_at < cutoff)
                 )
             ).scalar_one()
             logger.info("dry_run_cleanup_trace_data", days=days, would_delete=count)

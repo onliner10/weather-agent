@@ -76,12 +76,8 @@ def validate_expression(expression: str) -> ValidationResult:
         if n not in ALLOWED_METRICS and n not in ALL_ALLOWED_FUNCTION_NAMES
     )
 
-    all_called = functions | {
-        n for n in identifier_names if n in ALL_ALLOWED_FUNCTION_NAMES
-    }
-    unknown_functions = sorted(
-        f for f in all_called if f not in ALL_ALLOWED_FUNCTION_NAMES
-    )
+    all_called = functions | {n for n in identifier_names if n in ALL_ALLOWED_FUNCTION_NAMES}
+    unknown_functions = sorted(f for f in all_called if f not in ALL_ALLOWED_FUNCTION_NAMES)
 
     combined_unknown = sorted(set(unknown_functions) | set(unknown_metrics))
 

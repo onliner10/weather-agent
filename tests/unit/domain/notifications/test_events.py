@@ -223,7 +223,9 @@ class TestCreateEvent:
         rule = _make_rule()
         evaluation = _make_evaluation_result()
         dedupe_key = compute_dedupe_key(
-            rule_id=1, location_id=1, expression=rule.expression,
+            rule_id=1,
+            location_id=1,
+            expression=rule.expression,
         )
 
         evt = await service.create_event(rule, evaluation, dedupe_key, payload={})
@@ -236,9 +238,7 @@ class TestCreateEvent:
         assert evt.sent_at is None
         assert evt.suppressed is False
 
-    async def test_create_event_stores_in_db(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_create_event_stores_in_db(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -255,9 +255,7 @@ class TestCreateEvent:
         assert orm.short_id == evt.short_id
         assert orm.payload_hash is not None
 
-    async def test_create_event_with_dedupe_key_stores_hash(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_create_event_with_dedupe_key_stores_hash(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -267,7 +265,9 @@ class TestCreateEvent:
         rule = _make_rule()
         evaluation = _make_evaluation_result()
         dedupe_key = compute_dedupe_key(
-            rule_id=1, location_id=1, expression=rule.expression,
+            rule_id=1,
+            location_id=1,
+            expression=rule.expression,
         )
 
         evt = await service.create_event(rule, evaluation, dedupe_key, payload={})
@@ -275,9 +275,7 @@ class TestCreateEvent:
         assert evt.payload_hash is not None
         assert len(evt.payload_hash) == 64
 
-    async def test_create_event_logs_to_audit(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_create_event_logs_to_audit(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -297,9 +295,7 @@ class TestCreateEvent:
         assert audit_row is not None
         assert "event_short_id" in audit_row.details
 
-    async def test_create_event_with_evaluation_run_id(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_create_event_with_evaluation_run_id(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -421,9 +417,7 @@ class TestGetEvent:
         assert found.id == evt.id
         assert found.short_id == evt.short_id
 
-    async def test_get_event_by_short_id_with_hash_prefix(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_get_event_by_short_id_with_hash_prefix(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)
@@ -453,18 +447,14 @@ class TestGetEvent:
         assert found is not None
         assert found.short_id == evt.short_id
 
-    async def test_get_event_not_found_returns_none(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_get_event_not_found_returns_none(self, session: AsyncSession) -> None:
         audit = AuditLogger(session)
         service = NotificationEventService(session, audit)
 
         found = await service.get_event(short_id="EXXXX")
         assert found is None
 
-    async def test_get_event_no_params_returns_none(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_get_event_no_params_returns_none(self, session: AsyncSession) -> None:
         audit = AuditLogger(session)
         service = NotificationEventService(session, audit)
 
@@ -510,9 +500,7 @@ class TestListEventsForRule:
         events = await service.list_events_for_rule(rule.id, limit=2)
         assert len(events) == 2
 
-    async def test_list_events_ordered_by_created_at_desc(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_list_events_ordered_by_created_at_desc(self, session: AsyncSession) -> None:
         await _create_user(session)
         await _create_location(session)
         await _create_rule_orm(session)

@@ -69,9 +69,7 @@ class NotificationEventService:
     async def _generate_unique_short_id(self) -> str:
         for _ in range(_MAX_COLLISION_RETRIES):
             short_id = generate_short_id("E")
-            stmt = select(NotificationEventORM).where(
-                NotificationEventORM.short_id == short_id
-            )
+            stmt = select(NotificationEventORM).where(NotificationEventORM.short_id == short_id)
             result = await self._session.execute(stmt)
             existing = result.scalar_one_or_none()
             if existing is None:
@@ -190,9 +188,7 @@ class NotificationEventService:
             return _orm_to_domain(orm)
         if short_id is not None:
             clean_id = strip_hash_prefix(short_id)
-            stmt = select(NotificationEventORM).where(
-                NotificationEventORM.short_id == clean_id
-            )
+            stmt = select(NotificationEventORM).where(NotificationEventORM.short_id == clean_id)
             result = await self._session.execute(stmt)
             orm = result.scalar_one_or_none()
             if orm is None:
@@ -200,9 +196,7 @@ class NotificationEventService:
             return _orm_to_domain(orm)
         return None
 
-    async def list_events_for_rule(
-        self, rule_id: int, limit: int = 10
-    ) -> list[NotificationEvent]:
+    async def list_events_for_rule(self, rule_id: int, limit: int = 10) -> list[NotificationEvent]:
         stmt = (
             select(NotificationEventORM)
             .where(NotificationEventORM.rule_id == rule_id)
@@ -300,9 +294,7 @@ class ExplanationService:
     async def explain_notification(self, event_short_id: str) -> str:
         clean_id = strip_hash_prefix(event_short_id)
 
-        event_stmt = select(NotificationEventORM).where(
-            NotificationEventORM.short_id == clean_id
-        )
+        event_stmt = select(NotificationEventORM).where(NotificationEventORM.short_id == clean_id)
         event_result = await self._session.execute(event_stmt)
         event_orm = event_result.scalar_one_or_none()
         if event_orm is None:
@@ -314,9 +306,7 @@ class ExplanationService:
 
         evaluation_detail: dict[str, object] = {}
         if event_orm.evaluation_run_id is not None:
-            eval_run = await self._session.get(
-                RuleEvaluationRunORM, event_orm.evaluation_run_id
-            )
+            eval_run = await self._session.get(RuleEvaluationRunORM, event_orm.evaluation_run_id)
             if eval_run is not None:
                 evaluation_detail = eval_run.evaluation_detail or {}
 
@@ -346,9 +336,7 @@ class ExplanationService:
             value_parts = []
             for m, v in key_metrics.items():
                 if isinstance(m, str):
-                    value_parts.append(
-                        f"{_label_metric(m)}: {_format_value(m, v)}"
-                    )
+                    value_parts.append(f"{_label_metric(m)}: {_format_value(m, v)}")
             if value_parts:
                 parts.append("Wartość: " + ", ".join(value_parts) + ".")
 

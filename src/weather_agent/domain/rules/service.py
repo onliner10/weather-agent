@@ -50,9 +50,7 @@ class NotificationRuleService:
     async def _generate_unique_short_id(self) -> str:
         for _ in range(_MAX_COLLISION_RETRIES):
             short_id = generate_short_id("R")
-            stmt = select(NotificationRuleORM).where(
-                NotificationRuleORM.short_id == short_id
-            )
+            stmt = select(NotificationRuleORM).where(NotificationRuleORM.short_id == short_id)
             result = await self._session.execute(stmt)
             existing = result.scalar_one_or_none()
             if existing is None:
@@ -93,9 +91,7 @@ class NotificationRuleService:
     async def list_rules(
         self, user_id: int, include_disabled: bool = False
     ) -> list[NotificationRule]:
-        stmt = select(NotificationRuleORM).where(
-            NotificationRuleORM.user_id == user_id
-        )
+        stmt = select(NotificationRuleORM).where(NotificationRuleORM.user_id == user_id)
         if not include_disabled:
             stmt = stmt.where(NotificationRuleORM.enabled.is_(True))
         stmt = stmt.order_by(NotificationRuleORM.id)
@@ -121,9 +117,7 @@ class NotificationRuleService:
             return _orm_to_domain(orm)
         if short_id is not None:
             clean_id = strip_hash_prefix(short_id)
-            stmt = select(NotificationRuleORM).where(
-                NotificationRuleORM.short_id == clean_id
-            )
+            stmt = select(NotificationRuleORM).where(NotificationRuleORM.short_id == clean_id)
             result = await self._session.execute(stmt)
             orm = result.scalar_one_or_none()
             if orm is None:

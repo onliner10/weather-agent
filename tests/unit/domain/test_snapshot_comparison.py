@@ -462,9 +462,7 @@ class TestDetectSignificantChanges:
             ],
         )
 
-        significant = detect_significant_changes(
-            comp, {"wind_speed_10m_ms": 5.0}
-        )
+        significant = detect_significant_changes(comp, {"wind_speed_10m_ms": 5.0})
         assert significant == []
 
     def test_none_abs_delta_excluded(self) -> None:

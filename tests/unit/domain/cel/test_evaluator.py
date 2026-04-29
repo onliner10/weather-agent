@@ -202,8 +202,7 @@ class TestCELEvaluatorAggregation:
 
     def test_sum(self) -> None:
         points = [
-            _make_point(_NOW - timedelta(hours=i), precipitation_mm=float(i + 1))
-            for i in range(5)
+            _make_point(_NOW - timedelta(hours=i), precipitation_mm=float(i + 1)) for i in range(5)
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
@@ -227,10 +226,7 @@ class TestCELEvaluatorAggregation:
         assert result.result is True
 
     def test_stddev(self) -> None:
-        points = [
-            _make_point(_NOW - timedelta(hours=i), temperature_2m_c=20.0)
-            for i in range(5)
-        ]
+        points = [_make_point(_NOW - timedelta(hours=i), temperature_2m_c=20.0) for i in range(5)]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
             'stddev("temperature_2m_c", weekend()) < 1',
@@ -393,7 +389,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'duration_where(precipitation_mm > 0.2, weekend()) >= minutes(60)',
+            "duration_where(precipitation_mm > 0.2, weekend()) >= minutes(60)",
             data=data,
         )
         assert result.error is None
@@ -407,7 +403,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'count_where(cloud_cover_pct > 50, weekend()) >= 2',
+            "count_where(cloud_cover_pct > 50, weekend()) >= 2",
             data=data,
         )
         assert result.error is None
@@ -421,7 +417,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'any(wind_gusts_10m_ms >= 12, weekend())',
+            "any(wind_gusts_10m_ms >= 12, weekend())",
             data=data,
         )
         assert result.error is None
@@ -435,7 +431,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'all(relative_humidity_2m_pct > 70, weekend())',
+            "all(relative_humidity_2m_pct > 70, weekend())",
             data=data,
         )
         assert result.error is None
@@ -449,7 +445,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'all(relative_humidity_2m_pct > 70, weekend())',
+            "all(relative_humidity_2m_pct > 70, weekend())",
             data=data,
         )
         assert result.error is None
@@ -463,7 +459,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'any(wind_gusts_10m_ms >= 12, weekend())',
+            "any(wind_gusts_10m_ms >= 12, weekend())",
             data=data,
         )
         assert result.error is None
@@ -496,9 +492,7 @@ class TestCELEvaluatorErrorCases:
         assert result.valid
 
     def test_validation_captures_metrics_and_functions(self) -> None:
-        result = CELEvaluator().validate(
-            'max("wind_gusts_10m_ms", weekend()) >= 12'
-        )
+        result = CELEvaluator().validate('max("wind_gusts_10m_ms", weekend()) >= 12')
         assert result.valid
         assert "wind_gusts_10m_ms" in result.evaluated_metrics
         assert "max" in result.evaluated_functions

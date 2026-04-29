@@ -212,9 +212,7 @@ class TestSendNotificationDryRun:
         sender = TelegramNotificationSender(bot=app)
         rule = _make_rule()
         event = _make_event()
-        result = await sender.send_notification_dry_run(
-            rule, event, "Porywy wiatru powyżej 12 m/s"
-        )
+        result = await sender.send_notification_dry_run(rule, event, "Porywy wiatru powyżej 12 m/s")
         assert result is True
         sent_text = app.bot.send_message.call_args[1]["text"]
         assert sent_text.startswith("[DRY-RUN]")
@@ -225,9 +223,7 @@ class TestSendNotificationDryRun:
         sender = TelegramNotificationSender(bot=app)
         rule = _make_rule(short_id="R7K2")
         event = _make_event(short_id="E9M4")
-        result = await sender.send_notification_dry_run(
-            rule, event, "Porywy wiatru powyżej 12 m/s"
-        )
+        result = await sender.send_notification_dry_run(rule, event, "Porywy wiatru powyżej 12 m/s")
         assert result is True
         sent_text = app.bot.send_message.call_args[1]["text"]
         assert "#R7K2" in sent_text

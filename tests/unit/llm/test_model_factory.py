@@ -143,9 +143,7 @@ class TestCreateChatModelCustomBaseUrl:
         model = factory.create_chat_model()
         assert model.openai_api_base == "https://my-proxy.example.com/v1"
 
-    def test_glm_custom_base_url_overrides_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_glm_custom_base_url_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         settings = _make_settings(
             provider="glm",

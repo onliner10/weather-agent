@@ -62,7 +62,7 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom mnie jeśli porywy wiatru w weekend będą powyżej 12 m/s",
         expected_intent="rule",
-        expected_cel="max(\"wind_gusts_10m_ms\", weekend()) > 12.0",
+        expected_cel='max("wind_gusts_10m_ms", weekend()) > 12.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(
@@ -100,7 +100,7 @@ EVAL_CASES: list[EvalCase] = [
         ),
         expected_intent="rule",
         expected_location="Jeziorak",
-        expected_cel="avg(\"wind_speed_10m_ms\", weekend()) > 7.0",
+        expected_cel='avg("wind_speed_10m_ms", weekend()) > 7.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(
@@ -153,7 +153,7 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom jeśli temperatura spadnie poniżej -10 stopni",
         expected_intent="rule",
-        expected_cel="min(\"temperature_2m_c\", today()) < -10.0",
+        expected_cel='min("temperature_2m_c", today()) < -10.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(
@@ -161,7 +161,7 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom gdy opady przekroczą 5mm przez następne 6 godzin",
         expected_intent="rule",
-        expected_cel="sum(\"precipitation_mm\", next_hours(hours(6))) > 5.0",
+        expected_cel='sum("precipitation_mm", next_hours(hours(6))) > 5.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(
@@ -200,7 +200,7 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="niech powiadomi gdy ciśnienie spadnie poniżej 1000 hPa",
         expected_intent="rule",
-        expected_cel="min(\"pressure_msl_hpa\", today()) < 1000.0",
+        expected_cel='min("pressure_msl_hpa", today()) < 1000.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(
@@ -208,7 +208,7 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom gdy wilgotność przekroczy 90%",
         expected_intent="rule",
-        expected_cel="max(\"relative_humidity_2m_pct\", today()) > 90.0",
+        expected_cel='max("relative_humidity_2m_pct", today()) > 90.0',
         expected_response_pattern=r"CEL|wyrażeni|reguł",
     ),
     EvalCase(

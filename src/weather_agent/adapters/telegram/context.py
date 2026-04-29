@@ -41,9 +41,7 @@ class TelegramContextService:
         self, chat_id: int, message_thread_id: int | None
     ) -> TelegramContext:
         key = self.compute_context_key(chat_id, message_thread_id)
-        stmt = select(TelegramContextORM).where(
-            TelegramContextORM.context_key == key.context_key
-        )
+        stmt = select(TelegramContextORM).where(TelegramContextORM.context_key == key.context_key)
         result = await self._session.execute(stmt)
         orm_obj = result.scalar_one_or_none()
 
@@ -81,9 +79,7 @@ class TelegramContextService:
     async def update_context(
         self, context_key: str, metadata: dict[str, object]
     ) -> TelegramContext:
-        stmt = select(TelegramContextORM).where(
-            TelegramContextORM.context_key == context_key
-        )
+        stmt = select(TelegramContextORM).where(TelegramContextORM.context_key == context_key)
         result = await self._session.execute(stmt)
         orm_obj = result.scalar_one()
 
@@ -101,9 +97,7 @@ class TelegramContextService:
         )
 
     async def clear_context(self, context_key: str) -> None:
-        stmt = select(TelegramContextORM).where(
-            TelegramContextORM.context_key == context_key
-        )
+        stmt = select(TelegramContextORM).where(TelegramContextORM.context_key == context_key)
         result = await self._session.execute(stmt)
         orm_obj = result.scalar_one_or_none()
 

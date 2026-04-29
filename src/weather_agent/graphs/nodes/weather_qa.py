@@ -575,14 +575,11 @@ async def weather_agent_node(
             "bieżącej daty i strefy czasowej.\n",
         ]
         if resolved_loc and resolved_loc.name:
-            system_parts.append(
-                f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n"
-            )
+            system_parts.append(f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n")
         focus = state.get("user_focus")
         if focus:
             system_parts.append(
-                f"Użytkownik pyta szczegółowo o: {focus}."
-                " Skoncentruj się na tym aspekcie.\n"
+                f"Użytkownik pyta szczegółowo o: {focus}. Skoncentruj się na tym aspekcie.\n"
             )
         system_parts.append(
             "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
@@ -643,12 +640,8 @@ async def weather_agent_node(
                     location_name=tool_args.get("location_name")
                     if isinstance(tool_args, dict)
                     else None,
-                    start_date=tool_args.get("start_date")
-                    if isinstance(tool_args, dict)
-                    else None,
-                    end_date=tool_args.get("end_date")
-                    if isinstance(tool_args, dict)
-                    else None,
+                    start_date=tool_args.get("start_date") if isinstance(tool_args, dict) else None,
+                    end_date=tool_args.get("end_date") if isinstance(tool_args, dict) else None,
                 )
                 result = await _execute_tool_call(
                     tool_name,

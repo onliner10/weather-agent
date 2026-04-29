@@ -138,6 +138,7 @@ class TestUpdateContext:
         original_updated_at = ctx.updated_at
 
         import time
+
         time.sleep(0.01)
 
         updated = await service.update_context(ctx.context_key, {"k": "v"})
@@ -171,9 +172,7 @@ class TestContextIsolation:
         ctx_a = await service.get_or_create_context(chat_id=100, message_thread_id=1)
         ctx_b = await service.get_or_create_context(chat_id=100, message_thread_id=2)
 
-        await service.update_context(
-            ctx_a.context_key, {"intent": "weather", "location": "Warsaw"}
-        )
+        await service.update_context(ctx_a.context_key, {"intent": "weather", "location": "Warsaw"})
         await service.update_context(
             ctx_b.context_key, {"intent": "rule_create", "rule_expr": "temp > 30"}
         )

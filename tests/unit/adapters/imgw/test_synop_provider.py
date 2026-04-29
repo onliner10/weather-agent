@@ -193,9 +193,7 @@ class TestImgwSynopProvider:
             return_value=httpx.Response(200, json=_SYNOP_RESPONSE)
         )
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=200.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=200.0, variables=[])
 
         assert len(result.points) >= 3
         station_names = [p.station_name for p in result.points]
@@ -208,9 +206,7 @@ class TestImgwSynopProvider:
             return_value=httpx.Response(200, json=_SYNOP_RESPONSE)
         )
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=500.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=500.0, variables=[])
 
         distances = [p.distance_km for p in result.points]
         assert distances == sorted(distances)
@@ -222,9 +218,7 @@ class TestImgwSynopProvider:
             return_value=httpx.Response(200, json=_SYNOP_RESPONSE)
         )
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=30.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=30.0, variables=[])
 
         assert "stations" in result.raw_payload
         assert isinstance(result.raw_payload["stations"], list)
@@ -237,9 +231,7 @@ class TestImgwSynopProvider:
             return_value=httpx.Response(200, json=_SYNOP_RESPONSE)
         )
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=15.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=15.0, variables=[])
 
         warsaw = next(p for p in result.points if p.station_name == "Warszawa")
         assert warsaw.temperature_c == 9.7
@@ -254,9 +246,7 @@ class TestImgwSynopProvider:
     @respx.mock
     @pytest.mark.asyncio
     async def test_timeout_raises(self) -> None:
-        respx.get(ImgwSettings().synop_base_url).mock(
-            side_effect=httpx.ReadTimeout("timeout")
-        )
+        respx.get(ImgwSettings().synop_base_url).mock(side_effect=httpx.ReadTimeout("timeout"))
         provider = ImgwSynopProvider(ImgwSettings(timeout_seconds=1))
 
         with pytest.raises(WeatherProviderTimeoutError):
@@ -276,9 +266,7 @@ class TestImgwSynopProvider:
     @respx.mock
     @pytest.mark.asyncio
     async def test_http_error_status_raises(self) -> None:
-        respx.get(ImgwSettings().synop_base_url).mock(
-            return_value=httpx.Response(500)
-        )
+        respx.get(ImgwSettings().synop_base_url).mock(return_value=httpx.Response(500))
         provider = ImgwSynopProvider()
 
         with pytest.raises(WeatherProviderResponseError):
@@ -298,13 +286,9 @@ class TestImgwSynopProvider:
     @respx.mock
     @pytest.mark.asyncio
     async def test_empty_response_returns_no_points(self) -> None:
-        respx.get(ImgwSettings().synop_base_url).mock(
-            return_value=httpx.Response(200, json=[])
-        )
+        respx.get(ImgwSettings().synop_base_url).mock(return_value=httpx.Response(200, json=[]))
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=50.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=50.0, variables=[])
 
         assert result.points == []
         assert result.provider == "imgw_synop"
@@ -313,9 +297,7 @@ class TestImgwSynopProvider:
     @pytest.mark.asyncio
     async def test_uses_custom_base_url(self) -> None:
         custom_url = "https://custom.imgw.example.com/api/data/synop"
-        respx.get(custom_url).mock(
-            return_value=httpx.Response(200, json=_SYNOP_RESPONSE)
-        )
+        respx.get(custom_url).mock(return_value=httpx.Response(200, json=_SYNOP_RESPONSE))
         settings = ImgwSettings(synop_base_url=custom_url)
         provider = ImgwSynopProvider(settings=settings)
         result = await provider.get_observations(_WARSAW, radius_km=15.0, variables=[])
@@ -345,9 +327,7 @@ class TestImgwSynopProvider:
             return_value=httpx.Response(200, json=response_with_unknown)
         )
         provider = ImgwSynopProvider()
-        result = await provider.get_observations(
-            _WARSAW, radius_km=500.0, variables=[]
-        )
+        result = await provider.get_observations(_WARSAW, radius_km=500.0, variables=[])
 
         station_ids = [p.station_id for p in result.points]
         assert "99999" not in station_ids

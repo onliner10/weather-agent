@@ -138,9 +138,7 @@ class TelegramBot:
         if update.message is not None:
             await update.message.reply_text("✅ Bot działa poprawnie.")
 
-    async def _dodaj_lok_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def _dodaj_lok_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle ``/dodaj_lok <name> <lat> <lon>`` — persist a home location.
 
         Parses the last two tokens as latitude/longitude and everything before
@@ -179,16 +177,14 @@ class TelegramBot:
             lon = float(parts[-1])
         except (ValueError, IndexError):
             await update.message.reply_text(
-                "Nieprawidłowe współrzędne. "
-                "Użyj formatu: /dodaj_lok <nazwa> <lat> <lon>"
+                "Nieprawidłowe współrzędne. Użyj formatu: /dodaj_lok <nazwa> <lat> <lon>"
             )
             return
 
         name = " ".join(parts[:-2]).strip()
         if not name:
             await update.message.reply_text(
-                "Nieprawidłowa nazwa. "
-                "Użyj formatu: /dodaj_lok <nazwa> <lat> <lon>"
+                "Nieprawidłowa nazwa. Użyj formatu: /dodaj_lok <nazwa> <lat> <lon>"
             )
             return
 
@@ -204,9 +200,7 @@ class TelegramBot:
                 # Ensure an AuthorizedUser row exists for this Telegram user
                 # so the FK on locations.user_id → authorized_users.id is satisfied.
                 result = await session.execute(
-                    select(AuthorizedUser).where(
-                        AuthorizedUser.telegram_user_id == user.id
-                    )
+                    select(AuthorizedUser).where(AuthorizedUser.telegram_user_id == user.id)
                 )
                 authorized_user = result.scalar_one_or_none()
                 if authorized_user is None:
@@ -224,9 +218,7 @@ class TelegramBot:
                 await location_service.create_location(authorized_user.id, data)
                 await session.commit()
 
-            await update.message.reply_text(
-                f"Zapamiętałem Twoją lokalizację domową jako {name}."
-            )
+            await update.message.reply_text(f"Zapamiętałem Twoją lokalizację domową jako {name}.")
             logger.info(
                 "dodaj_lok_success",
                 user_id=user.id,
@@ -240,9 +232,7 @@ class TelegramBot:
                 user_id=user.id,
                 location_name=name,
             )
-            await update.message.reply_text(
-                "Nie udało się zapisać lokalizacji. Spróbuj ponownie."
-            )
+            await update.message.reply_text("Nie udało się zapisać lokalizacji. Spróbuj ponownie.")
 
     async def _auth_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user

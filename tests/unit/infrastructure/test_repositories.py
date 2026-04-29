@@ -262,9 +262,7 @@ class TestForecastRepository:
         assert prev is None
 
     @pytest.mark.asyncio()
-    async def test_raw_payload_recoverable_from_snapshot(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_raw_payload_recoverable_from_snapshot(self, async_session: AsyncSession) -> None:
         repo = ForecastRepository(async_session)
         result = _make_forecast_result()
         await repo.save_snapshot(result)
@@ -275,9 +273,7 @@ class TestForecastRepository:
         assert snapshot.raw_payload == {"source": "test"}
 
     @pytest.mark.asyncio()
-    async def test_raw_payload_recoverable_from_points(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_raw_payload_recoverable_from_points(self, async_session: AsyncSession) -> None:
         repo = ForecastRepository(async_session)
         result = _make_forecast_result(num_points=2)
         await repo.save_snapshot(result)
@@ -359,9 +355,7 @@ class TestObservationRepository:
         assert all(isinstance(i, int) for i in ids)
 
     @pytest.mark.asyncio()
-    async def test_get_observations_by_time_range(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_get_observations_by_time_range(self, async_session: AsyncSession) -> None:
         repo = ObservationRepository(async_session)
         result = _make_observation_result()
         await repo.save_observations(result)
@@ -396,9 +390,7 @@ class TestObservationRepository:
         assert o.raw_payload == {"station": "Warszawa", "temp": "3.5"}
 
     @pytest.mark.asyncio()
-    async def test_observation_filters_by_location(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_observation_filters_by_location(self, async_session: AsyncSession) -> None:
         repo = ObservationRepository(async_session)
         r1 = _make_observation_result(location_id="1")
         r2 = _make_observation_result(location_id="2")
@@ -415,9 +407,7 @@ class TestObservationRepository:
         assert obs[0].location_id == 1
 
     @pytest.mark.asyncio()
-    async def test_observation_ordered_by_observed_at(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_observation_ordered_by_observed_at(self, async_session: AsyncSession) -> None:
         repo = ObservationRepository(async_session)
         fetched = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
         obs1 = ObservationPoint(
@@ -481,9 +471,7 @@ class TestWarningRepository:
         assert ids1[0] == ids2[0]
 
     @pytest.mark.asyncio()
-    async def test_warning_allows_different_provider(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_warning_allows_different_provider(self, async_session: AsyncSession) -> None:
         repo = WarningRepository(async_session)
         w1 = _make_weather_warning(external_id="w1", provider="imgw-meteo")
         w2 = _make_weather_warning(external_id="w1", provider="imgw-hydro")
@@ -494,9 +482,7 @@ class TestWarningRepository:
         assert ids[0] != ids[1]
 
     @pytest.mark.asyncio()
-    async def test_warning_allows_different_external_id(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_warning_allows_different_external_id(self, async_session: AsyncSession) -> None:
         repo = WarningRepository(async_session)
         w1 = _make_weather_warning(external_id="w1")
         w2 = _make_weather_warning(external_id="w2")
@@ -507,9 +493,7 @@ class TestWarningRepository:
         assert ids[0] != ids[1]
 
     @pytest.mark.asyncio()
-    async def test_warning_allows_different_valid_from(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_warning_allows_different_valid_from(self, async_session: AsyncSession) -> None:
         repo = WarningRepository(async_session)
         vf1 = datetime(2026, 1, 15, 6, 0, tzinfo=UTC)
         vf2 = datetime(2026, 1, 16, 6, 0, tzinfo=UTC)
@@ -541,9 +525,7 @@ class TestWarningRepository:
         assert result[0].headline == "Strong wind warning"
 
     @pytest.mark.asyncio()
-    async def test_warning_raw_payload_recoverable(
-        self, async_session: AsyncSession
-    ) -> None:
+    async def test_warning_raw_payload_recoverable(self, async_session: AsyncSession) -> None:
         repo = WarningRepository(async_session)
         w = _make_weather_warning()
         await repo.save_warnings([w])

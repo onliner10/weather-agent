@@ -24,9 +24,7 @@ from weather_agent.domain.weather import (
 )
 from weather_agent.settings import OpenMeteoSettings
 
-_WARSZAWA = LocationRef(
-    id="warszawa-1", name="Warszawa", latitude=52.2297, longitude=21.0122
-)
+_WARSZAWA = LocationRef(id="warszawa-1", name="Warszawa", latitude=52.2297, longitude=21.0122)
 _NOW = datetime(2026, 4, 28, 12, 0, 0, tzinfo=UTC)
 _LATER = datetime(2026, 4, 28, 13, 0, 0, tzinfo=UTC)
 _TIME_RANGE = TimeRange(start=_NOW, end=_LATER)
@@ -431,7 +429,8 @@ class TestWindUnitInRequest:
         )
         provider = OpenMeteoDwdIconProvider(OpenMeteoSettings())
         await provider.get_forecast(
-            _WARSZAWA, _TIME_RANGE,
+            _WARSZAWA,
+            _TIME_RANGE,
             [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms],
             ForecastResolution.hourly,
         )

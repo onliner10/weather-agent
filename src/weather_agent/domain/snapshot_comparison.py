@@ -31,9 +31,7 @@ class SnapshotComparison(BaseModel):
     deltas: list[SnapshotDelta]
 
 
-_NUMERIC_FIELDS: list[str] = [
-    v.value for v in WeatherVariable if v != WeatherVariable.weather_code
-]
+_NUMERIC_FIELDS: list[str] = [v.value for v in WeatherVariable if v != WeatherVariable.weather_code]
 
 
 def compute_delta(
@@ -58,9 +56,7 @@ def compare_snapshots(
     current: list[ForecastPoint],
     previous: list[ForecastPoint],
 ) -> SnapshotComparison:
-    previous_by_time: dict[datetime, ForecastPoint] = {
-        p.target_time: p for p in previous
-    }
+    previous_by_time: dict[datetime, ForecastPoint] = {p.target_time: p for p in previous}
 
     all_deltas: list[SnapshotDelta] = []
 

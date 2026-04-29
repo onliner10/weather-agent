@@ -23,9 +23,7 @@ class ThreadMemoryService:
     async def store_pending_confirmation(
         self, context_key: str, confirmation: dict[str, Any]
     ) -> None:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
         metadata["pending_confirmation"] = confirmation
         metadata["pending_confirmation_stored_at"] = datetime.now(UTC).isoformat()
@@ -34,27 +32,21 @@ class ThreadMemoryService:
     async def get_pending_confirmation(
         self, context_key: str, ttl_days: int | None = None
     ) -> dict[str, Any] | None:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         confirmation = ctx.metadata.get("pending_confirmation")
         if confirmation is None:
             return None
         stored_at_raw = ctx.metadata.get("pending_confirmation_stored_at")
         if stored_at_raw is not None and isinstance(stored_at_raw, str):
             stored_at = datetime.fromisoformat(stored_at_raw)
-            effective_ttl = (
-                ttl_days if ttl_days is not None else self._default_ttl_days
-            )
+            effective_ttl = ttl_days if ttl_days is not None else self._default_ttl_days
             if self._is_expired(stored_at, effective_ttl):
                 await self.clear_pending_confirmation(context_key)
                 return None
         return confirmation if isinstance(confirmation, dict) else None
 
     async def clear_pending_confirmation(self, context_key: str) -> None:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
         metadata.pop("pending_confirmation", None)
         metadata.pop("pending_confirmation_stored_at", None)
@@ -66,12 +58,8 @@ class ThreadMemoryService:
         turn: dict[str, Any],
         ttl_days: int | None = None,
     ) -> None:
-        effective_ttl = (
-            ttl_days if ttl_days is not None else self._default_ttl_days
-        )
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        effective_ttl = ttl_days if ttl_days is not None else self._default_ttl_days
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
         existing_turns: list[dict[str, Any]] = list(
             cast(list[dict[str, Any]], metadata.get("turns") or [])
@@ -90,9 +78,7 @@ class ThreadMemoryService:
         context_key: str,
         ttl_days: int | None = None,
     ) -> list[dict[str, Any]]:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         turns_raw = ctx.metadata.get("turns")
         if turns_raw is None or not isinstance(turns_raw, list):
             return []
@@ -131,19 +117,16 @@ class ThreadMemoryService:
         context_key: str,
         bot_message_id: int,
     ) -> None:
-        ctx = await self._context_service.get_or_create_context(
-            *_parse_context_key(context_key)
-        )
+        ctx = await self._context_service.get_or_create_context(*_parse_context_key(context_key))
         metadata = dict(ctx.metadata)
-        turns: list[dict[str, Any]] = list(
-            cast(list[dict[str, Any]], metadata.get("turns") or [])
-        )
+        turns: list[dict[str, Any]] = list(cast(list[dict[str, Any]], metadata.get("turns") or []))
         for i in range(len(turns) - 1, -1, -1):
             if turns[i].get("role") == "bot":
                 turns[i]["message_id"] = bot_message_id
                 break
         metadata["turns"] = turns
         await self._context_service.update_context(context_key, metadata)
+
 
 def _parse_context_key(context_key: str) -> tuple[int, int | None]:
     if ":" in context_key:

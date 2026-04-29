@@ -38,17 +38,21 @@ class TestAllowlistCompleteness:
         assert len(all_names) == len(set(all_names)), "Duplicate function names found"
 
     def test_all_allowed_names_set_matches(self) -> None:
-        expected = {
-            name
-            for names in ALLOWED_FUNCTIONS.values()
-            for name in names
-        }
+        expected = {name for names in ALLOWED_FUNCTIONS.values() for name in names}
         assert ALL_ALLOWED_FUNCTION_NAMES == expected
 
     def test_time_range_helpers(self) -> None:
         expected = [
-            "now", "today", "tomorrow", "weekend", "next_hours",
-            "date_range", "between", "minutes", "hours", "previous_snapshot",
+            "now",
+            "today",
+            "tomorrow",
+            "weekend",
+            "next_hours",
+            "date_range",
+            "between",
+            "minutes",
+            "hours",
+            "previous_snapshot",
         ]
         assert ALLOWED_FUNCTIONS["time_range_helpers"] == expected
 

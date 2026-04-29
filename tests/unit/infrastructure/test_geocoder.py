@@ -37,9 +37,7 @@ class TestGeocodeWithoutLlm:
     @respx.mock
     async def test_basic_geocode(self) -> None:
         respx.get(_GEOCODE_BASE).mock(
-            return_value=httpx.Response(
-                200, json=_geocoder_response("Gdańsk", 54.3520, 18.6466)
-            )
+            return_value=httpx.Response(200, json=_geocoder_response("Gdańsk", 54.3520, 18.6466))
         )
         geocoder = Geocoder()
         result = await geocoder.geocode("Gdańsk")
@@ -51,9 +49,7 @@ class TestGeocodeWithoutLlm:
 
     @respx.mock
     async def test_geocode_returns_none_on_empty(self) -> None:
-        respx.get(_GEOCODE_BASE).mock(
-            return_value=httpx.Response(200, json={"results": []})
-        )
+        respx.get(_GEOCODE_BASE).mock(return_value=httpx.Response(200, json={"results": []}))
         geocoder = Geocoder()
         result = await geocoder.geocode("NonexistentPlace")
         assert result is None
@@ -61,9 +57,7 @@ class TestGeocodeWithoutLlm:
     @respx.mock
     async def test_geocode_uses_normalized_polish_name(self) -> None:
         route = respx.get(_GEOCODE_BASE).mock(
-            return_value=httpx.Response(
-                200, json=_geocoder_response("Warszawa", 52.2297, 21.0122)
-            )
+            return_value=httpx.Response(200, json=_geocoder_response("Warszawa", 52.2297, 21.0122))
         )
         geocoder = Geocoder()
         result = await geocoder.geocode("w Warszawie")
@@ -153,9 +147,7 @@ class TestGeocodeWithLlm:
         mock_factory.create_chat_model.return_value = mock_chat
 
         respx.get(_GEOCODE_BASE).mock(
-            return_value=httpx.Response(
-                200, json=_geocoder_response("Poznań", 52.4064, 16.9252)
-            )
+            return_value=httpx.Response(200, json=_geocoder_response("Poznań", 52.4064, 16.9252))
         )
 
         geocoder = Geocoder(model_factory=mock_factory)

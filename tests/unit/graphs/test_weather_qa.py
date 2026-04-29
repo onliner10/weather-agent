@@ -209,7 +209,8 @@ def _mock_model_factory_with_tool_call(
     tool_call_response.tool_calls = [
         {
             "name": tool_name,
-            "args": tool_args or {
+            "args": tool_args
+            or {
                 "location_name": "Warszawa",
                 "time_expression": "jutro",
             },
@@ -291,14 +292,24 @@ class TestResolveLocationNode:
     async def test_ambiguous_location_returns_error(self) -> None:
         locations = [
             Location(
-                id=1, name="Dom", aliases=[], latitude=52.22, longitude=21.01,
-                description=None, enabled=True,
+                id=1,
+                name="Dom",
+                aliases=[],
+                latitude=52.22,
+                longitude=21.01,
+                description=None,
+                enabled=True,
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
                 updated_at=datetime(2026, 1, 1, tzinfo=UTC),
             ),
             Location(
-                id=2, name="Chwarzno", aliases=[], latitude=54.4871, longitude=18.4202,
-                description=None, enabled=True,
+                id=2,
+                name="Chwarzno",
+                aliases=[],
+                latitude=54.4871,
+                longitude=18.4202,
+                description=None,
+                enabled=True,
                 created_at=datetime(2026, 1, 1, tzinfo=UTC),
                 updated_at=datetime(2026, 1, 1, tzinfo=UTC),
             ),
