@@ -241,7 +241,7 @@ def _traceable_stub(**decorator_kwargs: Any) -> Any:
     return decorator
 
 
-def _make_mock_model_factory() -> MagicMock:
+def _make_mock_model_factory(default_intent: str = "weather") -> MagicMock:
     """Return a model factory whose chat model answers directly without tool calls."""
     mock_chat = AsyncMock()
     mock_response = MagicMock()
@@ -249,12 +249,30 @@ def _make_mock_model_factory() -> MagicMock:
     mock_response.tool_calls = []
     mock_chat.ainvoke = AsyncMock(return_value=mock_response)
 
-    mock_structured_chat = AsyncMock()
-    mock_extraction = MagicMock()
-    mock_extraction.location_name = None
-    mock_extraction.focus = None
-    mock_structured_chat.ainvoke = AsyncMock(return_value=mock_extraction)
-    mock_chat.with_structured_output = MagicMock(return_value=mock_structured_chat)
+    def with_structured_output_side_effect(schema: Any) -> MagicMock:
+        mock_structured_chat = AsyncMock()
+        mock_extraction = MagicMock()
+
+        # schema can be a class or a dict
+        schema_name = getattr(schema, "__name__", str(schema))
+
+        if "IntentExtraction" in schema_name:
+            mock_extraction.intent = default_intent
+        elif "_LocationExtraction" in schema_name:
+            mock_extraction.location_name = None
+            mock_extraction.focus = None
+        elif "RuleProposalExtraction" in schema_name:
+            mock_extraction.cel_expression = 'max("wind_gusts_10m_ms", weekend()) >= 12'
+            mock_extraction.explanation = "Test rule"
+            mock_extraction.short_id = None
+        else:
+            # Default fallback
+            pass
+
+        mock_structured_chat.ainvoke = AsyncMock(return_value=mock_extraction)
+        return mock_structured_chat
+
+    mock_chat.with_structured_output = MagicMock(side_effect=with_structured_output_side_effect)
 
     mock_model_factory = MagicMock()
     mock_model_factory.create_chat_model = MagicMock(return_value=mock_chat)
@@ -351,7 +369,7 @@ class TestTraceEmission:
         )
 
         deps = ConversationDeps(
-            model_factory=_make_mock_model_factory(),
+            model_factory=_make_mock_model_factory(default_intent="rule"),
             cel_evaluator=MagicMock(),
             rule_service=MagicMock(),
         )

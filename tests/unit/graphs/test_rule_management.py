@@ -12,7 +12,6 @@ from weather_agent.domain.rules.models import NotificationRule
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.graphs.nodes.rule_management import (
     _build_system_prompt,
-    _extract_short_id,
     cancel_rule_node,
     confirm_rule_node,
     is_confirmation_no,
@@ -47,11 +46,21 @@ def _make_state(**overrides: object) -> ConversationState:
     return base
 
 
-def _mock_model_factory(response_content: str) -> MagicMock:
-    mock_response = MagicMock()
-    mock_response.content = response_content
+def _mock_model_factory(
+    cel_expression: str | None,
+    explanation: str = "Test explanation",
+    short_id: str | None = None,
+) -> MagicMock:
+    from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction
+
+    res = RuleProposalExtraction(
+        cel_expression=cel_expression,
+        explanation=explanation,
+        short_id=short_id,
+    )
     mock_chat = AsyncMock()
-    mock_chat.ainvoke = AsyncMock(return_value=mock_response)
+    mock_chat.with_structured_output = MagicMock(return_value=mock_chat)
+    mock_chat.ainvoke = AsyncMock(return_value=res)
     mock_factory = MagicMock(spec=ModelFactory)
     mock_factory.create_chat_model = MagicMock(return_value=mock_chat)
     return mock_factory
@@ -61,22 +70,6 @@ _VALID_CEL = 'max("wind_gusts_10m_ms", weekend()) >= 12'
 _INVALID_CEL = "unknown_func(foo) > bar"
 
 
-class TestExtractShortId:
-    def test_extracts_hash_prefixed_short_id(self) -> None:
-        assert _extract_short_id("dodaj temperaturę do #R7K2") == "R7K2"
-
-    def test_extracts_short_id_without_hash(self) -> None:
-        assert _extract_short_id("edytuj R7K2") == "R7K2"
-
-    def test_returns_none_when_no_short_id(self) -> None:
-        assert _extract_short_id("jeśli będzie padać") is None
-
-    def test_extracts_uppercase_only(self) -> None:
-        result = _extract_short_id("edytuj #R7K2")
-        assert result == "R7K2"
-
-    def test_does_not_match_lowercase_r(self) -> None:
-        assert _extract_short_id("temperatura będzie wysoka") is None
 
 
 class TestBuildSystemPrompt:
@@ -133,13 +126,10 @@ class TestIsConfirmationNo:
 class TestProposeCelRuleNode:
     @pytest.mark.asyncio
     async def test_successful_proposal(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _VALID_CEL,
-                "explanation": "Powiadom, gdy porywy wiatru w weekend >= 12 m/s",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_VALID_CEL,
+            explanation="Powiadom, gdy porywy wiatru w weekend >= 12 m/s",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         loc_ref = MagicMock()
@@ -160,13 +150,10 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_validation_failure_invalid_cel(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _INVALID_CEL,
-                "explanation": "Jakiś opis",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_INVALID_CEL,
+            explanation="Jakiś opis",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="zrź coś dziwnego")
@@ -178,13 +165,10 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_llm_returns_null_expression(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": None,
-                "explanation": "Nie da się zamienić na CEL",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=None,
+            explanation="Nie da się zamienić na CEL",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="zrź coś niemożliwego")
@@ -196,13 +180,11 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_edit_short_id_detected(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _VALID_CEL,
-                "explanation": "Aktualizacja reguły",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_VALID_CEL,
+            explanation="Aktualizacja reguły",
+            short_id="R7K2",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="dodaj temperaturę do #R7K2")
@@ -214,7 +196,7 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_empty_user_message(self) -> None:
-        mock_factory = _mock_model_factory("")
+        mock_factory = _mock_model_factory(cel_expression=None)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="")
@@ -239,7 +221,14 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_malformed_llm_json(self) -> None:
-        mock_factory = _mock_model_factory("not json at all {{{")
+        # Since we use structured output, malformed JSON is handled by the model
+        # or raises an exception during structured output parsing.
+        # This test is now less relevant for structured output but we'll mock a failure.
+        mock_factory = MagicMock(spec=ModelFactory)
+        mock_chat = AsyncMock()
+        mock_chat.with_structured_output = MagicMock(return_value=mock_chat)
+        mock_chat.ainvoke = AsyncMock(side_effect=ValueError("Malformed output"))
+        mock_factory.create_chat_model = MagicMock(return_value=mock_chat)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="dodaj regułę")
@@ -250,13 +239,10 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_allowlist_in_model_context(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _VALID_CEL,
-                "explanation": "ok",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_VALID_CEL,
+            explanation="Test allowlist",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(user_message="powiadom o wietrze")
@@ -272,13 +258,10 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_pending_confirmation_includes_metadata(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _VALID_CEL,
-                "explanation": "Opis reguły",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_VALID_CEL,
+            explanation="Test metadata",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         loc_ref = MagicMock()
@@ -300,13 +283,10 @@ class TestProposeCelRuleNode:
 
     @pytest.mark.asyncio
     async def test_pending_confirmation_without_location(self) -> None:
-        llm_response = json.dumps(
-            {
-                "cel_expression": _VALID_CEL,
-                "explanation": "Opis",
-            }
+        mock_factory = _mock_model_factory(
+            cel_expression=_VALID_CEL,
+            explanation="Test no location",
         )
-        mock_factory = _mock_model_factory(llm_response)
         cel_evaluator = CELEvaluator()
 
         state = _make_state(

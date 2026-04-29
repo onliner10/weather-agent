@@ -6,7 +6,6 @@ from typing import Any
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from weather_agent.adapters.telegram.home_location import handle_home_location_save_message
 from weather_agent.domain.locations import LocationService
 from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 from weather_agent.infrastructure.services import BotServices
@@ -83,66 +82,47 @@ async def make_message_handler(services: BotServices) -> Any:
                 context_service = TelegramContextService(session)
                 memory_service = ThreadMemoryService(context_service)
 
+                graph = services.compile_graph(
+                    location_service=location_service,
+                    rule_service=rule_service,
+                    user_id=authorized_user_id,
+                    memory_service=memory_service,
+                )
+
+                state: ConversationState = {
+                    "authorized_user_id": user_id,
+                    "chat_id": chat_id,
+                    "message_thread_id": thread_id,
+                    "context_key": context_key,
+                    "user_message": text,
+                    "message_id": message_id,
+                    "reply_to_message_id": reply_to_message_id,
+                }
+
+                graph_config = build_graph_config(state)
+                if services.model_factory is not None:
+                    graph_config["metadata"]["model_provider"] = services.model_factory.provider
+                    graph_config["metadata"]["model_name"] = services.model_factory.model_name
+
+                CONVERSATION_TURNS_TOTAL.inc()
+                turn_start = time.perf_counter()
                 try:
-                    home_location_answer = await handle_home_location_save_message(
-                        text,
-                        authorized_user_id,
-                        location_service,
-                        services.geocoder,
+                    result_state = await graph.ainvoke(state, config=graph_config)
+                    answer = result_state.get(
+                        "answer",
+                        "Przepraszam, nie udało się przetworzyć zapytania.",
                     )
                 except Exception as exc:
-                    await session.rollback()
+                    CONVERSATION_FAILURES_TOTAL.inc()
                     logger.exception(
-                        "home_location_save_failed",
+                        "conversation_graph_failed",
                         error_class=type(exc).__name__,
                         outcome="failure",
                     )
-                    home_location_answer = "Nie udało się zapisać lokalizacji. Spróbuj ponownie."
-                if home_location_answer is not None:
-                    answer = home_location_answer
-                    await session.commit()
-                else:
-                    graph = services.compile_graph(
-                        location_service=location_service,
-                        rule_service=rule_service,
-                        user_id=authorized_user_id,
-                        memory_service=memory_service,
-                    )
-
-                    state: ConversationState = {
-                        "authorized_user_id": user_id,
-                        "chat_id": chat_id,
-                        "message_thread_id": thread_id,
-                        "context_key": context_key,
-                        "user_message": text,
-                        "message_id": message_id,
-                        "reply_to_message_id": reply_to_message_id,
-                    }
-
-                    graph_config = build_graph_config(state)
-                    if services.model_factory is not None:
-                        graph_config["metadata"]["model_provider"] = services.model_factory.provider
-                        graph_config["metadata"]["model_name"] = services.model_factory.model_name
-
-                    CONVERSATION_TURNS_TOTAL.inc()
-                    turn_start = time.perf_counter()
-                    try:
-                        result_state = await graph.ainvoke(state, config=graph_config)
-                        answer = result_state.get(
-                            "answer",
-                            "Przepraszam, nie udało się przetworzyć zapytania.",
-                        )
-                    except Exception as exc:
-                        CONVERSATION_FAILURES_TOTAL.inc()
-                        logger.exception(
-                            "conversation_graph_failed",
-                            error_class=type(exc).__name__,
-                            outcome="failure",
-                        )
-                        answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
-                    finally:
-                        CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
-                    await session.commit()
+                    answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
+                finally:
+                    CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+                await session.commit()
 
             if reply_to_message_id is not None:
                 REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()

@@ -18,9 +18,7 @@ from weather_agent.domain.weather import (
 )
 from weather_agent.graphs.conversation import compile_conversation_graph
 from weather_agent.graphs.nodes.weather_qa import (
-    _extract_time_reference,
     resolve_location_node,
-    resolve_time_range_node,
     weather_agent_node,
 )
 from weather_agent.graphs.state import ConversationState
@@ -228,33 +226,6 @@ def _mock_model_factory_with_tool_call(
     return mf
 
 
-class TestExtractTimeReference:
-    def test_extracts_jutro(self) -> None:
-        result = _extract_time_reference("jaka będzie jutro pogoda?")
-        assert result == "jutro"
-
-    def test_extracts_weekend(self) -> None:
-        result = _extract_time_reference("jaka będzie pogoda w weekend?")
-        assert result == "weekend"
-
-    def test_extracts_majowka(self) -> None:
-        result = _extract_time_reference("pogoda na majówkę")
-        assert result is not None
-        assert "majówk" in result or "majowk" in result
-
-    def test_extracts_dzis_wieczorem(self) -> None:
-        result = _extract_time_reference("jak się ubrać na dziś wieczór?")
-        assert result is not None
-        assert "wieczor" in result or "wieczór" in result
-
-    def test_extracts_nastepne_3_dni(self) -> None:
-        result = _extract_time_reference("czy będzie wietrznie przez następne 3 dni?")
-        assert result is not None
-        assert "następne" in result or "nastepne" in result
-
-    def test_returns_none_for_no_time(self) -> None:
-        result = _extract_time_reference("pogoda")
-        assert result is None
 
 
 class TestResolveLocationNode:
@@ -335,41 +306,6 @@ class TestResolveLocationNode:
         assert "error" not in result
 
 
-class TestResolveTimeRangeNode:
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_resolves_jutro(self) -> None:
-        resolver = DateResolver()
-        state = _state(user_message="jaka będzie jutro pogoda?")
-        result = await resolve_time_range_node(state, resolver)
-        assert result["resolved_time_range"] is not None
-        assert "Jutro" in result["resolved_time_range"].explanation
-
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_resolves_weekend(self) -> None:
-        resolver = DateResolver()
-        state = _state(user_message="jaka będzie pogoda w weekend?")
-        result = await resolve_time_range_node(state, resolver)
-        assert result["resolved_time_range"] is not None
-        assert "weekend" in result["resolved_time_range"].explanation.lower()
-
-    @pytest.mark.asyncio
-    @freeze_time("2026-05-01 10:00:00", tz_offset=2)
-    async def test_defaults_to_today(self) -> None:
-        resolver = DateResolver()
-        state = _state(user_message="jaka będzie pogoda?")
-        result = await resolve_time_range_node(state, resolver)
-        assert result["resolved_time_range"] is not None
-        assert "Dziś" in result["resolved_time_range"].explanation
-
-    @pytest.mark.asyncio
-    async def test_preserves_existing_time_range(self) -> None:
-        resolver = DateResolver()
-        existing = _time_range(explanation="Custom range")
-        state = _state(resolved_time_range=existing)
-        result = await resolve_time_range_node(state, resolver)
-        assert result["resolved_time_range"] == existing
 
 
 class TestWeatherAgentNode:

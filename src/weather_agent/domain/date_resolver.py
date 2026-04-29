@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -140,17 +139,28 @@ class DateResolver:
                 explanation=f"Jutro wieczorem ({tomorrow.isoformat()}, 18:00–23:00)",
             )
 
-        match_n_dni = re.match(r"^następne\s+(\d+)\s+dni$", t) or re.match(
-            r"^nastepne\s+(\d+)\s+dni$", t
-        )
-        if match_n_dni:
-            n = int(match_n_dni.group(1))
-            end = now + timedelta(hours=n * 24)
-            return ResolvedTimeRange(
-                start=now,
-                end=end,
-                explanation=f"Następne {n} dni (od {now.isoformat()} do {end.isoformat()})",
-            )
+        if t.startswith("następne ") and t.endswith(" dni"):
+            try:
+                n = int(t[9:-4].strip())
+                end = now + timedelta(hours=n * 24)
+                return ResolvedTimeRange(
+                    start=now,
+                    end=end,
+                    explanation=f"Następne {n} dni (od {now.isoformat()} do {end.isoformat()})",
+                )
+            except ValueError:
+                pass
+        if t.startswith("nastepne ") and t.endswith(" dni"):
+            try:
+                n = int(t[9:-4].strip())
+                end = now + timedelta(hours=n * 24)
+                return ResolvedTimeRange(
+                    start=now,
+                    end=end,
+                    explanation=f"Następne {n} dni (od {now.isoformat()} do {end.isoformat()})",
+                )
+            except ValueError:
+                pass
 
         if t in ("weekend", "ten weekend"):
             sat, sun = _nearest_upcoming_weekend(now, next_weekend=False)
@@ -225,29 +235,45 @@ class DateResolver:
         )
 
     async def _try_explicit_date_range(self, t: str) -> ResolvedTimeRange | None:
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})$", t)
-        if m:
+        if len(t) == 10 and t.count("-") == 2:
             try:
-                d = date.fromisoformat(m.group(1))
+                d = date.fromisoformat(t)
                 return ResolvedTimeRange(
                     start=_start_of_day(d),
                     end=_end_of_day(d),
                     explanation=f"Data ({d.isoformat()})",
                 )
             except ValueError:
-                return None
+                pass
 
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})\s*[-–—]\s*(\d{4}-\d{2}-\d{2})$", t)
-        if m:
+        # Try ranges with clearly distinct separators first
+        for sep in (" – ", " — ", " - ", "—", "–"):
+            if sep in t:
+                parts = t.split(sep)
+                if len(parts) == 2:
+                    try:
+                        start_d = date.fromisoformat(parts[0].strip())
+                        end_d = date.fromisoformat(parts[1].strip())
+                        return ResolvedTimeRange(
+                            start=_start_of_day(start_d),
+                            end=_end_of_day(end_d),
+                            explanation=f"Zakres dat ({start_d.isoformat()} – {end_d.isoformat()})",
+                        )
+                    except ValueError:
+                        pass
+
+        # Fallback for range with a simple dash and no spaces, e.g. 2025-05-01-2025-05-03
+        if t.count("-") == 5:
+            # The middle dash should be at index 10
             try:
-                start_d = date.fromisoformat(m.group(1))
-                end_d = date.fromisoformat(m.group(2))
+                start_d = date.fromisoformat(t[:10])
+                end_d = date.fromisoformat(t[11:])
                 return ResolvedTimeRange(
                     start=_start_of_day(start_d),
                     end=_end_of_day(end_d),
                     explanation=f"Zakres dat ({start_d.isoformat()} – {end_d.isoformat()})",
                 )
             except ValueError:
-                return None
+                pass
 
         return None

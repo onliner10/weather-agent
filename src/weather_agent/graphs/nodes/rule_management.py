@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -9,6 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import trace
 
+from pydantic import BaseModel, Field
 from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluationResult, CELEvaluator
 from weather_agent.domain.locations import LocationService
@@ -50,17 +50,8 @@ Jeśli nie da się zamienić opisu na wyrażenie CEL, zwróć:
 - "explanation": opis problemu po polsku
 """
 
-_SHORT_ID_PATTERN = re.compile(r"(?:#|\b)R[A-HJKMNP-Z0-9]{3,6}\b")
-
 _YES_WORDS = frozenset({"tak", "yes", "t", "y", "potwierdz", "potwierdzam", "ok"})
 _NO_WORDS = frozenset({"nie", "no", "n", "anuluj", "anuluję", "rezygnuj"})
-
-
-def _extract_short_id(text: str) -> str | None:
-    match = _SHORT_ID_PATTERN.search(text)
-    if match is None:
-        return None
-    return strip_hash_prefix(match.group(0).lstrip("#"))
 
 
 def _build_system_prompt() -> str:
@@ -81,6 +72,16 @@ def is_confirmation_no(text: str) -> bool:
     return text.strip().lower() in _NO_WORDS
 
 
+class RuleProposalExtraction(BaseModel):
+    cel_expression: str | None = Field(
+        description="Wyrażenie CEL lub null, jeśli nie da się stworzyć reguły."
+    )
+    explanation: str = Field(description="Wyjaśnienie reguły po polsku.")
+    short_id: str | None = Field(
+        description="ID reguły (np. R123) jeśli użytkownik odnosi się do konkretnej reguły."
+    )
+
+
 async def propose_cel_rule_node(
     state: ConversationState,
     model_factory: Any,
@@ -93,39 +94,25 @@ async def propose_cel_rule_node(
     if not user_message:
         return {"error": "Brak wiadomości użytkownika do przetworzenia"}
 
-    chat_model: BaseChatModel = model_factory.create_chat_model()
+    chat_model = model_factory.create_chat_model()
+    structured = chat_model.with_structured_output(RuleProposalExtraction)
     system_prompt = _build_system_prompt()
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_message),
-    ]
 
     try:
         async with trace("propose_cel_rule_llm", run_type="llm"):
-            response = await chat_model.ainvoke(messages)
+            parsed = await structured.ainvoke(
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_message),
+                ]
+            )
     except Exception:
         logger.exception("llm_rule_proposal_failed")
         return {"error": _GENERIC_RULE_ERROR}
 
-    response_raw = response.content if hasattr(response, "content") else str(response)
-    response_text = str(response_raw)
-
-    try:
-        parsed = json.loads(response_text)
-    except (json.JSONDecodeError, TypeError):
-        cleaned = re.sub(r"```json\s*|\s*```", "", str(response_text))
-        try:
-            parsed = json.loads(cleaned)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning(
-                "llm_rule_response_parse_failed",
-                response_text=response_text[:500],
-            )
-            return {"error": _GENERIC_RULE_ERROR}
-
-    cel_expression = parsed.get("cel_expression")
-    explanation = parsed.get("explanation", "")
+    cel_expression = parsed.cel_expression
+    explanation = parsed.explanation
+    short_id = parsed.short_id
 
     if cel_expression is None:
         logger.warning(
@@ -152,7 +139,8 @@ async def propose_cel_rule_node(
             "pending_confirmation": None,
         }
 
-    short_id = _extract_short_id(user_message)
+    if short_id:
+        short_id = strip_hash_prefix(short_id.upper().replace("#", ""))
 
     resolved_location = state.get("resolved_location")
     location_id: int | None = None

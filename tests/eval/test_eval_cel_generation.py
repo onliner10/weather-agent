@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from dataset import EVAL_CASES, EvalCase
@@ -37,18 +37,19 @@ def _state(message: str, **overrides: object) -> ConversationState:
 
 
 def _mock_model_factory_with_cel(
-    cel_expression: str | None, explanation: str = "Test"
+    cel_expression: str | None, explanation: str = "Test", short_id: str | None = None
 ) -> AsyncMock:
+    from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction
+
+    res = RuleProposalExtraction(
+        cel_expression=cel_expression,
+        explanation=explanation,
+        short_id=short_id,
+    )
     factory = AsyncMock()
     chat = AsyncMock()
-    response = AsyncMock()
-    response.content = json.dumps(
-        {
-            "cel_expression": cel_expression,
-            "explanation": explanation,
-        }
-    )
-    chat.ainvoke = AsyncMock(return_value=response)
+    chat.with_structured_output = MagicMock(return_value=chat)
+    chat.ainvoke = AsyncMock(return_value=res)
     factory.create_chat_model = lambda: chat
     return factory
 
@@ -137,21 +138,33 @@ class TestProposeCelRuleNodeWithMockedLLM:
     @pytest.mark.asyncio
     async def test_edit_rule_detects_short_id(self, case: EvalCase) -> None:
         cel_expr = 'max("wind_speed_10m_ms", weekend()) > 10.0'
-        mock_factory = _mock_model_factory_with_cel(cel_expr)
+        # In the new LLM-based flow, the LLM extracts the short_id.
+        # We mock it here to simulate what the LLM should find in the input message.
+        import re
+
+        id_match = re.search(r"R[A-HJKMNP-Z0-9]{3,6}", case.input_message)
+        short_id = id_match.group(0) if id_match else None
+
+        mock_factory = _mock_model_factory_with_cel(cel_expr, short_id=short_id)
         evaluator = CELEvaluator()
         state = _state(message=case.input_message)
         result = await propose_cel_rule_node(state, mock_factory, evaluator)
 
         pending = result.get("pending_confirmation")
         if pending is not None:
-            assert pending.get("action") in ("edit_rule", "create_rule")
+            if short_id:
+                assert pending.get("action") == "edit_rule"
+                assert pending.get("edit_short_id") == short_id
+            else:
+                assert pending.get("action") == "create_rule"
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_error(self) -> None:
         mock_factory = AsyncMock()
         mock_chat = AsyncMock()
+        mock_chat.with_structured_output = MagicMock(return_value=mock_chat)
         mock_chat.ainvoke = AsyncMock(side_effect=RuntimeError("Model unavailable"))
-        mock_factory.create_chat_model = lambda: mock_chat
+        mock_factory.create_chat_model = MagicMock(return_value=mock_chat)
         evaluator = CELEvaluator()
         state = _state(message="powiadom mnie gdy będzie wietrznie")
         result = await propose_cel_rule_node(state, mock_factory, evaluator)
@@ -181,10 +194,9 @@ class TestProposeCelRuleNodeWithMockedLLM:
     async def test_malformed_json_response(self) -> None:
         factory = AsyncMock()
         chat = AsyncMock()
-        response = AsyncMock()
-        response.content = "this is not json"
-        chat.ainvoke = AsyncMock(return_value=response)
-        factory.create_chat_model = lambda: chat
+        chat.with_structured_output = MagicMock(return_value=chat)
+        chat.ainvoke = AsyncMock(side_effect=ValueError("this is not json"))
+        factory.create_chat_model = MagicMock(return_value=chat)
         evaluator = CELEvaluator()
         state = _state(message="powiadom mnie o deszczu")
         result = await propose_cel_rule_node(state, factory, evaluator)

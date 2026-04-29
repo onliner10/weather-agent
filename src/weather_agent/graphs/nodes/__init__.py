@@ -11,7 +11,6 @@ from weather_agent.graphs.nodes.rule_management import (
 )
 from weather_agent.graphs.nodes.weather_qa import (
     resolve_location_node,
-    resolve_time_range_node,
     weather_agent_node,
 )
 
@@ -24,6 +23,5 @@ __all__ = [
     "propose_cel_rule_node",
     "require_user_confirmation_node",
     "resolve_location_node",
-    "resolve_time_range_node",
     "weather_agent_node",
 ]

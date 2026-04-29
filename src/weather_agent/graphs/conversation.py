@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langsmith import trace
+from pydantic import BaseModel, Field
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
@@ -56,7 +57,16 @@ def _classify_with_pending_confirmation(
     return None
 
 
-async def classify_intent(state: ConversationState) -> dict[str, Any]:
+class IntentExtraction(BaseModel):
+    intent: str = Field(
+        description="One of: 'weather', 'rule', 'command', 'confirm_rule', 'cancel_rule'"
+    )
+
+
+async def classify_intent(
+    state: ConversationState,
+    model_factory: ModelFactory | None = None,
+) -> dict[str, Any]:
     """Classify user intent from message and conversation context."""
     async with trace(
         "classify_intent",
@@ -69,17 +79,67 @@ async def classify_intent(state: ConversationState) -> dict[str, Any]:
         msg = (state.get("user_message") or "").lower()
         pending = state.get("pending_confirmation")
 
-        confirmation_route = _classify_with_pending_confirmation(msg, pending)
-        if confirmation_route is not None:
-            return {"resolved_intent": confirmation_route}
+        if model_factory is None:
+            confirmation_route = _classify_with_pending_confirmation(msg, pending)
+            if confirmation_route is not None:
+                return {"resolved_intent": confirmation_route}
 
-        if any(kw in msg for kw in ("/start", "/help", "/pomoc")):
-            intent = "command"
-        elif any(kw in msg for kw in ("reguł", "zasad", "powiadom", "notyfik", "cel")):
-            intent = "rule"
-        else:
-            intent = "weather"
-        return {"resolved_intent": intent}
+            if any(kw in msg for kw in ("/start", "/help", "/pomoc")):
+                intent = "command"
+            elif any(kw in msg for kw in ("reguł", "zasad", "powiadom", "notyfik", "cel")):
+                intent = "rule"
+            else:
+                intent = "weather"
+            return {"resolved_intent": intent}
+
+        chat = model_factory.create_chat_model()
+        structured = chat.with_structured_output(IntentExtraction)
+
+        system_parts = [
+            "Zklasyfikuj intencję użytkownika asystenta pogodowego.\n",
+            "Dostępne intencje:\n",
+            "- 'weather': Pytania o pogodę, prognozę, aktualne warunki, ",
+            "lub prośby o ZAPISANIE/ZAPAMIĘTANIE lokalizacji (np. 'zapisz dom').\n",
+            "- 'rule': Prośby o stworzenie, edycję, usunięcie lub listowanie ",
+            "REGUŁ powiadomień pogodowych (np. 'powiadom mnie gdy spadnie śnieg').\n",
+            "- 'command': Komendy systemowe (/start, /help), prośba o pomoc ",
+            "lub informację o działaniu bota.\n",
+        ]
+        if pending:
+            system_parts.append(
+                "- 'confirm_rule': Użytkownik POTWIERDZA (mówi tak, zgadza się, jasne, ok) oczekującą akcję.\n"
+            )
+            system_parts.append(
+                "- 'cancel_rule': Użytkownik ANULUJE (mówi nie, rezygnuje, nie chce) oczekującą akcję.\n"
+            )
+
+        system_parts.append("\nWybierz najbardziej pasującą intencję.")
+
+        try:
+            result = await structured.ainvoke(
+                [
+                    {
+                        "role": "system",
+                        "content": "".join(system_parts),
+                    },
+                    {"role": "user", "content": msg},
+                ]
+            )
+            return {"resolved_intent": result.intent}
+        except Exception:
+            logger.warning("llm_intent_classification_failed", exc_info=True)
+            # Fallback
+            confirmation_route = _classify_with_pending_confirmation(msg, pending)
+            if confirmation_route is not None:
+                return {"resolved_intent": confirmation_route}
+
+            if any(kw in msg for kw in ("/start", "/help", "/pomoc")):
+                intent = "command"
+            elif any(kw in msg for kw in ("reguł", "zasad", "powiadom", "notyfik", "cel")):
+                intent = "rule"
+            else:
+                intent = "weather"
+            return {"resolved_intent": intent}
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +445,7 @@ class ConversationOrchestrator:
             state = await self._load_context(state)
 
             # 2. Classify intent
-            intent_updates = await classify_intent(state)
+            intent_updates = await classify_intent(state, self.deps.model_factory)
             state = _merge_state(state, intent_updates)
             intent: str = state.get("resolved_intent") or "weather"
 

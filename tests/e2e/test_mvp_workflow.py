@@ -173,24 +173,67 @@ class MockModelFactory(ModelFactory):
         self._call_count = 0
 
     def create_chat_model(self) -> MagicMock:
+        from weather_agent.graphs.conversation import IntentExtraction
+        from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction
         from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
 
-        mock_response = MagicMock()
         idx = min(self._call_count, len(self._responses) - 1)
-        mock_response.content = self._responses[idx] if self._responses else "Brak danych"
-        mock_response.tool_calls = []
+        response_content = self._responses[idx] if self._responses else "Brak danych"
         self._call_count += 1
 
         mock_chat = AsyncMock()
+
+        # Regular ainvoke for final answer
+        mock_response = MagicMock()
+        mock_response.content = response_content
+        mock_response.tool_calls = []
         mock_chat.ainvoke = AsyncMock(return_value=mock_response)
 
-        extraction = _LocationExtraction(
-            location_name=self._location_name,
-            focus=None,
-        )
-        structured = AsyncMock()
-        structured.ainvoke = AsyncMock(return_value=extraction)
-        mock_chat.with_structured_output = MagicMock(return_value=structured)
+        def with_structured_output_side_effect(schema: Any) -> AsyncMock:
+            mock_structured = AsyncMock()
+
+            async def ainvoke_side_effect(messages: list[Any], **kwargs: Any) -> Any:
+                # Infer intent from message if it's IntentExtraction
+                if schema is IntentExtraction:
+                    msg = ""
+                    if messages:
+                        last_msg = messages[-1]
+                        if isinstance(last_msg, dict):
+                            msg = last_msg.get("content", "").lower()
+                        elif hasattr(last_msg, "content"):
+                            msg = str(last_msg.content).lower()
+
+                    intent = "weather"
+                    if any(kw in msg for kw in ("reguł", "powiadom", "zasad")):
+                        intent = "rule"
+                    elif any(kw in msg for kw in ("/start", "/help")):
+                        intent = "command"
+                    return IntentExtraction(intent=intent)
+
+                if schema is _LocationExtraction:
+                    return _LocationExtraction(
+                        location_name=self._location_name,
+                        focus=None,
+                    )
+
+                if schema is RuleProposalExtraction:
+                    # If response_content is JSON, use it, otherwise return default
+                    try:
+                        data = json.loads(response_content)
+                        return RuleProposalExtraction(**data)
+                    except Exception:
+                        return RuleProposalExtraction(
+                            cel_expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+                            explanation="Test rule description",
+                            short_id=None,
+                        )
+
+                return MagicMock(spec=schema)
+
+            mock_structured.ainvoke = AsyncMock(side_effect=ainvoke_side_effect)
+            return mock_structured
+
+        mock_chat.with_structured_output = MagicMock(side_effect=with_structured_output_side_effect)
         return mock_chat
 
 

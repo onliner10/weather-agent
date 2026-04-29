@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 from datetime import date, datetime
 from typing import Any
@@ -12,7 +11,12 @@ from pydantic import BaseModel, Field
 
 from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
 from weather_agent.domain.errors import WeatherProviderError
-from weather_agent.domain.locations import LocationService
+from weather_agent.domain.locations import (
+    LocationAliasConflictError,
+    LocationCreate,
+    LocationNameConflictError,
+    LocationService,
+)
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
     ForecastResolution,
@@ -119,36 +123,6 @@ def _format_observation_point(p: Any) -> dict[str, Any]:
         if v is not None:
             d[attr] = str(v) if hasattr(v, "isoformat") else v
     return d
-
-
-def _extract_time_reference(message: str) -> str | None:
-    time_patterns = [
-        r"dziś\s+wiecz(?:orem|ór)",
-        r"dzisiaj\s+wiecz(?:orem|ór)",
-        r"jutro\s+rano",
-        r"jutro\s+po\s+południu",
-        r"jutro\s+po\s+poludniu",
-        r"jutro\s+wiecz(?:orem|ór)",
-        r"następne\s+\d+\s+dni",
-        r"nastepne\s+\d+\s+dni",
-        r"następny\s+weekend",
-        r"nastepny\s+weekend",
-        r"ten\s+weekend",
-        r"weekend",
-        r"majówk[aeę]",
-        r"majowk[aeę]",
-        r"jutro",
-        r"dziś",
-        r"dzisiaj",
-    ]
-    for pattern in time_patterns:
-        m = re.search(pattern, message, re.IGNORECASE)
-        if m:
-            return m.group(0).lower()
-    date_match = re.search(r"\d{4}-\d{2}-\d{2}", message)
-    if date_match:
-        return date_match.group(0)
-    return None
 
 
 class _LocationExtraction(BaseModel):
@@ -278,6 +252,30 @@ def _build_tools(
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "save_location",
+                "description": (
+                    "Zapisz lokalizację użytkownika (np. dom, praca) pod konkretną nazwą lub adresem."
+                    " Jeśli użytkownik prosi o 'zapamiętanie lokalizacji domowej', ustaw alias na 'dom'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location_name": {
+                            "type": "string",
+                            "description": "Adres lub nazwa miejscowości do zapisania (np. Gdańsk, Chwarzno)",
+                        },
+                        "alias": {
+                            "type": "string",
+                            "description": "Opcjonalny alias, np. 'dom', 'praca'",
+                        },
+                    },
+                    "required": ["location_name"],
+                },
+            },
+        },
     ]
     return tools
 
@@ -309,6 +307,13 @@ async def _execute_tool_call(
             result = await _execute_get_observations(
                 tool_args,
                 observation_provider,
+                geocoder,
+                location_service,
+                user_id,
+            )
+        elif tool_name == "save_location":
+            result = await _execute_save_location(
+                tool_args,
                 geocoder,
                 location_service,
                 user_id,
@@ -521,6 +526,60 @@ async def _execute_get_observations(
     )
 
 
+@traceable(run_type="tool")
+async def _execute_save_location(
+    args: dict[str, Any],
+    geocoder: Geocoder | None,
+    location_service: LocationService | None,
+    user_id: int,
+) -> str:
+    if location_service is None:
+        return json.dumps({"error": "Usługa lokalizacji jest niedostępna."})
+
+    location_name = args.get("location_name", "").strip()
+    alias = args.get("alias", "").strip()
+
+    if not location_name:
+        return json.dumps({"error": "Podaj nazwę lokalizacji do zapisania."})
+
+    if geocoder is None:
+        return json.dumps({"error": "Geokoder jest niedostępny."})
+
+    resolved = await geocoder.geocode(location_name)
+    if resolved is None:
+        return json.dumps(
+            {"error": f"Nie udało się rozpoznać lokalizacji „{location_name}”."},
+            ensure_ascii=False,
+        )
+
+    try:
+        aliases = [alias] if alias else []
+        await location_service.create_location(
+            user_id,
+            LocationCreate(
+                name=location_name,
+                aliases=aliases,
+                latitude=resolved.latitude,
+                longitude=resolved.longitude,
+            ),
+        )
+        msg = f"Zapamiętałem lokalizację: {location_name}"
+        if alias:
+            msg += f" (alias: {alias})"
+        return json.dumps({"success": msg}, ensure_ascii=False)
+    except (LocationAliasConflictError, LocationNameConflictError):
+        return json.dumps(
+            {"error": "Masz już zapisaną lokalizację o tej nazwie lub aliasie."},
+            ensure_ascii=False,
+        )
+    except Exception as exc:
+        logger.exception("save_location_failed", user_id=user_id, location_name=location_name)
+        return json.dumps(
+            {"error": f"Błąd podczas zapisywania lokalizacji: {str(exc)}"},
+            ensure_ascii=False,
+        )
+
+
 async def weather_agent_node(
     state: ConversationState,
     model_factory: ModelFactory | None,
@@ -567,7 +626,9 @@ async def weather_agent_node(
             f"{now_warsaw.strftime('%A')}), godzina {now_warsaw.strftime('%H:%M')} "
             f"w strefie czasowej Europe/Warsaw.\n\n"
             "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
-            "(get_forecast, get_observations)."
+            "(get_forecast, get_observations, save_location).\n\n"
+            "Jeśli użytkownik prosi o zapamiętanie lub zapisanie lokalizacji "
+            "(np. 'zapisz dom w Gdańsku'), użyj narzędzia save_location.\n"
             " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
             " poproś tylko o wind_speed_10m_ms,"
             " wind_gusts_10m_ms, wind_direction_10m_deg.\n\n"
@@ -725,31 +786,10 @@ async def resolve_location_node(
     return {
         "error": (
             'Nie podałeś lokalizacji. Napisz np. „jaka pogoda w Gdańsku jutro"'
-            " lub ustaw lokalizację domową komendą /dodaj_lok."
+            " lub ustaw lokalizację domową."
         ),
         "resolved_location": None,
         **updates,
     }
 
 
-async def resolve_time_range_node(
-    state: ConversationState,
-    date_resolver: DateResolver | None,
-) -> dict[str, Any]:
-    if date_resolver is None:
-        return {"resolved_time_range": state.get("resolved_time_range")}
-
-    existing_time_range = state.get("resolved_time_range")
-    if existing_time_range is not None:
-        return {"resolved_time_range": existing_time_range}
-
-    message = state.get("user_message") or ""
-    time_ref = _extract_time_reference(message)
-
-    if time_ref is not None:
-        result = await date_resolver.resolve(time_ref)
-        if result is not None:
-            return {"resolved_time_range": result}
-
-    result = await date_resolver.resolve("dziś")
-    return {"resolved_time_range": result}
