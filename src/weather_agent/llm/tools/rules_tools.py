@@ -102,14 +102,12 @@ class CancelActionToolResult(BaseModel):
 class ScheduleNotificationArgs(BaseModel):
     schedule_type: Literal["once", "cron"] = Field(
         description=(
-            "Typ harmonogramu: 'once' dla jednorazowego powiadomienia, "
-            "'cron' dla cyklicznego"
+            "Typ harmonogramu: 'once' dla jednorazowego powiadomienia, 'cron' dla cyklicznego"
         ),
     )
     schedule_expression: str = Field(
         description=(
-            "Wyrażenie harmonogramu: ISO datetime dla 'once', "
-            "5-polowe wyrażenie cron dla 'cron'"
+            "Wyrażenie harmonogramu: ISO datetime dla 'once', 5-polowe wyrażenie cron dla 'cron'"
         ),
     )
     explanation: str = Field(
@@ -118,15 +116,13 @@ class ScheduleNotificationArgs(BaseModel):
     location_name: str = Field(
         default="",
         description=(
-            "Nazwa lokalizacji (np. 'Warszawa', 'dom'). "
-            "Pusta = domyślna lokalizacja użytkownika."
+            "Nazwa lokalizacji (np. 'Warszawa', 'dom'). Pusta = domyślna lokalizacja użytkownika."
         ),
     )
     cel_expression: str = Field(
         default="True",
         description=(
-            "Opcjonalne wyrażenie CEL warunku. "
-            "Domyślnie 'True' (natychmiastowe przypomnienie)."
+            "Opcjonalne wyrażenie CEL warunku. Domyślnie 'True' (natychmiastowe przypomnienie)."
         ),
     )
 

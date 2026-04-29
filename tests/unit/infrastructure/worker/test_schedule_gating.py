@@ -198,7 +198,11 @@ class TestScheduleGating:
         await _create_rule(rule_service, schedule=None)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 
@@ -220,7 +224,11 @@ class TestScheduleGating:
         await _create_rule(rule_service, schedule=future_schedule)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 
@@ -241,7 +249,11 @@ class TestScheduleGating:
         rule = await _create_rule(rule_service, schedule=past_schedule)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 
@@ -268,7 +280,11 @@ class TestScheduleGating:
         await _create_rule(rule_service, schedule="cron:*/5 * * * *")
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 
@@ -298,7 +314,11 @@ class TestScheduleGating:
         await session.flush()
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 
@@ -318,7 +338,11 @@ class TestScheduleGating:
         await _create_rule(rule_service, schedule="garbage")
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator, scheduler_settings,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
         )
         results = await worker.evaluate_rules()
 

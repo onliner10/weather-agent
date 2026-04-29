@@ -111,9 +111,7 @@ class RuleEvaluationWorker:
 
             return results
 
-    async def _is_rule_due(
-        self, rule: NotificationRule, now: datetime | None = None
-    ) -> bool:
+    async def _is_rule_due(self, rule: NotificationRule, now: datetime | None = None) -> bool:
         if now is None:
             now = datetime.now(UTC)
         if not is_rule_due(rule.schedule, now):
