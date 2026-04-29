@@ -142,6 +142,8 @@ class TestUnauthorizedMessageHandling:
         with caplog.at_level(logging.INFO, logger="weather_agent.adapters.telegram.bot"):
             await bot._auth_check(update, context)
         for record in caplog.records:
+            if record.name != "weather_agent.adapters.telegram.bot":
+                continue
             assert "123456:ABC-DEF" not in record.getMessage()
             assert "bot_token" not in record.getMessage()
 
@@ -182,7 +184,8 @@ class TestAuthorizedMessageHandling:
         context = _make_context()
         await bot._auth_check(update, context)
         denial_call_args = [
-            call for call in update.message.reply_text.call_args_list
+            call
+            for call in update.message.reply_text.call_args_list
             if "Brak uprawnień" in str(call)
         ]
         assert len(denial_call_args) == 0

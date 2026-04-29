@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -8,15 +7,26 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from weather_agent.domain.auth import AuthorizationService
+from weather_agent.observability.logging import get_logger
+from weather_agent.observability.metrics import (
+    AUTHORIZATION_FAILURES_TOTAL,
+    TELEGRAM_MESSAGES_TOTAL,
+)
 from weather_agent.settings import TelegramSettings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MessageHandlerCallback = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[Any]]
 _AppType = Application[Any, Any, Any, Any, Any, Any]
 
 
 class TelegramBot:
+    """Telegram bot runtime with a narrow command surface.
+
+    Wired commands: ``/start``, ``/help``, ``/status``.
+    All text messages are routed through ``_auth_check`` → ``message_handler``.
+    """
+
     def __init__(
         self,
         settings: TelegramSettings,
@@ -30,18 +40,11 @@ class TelegramBot:
 
     def setup(self) -> None:
         token = self._settings.bot_token.get_secret_value()
-        self._app = (
-            Application.builder()
-            .token(token)
-            .post_init(_post_init)
-            .build()
-        )
+        self._app = Application.builder().token(token).post_init(_post_init).build()
         self._app.add_handler(CommandHandler("start", self._start_command))
         self._app.add_handler(CommandHandler("help", self._help_command))
         self._app.add_handler(CommandHandler("status", self._status_command))
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._auth_check)
-        )
+        self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._auth_check))
 
     async def start(self) -> None:
         if self._app is None:
@@ -68,6 +71,7 @@ class TelegramBot:
         user = update.effective_user
         if user is None:
             return
+        TELEGRAM_MESSAGES_TOTAL.inc()
         if not self._auth_service.is_authorized(user.id):
             chat_id = update.effective_chat.id if update.effective_chat else None
             logger.info(
@@ -75,6 +79,7 @@ class TelegramBot:
                 user.id,
                 chat_id,
             )
+            AUTHORIZATION_FAILURES_TOTAL.inc()
             await _send_denial(update, context)
             return
         if update.message is not None:
@@ -87,6 +92,7 @@ class TelegramBot:
         user = update.effective_user
         if user is None:
             return
+        TELEGRAM_MESSAGES_TOTAL.inc()
         if not self._auth_service.is_authorized(user.id):
             chat_id = update.effective_chat.id if update.effective_chat else None
             logger.info(
@@ -94,6 +100,7 @@ class TelegramBot:
                 user.id,
                 chat_id,
             )
+            AUTHORIZATION_FAILURES_TOTAL.inc()
             await _send_denial(update, context)
             return
         if update.message is not None:
@@ -109,6 +116,7 @@ class TelegramBot:
         user = update.effective_user
         if user is None:
             return
+        TELEGRAM_MESSAGES_TOTAL.inc()
         if not self._auth_service.is_authorized(user.id):
             chat_id = update.effective_chat.id if update.effective_chat else None
             logger.info(
@@ -116,6 +124,7 @@ class TelegramBot:
                 user.id,
                 chat_id,
             )
+            AUTHORIZATION_FAILURES_TOTAL.inc()
             await _send_denial(update, context)
             return
         if update.message is not None:
@@ -125,12 +134,14 @@ class TelegramBot:
         user = update.effective_user
         if user is None:
             return
+        TELEGRAM_MESSAGES_TOTAL.inc()
         if not self._auth_service.is_authorized(user.id):
             logger.info(
                 "Unauthorized message from user_id=%s chat_id=%s",
                 user.id,
                 update.effective_chat.id if update.effective_chat else None,
             )
+            AUTHORIZATION_FAILURES_TOTAL.inc()
             await _send_denial(update, context)
             return
         await self._message_handler(update, context)
@@ -139,8 +150,7 @@ class TelegramBot:
 async def _default_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message and update.message.text:
         await update.message.reply_text(
-            f"Otrzymałem: {update.message.text}\n"
-            "Obsługa pytań pogodowych będzie dostępna wkrótce."
+            f"Otrzymałem: {update.message.text}\nObsługa pytań pogodowych będzie dostępna wkrótce."
         )
 
 

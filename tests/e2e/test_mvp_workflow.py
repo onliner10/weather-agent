@@ -25,7 +25,6 @@ import pytest
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from weather_agent.adapters.telegram.commands import CommandContext, handle_dodaj_lok
 from weather_agent.adapters.telegram.sender import (
     TelegramNotificationSender,
     format_notification_message,
@@ -33,7 +32,7 @@ from weather_agent.adapters.telegram.sender import (
 from weather_agent.domain.auth import AuthorizationService
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.date_resolver import DateResolver
-from weather_agent.domain.locations import LocationService, LocationUpdate
+from weather_agent.domain.locations import LocationCreate, LocationService, LocationUpdate
 from weather_agent.domain.notifications.deduplication import (
     NotificationCandidate,
     NotificationDeduplicator,
@@ -80,9 +79,7 @@ from weather_agent.settings import SchedulerSettings
 # ---------------------------------------------------------------------------
 
 
-def _set_sqlite_foreign_keys(
-    dbapi_connection: object, connection_record: object
-) -> None:
+def _set_sqlite_foreign_keys(dbapi_connection: object, connection_record: object) -> None:
     cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
@@ -123,9 +120,7 @@ NOW = datetime(2026, 5, 2, 12, 0, 0, tzinfo=WARSAW)  # Saturday — weekend
 class MockForecastProvider:
     """Returns a deterministic forecast for the configured location."""
 
-    def __init__(
-        self, location_ref: LocationRef, points: list[ForecastPoint]
-    ) -> None:
+    def __init__(self, location_ref: LocationRef, points: list[ForecastPoint]) -> None:
         self._location = location_ref
         self._points = points
 
@@ -182,9 +177,7 @@ class MockModelFactory(ModelFactory):
 
         mock_response = MagicMock()
         idx = min(self._call_count, len(self._responses) - 1)
-        mock_response.content = (
-            self._responses[idx] if self._responses else "Brak danych"
-        )
+        mock_response.content = self._responses[idx] if self._responses else "Brak danych"
         mock_response.tool_calls = []
         self._call_count += 1
 
@@ -192,7 +185,8 @@ class MockModelFactory(ModelFactory):
         mock_chat.ainvoke = AsyncMock(return_value=mock_response)
 
         extraction = _LocationExtraction(
-            location_name=self._location_name, focus=None,
+            location_name=self._location_name,
+            focus=None,
         )
         structured = AsyncMock()
         structured.ainvoke = AsyncMock(return_value=extraction)
@@ -216,9 +210,7 @@ class MockGeocoder(Geocoder):
 
 
 async def _seed_user(session: AsyncSession) -> None:
-    user = AuthorizedUser(
-        id=USER_ID, telegram_user_id=TELEGRAM_USER_ID, role="user"
-    )
+    user = AuthorizedUser(id=USER_ID, telegram_user_id=TELEGRAM_USER_ID, role="user")
     session.add(user)
     await session.flush()
 
@@ -231,8 +223,18 @@ async def _seed_forecast_snapshot(
     """Create a forecast snapshot with weekend wind gust data."""
     if wind_gust_values is None:
         wind_gust_values = [
-            13.5, 14.2, 15.0, 12.8, 11.5, 10.2,
-            16.0, 17.3, 13.1, 14.5, 12.1, 11.0,
+            13.5,
+            14.2,
+            15.0,
+            12.8,
+            11.5,
+            10.2,
+            16.0,
+            17.3,
+            13.1,
+            14.5,
+            12.1,
+            11.0,
         ]
 
     snapshot = ForecastSnapshot(
@@ -290,20 +292,12 @@ class TestMVPWorkflow:
         assert auth_service.is_authorized(TELEGRAM_USER_ID)
 
         # ================================================================
-        # 1. Authorized user adds location "Chwarzno" via command handler
+        # 1. Authorized user adds location "Chwarzno"
         # ================================================================
         location_service = LocationService(session)
-        ctx = CommandContext(
-            user_id=USER_ID,
-            chat_id=CHAT_ID,
-            message_thread_id=THREAD_ID,
-            location_service=location_service,
-            rule_service=NotificationRuleService(session, CELEvaluator()),
-            auth_service=auth_service,
-        )
-        result_msg = await handle_dodaj_lok(ctx, "Chwarzno 54.4871 18.4202")
-        assert "Dodano lokalizację" in result_msg
-        assert "Chwarzno" in result_msg
+        loc_data = LocationCreate(name="Chwarzno", aliases=[], latitude=54.4871, longitude=18.4202)
+        chwarzno = await location_service.create_location(USER_ID, loc_data)
+        assert chwarzno.name == "Chwarzno"
 
         # Add locative-case alias so "w Chwarznie" resolves correctly
         chwarzno_loc = (await location_service.list_locations(USER_ID))[0]
@@ -324,9 +318,7 @@ class TestMVPWorkflow:
         # 2-3. User asks weather in Chwarzno for the weekend
         # ================================================================
         # Resolve location using LocationService
-        location_ref = await location_service.resolve_location(
-            "Chwarzno", USER_ID
-        )
+        location_ref = await location_service.resolve_location("Chwarzno", USER_ID)
         assert location_ref is not None
         assert location_ref.name == "Chwarzno"
 
@@ -358,9 +350,7 @@ class TestMVPWorkflow:
             longitude=chwarzno.longitude,
         )
 
-        forecast_provider = MockForecastProvider(
-            location_ref_for_forecast, forecast_points
-        )
+        forecast_provider = MockForecastProvider(location_ref_for_forecast, forecast_points)
         observation_provider = MockObservationProvider()
         date_resolver = DateResolver(now=NOW)
 
@@ -426,9 +416,7 @@ class TestMVPWorkflow:
         # ================================================================
         # 6. User confirms the rule — persist it
         # ================================================================
-        location_ref_for_rule = await location_service.resolve_location(
-            "Chwarzno", USER_ID
-        )
+        location_ref_for_rule = await location_service.resolve_location("Chwarzno", USER_ID)
         assert location_ref_for_rule is not None
         location_id = int(location_ref_for_rule.id)
 
@@ -451,12 +439,12 @@ class TestMVPWorkflow:
         # Also exercise the LangGraph rule path
         mock_rule_model = MockModelFactory(
             responses=[
-                json.dumps({
-                    "cel_expression": proposed_cel,
-                    "explanation": (
-                        "Powiadom gdy porywy wiatru w weekend >= 12 m/s"
-                    ),
-                })
+                json.dumps(
+                    {
+                        "cel_expression": proposed_cel,
+                        "explanation": ("Powiadom gdy porywy wiatru w weekend >= 12 m/s"),
+                    }
+                )
             ]
         )
         rule_deps = ConversationDeps(
@@ -476,10 +464,7 @@ class TestMVPWorkflow:
             "chat_id": CHAT_ID,
             "message_thread_id": THREAD_ID,
             "context_key": f"{CHAT_ID}:{THREAD_ID}",
-            "user_message": (
-                "jeśli porywy wiatru w weekend będą powyżej 12 m/s,"
-                " powiadom mnie"
-            ),
+            "user_message": ("jeśli porywy wiatru w weekend będą powyżej 12 m/s, powiadom mnie"),
             "resolved_intent": None,
             "resolved_location": None,
             "resolved_time_range": None,
@@ -562,12 +547,8 @@ class TestMVPWorkflow:
 
         # Verify deduplicator does NOT suppress (first notification)
         deduplicator = NotificationDeduplicator(session)
-        should_suppress, reason = await deduplicator.should_suppress(
-            fresh_rule, candidate
-        )
-        assert should_suppress is False, (
-            f"First notification should not be suppressed: {reason}"
-        )
+        should_suppress, reason = await deduplicator.should_suppress(fresh_rule, candidate)
+        assert should_suppress is False, f"First notification should not be suppressed: {reason}"
 
         # Create notification event
         audit_logger = AuditLogger(session)
@@ -598,9 +579,7 @@ class TestMVPWorkflow:
                 "expression_result": True,
                 "key_metrics": {"wind_gusts_10m_ms": 17.3},
                 "forecast_window_start": str(NOW.isoformat()),
-                "forecast_window_end": str(
-                    (NOW + timedelta(days=2)).isoformat()
-                ),
+                "forecast_window_end": str((NOW + timedelta(days=2)).isoformat()),
             },
         )
 
@@ -632,21 +611,15 @@ class TestMVPWorkflow:
         await event_service.mark_sent(event.id, message_text=None)
 
         # Generate the notification message
-        explanation = (
-            f"Porywy wiatru w weekend osiągną {17.3} m/s (próg: 12 m/s)"
-        )
-        notification_text = format_notification_message(
-            fresh_rule, event, explanation
-        )
+        explanation = f"Porywy wiatru w weekend osiągną {17.3} m/s (próg: 12 m/s)"
+        notification_text = format_notification_message(fresh_rule, event, explanation)
 
         # Verify message contains both short IDs
         assert f"#{fresh_rule.short_id}" in notification_text
         assert f"#{event.short_id}" in notification_text
 
         # Send the notification via sender
-        send_result = await sender.send_notification(
-            fresh_rule, event, explanation
-        )
+        send_result = await sender.send_notification(fresh_rule, event, explanation)
         assert send_result is True
 
         # Verify Telegram send_message was called with correct chat/thread
@@ -662,17 +635,12 @@ class TestMVPWorkflow:
         # 10-11. "dlaczego dostałem #E...?" — ExplanationService
         # ================================================================
         explanation_service = ExplanationService(session)
-        event_explanation = await explanation_service.explain_notification(
-            event.short_id
-        )
+        event_explanation = await explanation_service.explain_notification(event.short_id)
 
         # Verify the explanation references the rule and event
         assert f"#{event.short_id}" in event_explanation
         assert fresh_rule.short_id in event_explanation
-        assert (
-            proposed_cel in event_explanation
-            or fresh_rule.short_id in event_explanation
-        )
+        assert proposed_cel in event_explanation or fresh_rule.short_id in event_explanation
         # The explanation should mention wind gusts metric
         assert (
             "porywy wiatru" in event_explanation.lower()

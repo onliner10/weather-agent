@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.domain.rules.models import NotificationRule
 from weather_agent.infrastructure.db.base import NotificationEvent as NotificationEventORM
+from weather_agent.observability.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class NotificationCandidate(BaseModel):
@@ -175,8 +175,6 @@ class NotificationDeduplicator:
                     return True, reason
 
         if event.dry_run:
-            logger.info(
-                "dry-run: notification for rule %d would NOT be suppressed", rule.id
-            )
+            logger.info("dry-run: notification for rule %d would NOT be suppressed", rule.id)
 
         return False, None

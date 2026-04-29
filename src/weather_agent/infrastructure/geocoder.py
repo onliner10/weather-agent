@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import logging
+import time
 
 import httpx
 from pydantic import BaseModel, Field
@@ -8,17 +8,20 @@ from pydantic import BaseModel, Field
 from weather_agent.domain.polish_utils import normalize_polish
 from weather_agent.domain.weather import LocationRef
 from weather_agent.llm.model_factory import ModelFactory
+from weather_agent.observability.logging import get_logger
+from weather_agent.observability.metrics import (
+    GEOCODE_DURATION_SECONDS,
+    GEOCODE_REQUESTS_TOTAL,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class _LocationGuess(BaseModel):
-    lat: float | None = Field(default=None, description="Latitude if confident about coordinates")
-    lon: float | None = Field(default=None, description="Longitude if confident about coordinates")
     display_name: str = Field(description="Canonical Polish name of the place")
     search_query: str | None = Field(
         default=None,
-        description="Search query for geocoding API if coordinates not provided",
+        description="Search query for geocoding API (mianownik miasta or phrase)",
     )
 
 
@@ -34,27 +37,38 @@ class Geocoder:
         self._model_factory = model_factory
 
     async def geocode(self, name: str) -> LocationRef | None:
-        if self._model_factory is not None:
-            guess = await self._ask_llm(name)
-            if guess is not None:
-                if guess.lat is not None and guess.lon is not None:
-                    logger.info("LLM gave coordinates for '%s': %s, %s", name, guess.lat, guess.lon)
-                    return LocationRef(
-                        id=f"llm:{guess.lat:.4f}:{guess.lon:.4f}",
-                        name=guess.display_name,
-                        latitude=guess.lat,
-                        longitude=guess.lon,
-                    )
-                if guess.search_query:
-                    result = await self._try_geocode(guess.search_query)
+        start = time.perf_counter()
+        try:
+            if self._model_factory is not None:
+                guess = await self._ask_llm(name)
+                if guess is not None:
+                    query = guess.search_query or guess.display_name
+                    result = await self._try_geocode(query)
                     if result is not None:
+                        GEOCODE_REQUESTS_TOTAL.labels(outcome="success").inc()
                         return result
+                    logger.info(
+                        "geocoding_llm_suggestion_no_results",
+                        query=query,
+                        original_name=name,
+                    )
 
-        result = await self._try_geocode(name)
-        if result is not None:
-            return result
+            result = await self._try_geocode(name)
+            if result is not None:
+                GEOCODE_REQUESTS_TOTAL.labels(outcome="success").inc()
+                return result
 
-        return None
+            GEOCODE_REQUESTS_TOTAL.labels(outcome="not_found").inc()
+            return None
+        except Exception:
+            GEOCODE_REQUESTS_TOTAL.labels(outcome="failure").inc()
+            logger.exception(
+                "geocode_failed",
+                query_name=name,
+            )
+            return None
+        finally:
+            GEOCODE_DURATION_SECONDS.observe(time.perf_counter() - start)
 
     async def _ask_llm(self, name: str) -> _LocationGuess | None:
         try:
@@ -66,23 +80,29 @@ class Geocoder:
                         "role": "system",
                         "content": (
                             "Jesteś ekspertem polskiej geografii. Użytkownik podał nazwę miejsca"
-                            " (może być w odmianie, np. miejscownik „w Gdańsku\", lub opisową"
-                            " np. „Lotnisko Modlin\").\n\n"
-                            "Jeśli jesteś pewien współrzędnych — podaj lat i lon."
-                            " Jeśli nie jesteś pewien — zostaw lat/lon jako null"
-                            " i podaj search_query"
-                            " (mianownik miasta lub fraza do geocoding API).\n\n"
-                            "display_name to zawsze poprawna polska nazwa w mianowniku."
+                            ' (może być w odmianie, np. miejscownik „w Gdańsku", lub opisową'
+                            ' np. „Lotnisko Modlin").\n\n'
+                            "Podaj search_query — mianownik miasta lub frazę do geocoding API."
+                            " display_name to zawsze poprawna polska nazwa w mianowniku."
                         ),
                     },
                     {"role": "user", "content": name},
                 ],
             )
             if isinstance(response, _LocationGuess):
-                logger.info("LLM location guess for '%s': %s", name, response)
+                logger.info(
+                    "llm_location_guess",
+                    query_name=name,
+                    display_name=response.display_name,
+                    search_query=response.search_query,
+                )
                 return response
         except Exception:
-            logger.warning("LLM location resolution failed for '%s'", name, exc_info=True)
+            logger.warning(
+                "llm_location_resolution_failed",
+                query_name=name,
+                exc_info=True,
+            )
         return None
 
     async def _try_geocode(self, name: str) -> LocationRef | None:
@@ -95,16 +115,27 @@ class Geocoder:
                 )
                 r.raise_for_status()
             except httpx.TimeoutException:
-                logger.warning("Geocoding timeout for %s", name)
+                logger.warning(
+                    "geocoding_timeout",
+                    query_name=name,
+                )
                 return None
             except httpx.HTTPStatusError:
-                logger.warning("Geocoding HTTP error for %s: %s", name, r.status_code)
+                logger.warning(
+                    "geocoding_http_error",
+                    query_name=name,
+                    http_status=r.status_code,
+                )
                 return None
 
         data = r.json()
         results = data.get("results")
         if not results:
-            logger.info("No geocoding results for '%s'", name)
+            logger.info(
+                "geocoding_no_results",
+                query_name=name,
+                normalized=normalized,
+            )
             return None
 
         first = results[0]
@@ -114,5 +145,3 @@ class Geocoder:
             latitude=first["latitude"],
             longitude=first["longitude"],
         )
-
-

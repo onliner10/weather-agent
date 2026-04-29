@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import logging
 from typing import Protocol
 
-logger = logging.getLogger(__name__)
+from weather_agent.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class UnauthorizedError(Exception):
@@ -19,6 +20,13 @@ class AuthorizedUserRepo(Protocol):
 
 
 class AuthorizationService:
+    """Runtime authorization backed by an env-configured allowlist.
+
+    The ``repo`` parameter is reserved for future dynamic auth expansion,
+    but the current MVP source of truth is the in-memory allowlist passed
+    at construction time (derived from ``TELEGRAM__ALLOWED_USER_IDS``).
+    """
+
     def __init__(
         self,
         allowed_user_ids: list[int],

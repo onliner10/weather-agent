@@ -30,6 +30,80 @@ def test_compose_has_required_services() -> None:
     )
 
 
+def test_grafana_alloy_service_exists() -> None:
+    data = _load_compose()
+    assert "grafana-alloy" in data["services"]
+
+
+def test_grafana_alloy_image() -> None:
+    data = _load_compose()
+    assert "grafana/alloy" in data["services"]["grafana-alloy"]["image"]
+
+
+def test_grafana_alloy_config_volume() -> None:
+    data = _load_compose()
+    volumes = data["services"]["grafana-alloy"].get("volumes", [])
+    volume_strs = [v if isinstance(v, str) else v.get("source", "") for v in volumes]
+    assert any("ops/alloy/config.alloy" in str(v) for v in volume_strs)
+
+
+def test_grafana_alloy_has_all_env_vars() -> None:
+    data = _load_compose()
+    env = data["services"]["grafana-alloy"].get("environment", {})
+    required_vars = {
+        "GRAFANA_CLOUD_PROM_URL",
+        "GRAFANA_CLOUD_PROM_USER",
+        "GRAFANA_CLOUD_PROM_API_KEY",
+        "GRAFANA_CLOUD_LOKI_URL",
+        "GRAFANA_CLOUD_LOKI_USER",
+        "GRAFANA_CLOUD_LOKI_API_KEY",
+    }
+    assert required_vars.issubset(set(env.keys()))
+
+
+def test_grafana_alloy_depends_on_bot_worker_postgres() -> None:
+    data = _load_compose()
+    deps = data["services"]["grafana-alloy"].get("depends_on", {})
+    for svc in ("weather-agent-bot", "weather-agent-worker", "postgres-timescaledb"):
+        assert svc in deps
+
+
+def test_postgres_exporter_service_exists() -> None:
+    data = _load_compose()
+    assert "postgres-exporter" in data["services"]
+
+
+def test_postgres_exporter_image() -> None:
+    data = _load_compose()
+    assert "prometheuscommunity/postgres-exporter" in data["services"]["postgres-exporter"]["image"]
+
+
+def test_postgres_exporter_dsn_env() -> None:
+    data = _load_compose()
+    env = data["services"]["postgres-exporter"].get("environment", {})
+    assert "DATA_SOURCE_NAME" in env
+    assert "${POSTGRES_EXPORTER_DSN}" in env["DATA_SOURCE_NAME"]
+
+
+def test_postgres_exporter_depends_on_postgres() -> None:
+    data = _load_compose()
+    deps = data["services"]["postgres-exporter"].get("depends_on", {})
+    assert "postgres-timescaledb" in deps
+
+
+def test_new_services_on_internal_network() -> None:
+    data = _load_compose()
+    for svc in ("grafana-alloy", "postgres-exporter"):
+        networks = data["services"][svc].get("networks", [])
+        assert "internal" in networks
+
+
+def test_internal_network_defined() -> None:
+    data = _load_compose()
+    networks = data.get("networks", {})
+    assert "internal" in networks
+
+
 def test_postgres_uses_timescaledb_image() -> None:
     data = _load_compose()
     image = data["services"]["postgres-timescaledb"]["image"]
@@ -129,7 +203,8 @@ def test_bot_has_healthcheck() -> None:
     data = _load_compose()
     hc = data["services"]["weather-agent-bot"].get("healthcheck")
     assert hc is not None
-    assert "__version__" in str(hc["test"])
+    assert "/health" in str(hc["test"])
+    assert "8080" in str(hc["test"])
     assert hc["interval"] == "30s"
     assert hc["timeout"] == "10s"
     assert hc["retries"] == 3
@@ -139,7 +214,8 @@ def test_worker_has_healthcheck() -> None:
     data = _load_compose()
     hc = data["services"]["weather-agent-worker"].get("healthcheck")
     assert hc is not None
-    assert "__version__" in str(hc["test"])
+    assert "/health" in str(hc["test"])
+    assert "8081" in str(hc["test"])
     assert hc["retries"] == 3
 
 

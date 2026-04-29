@@ -1,5 +1,7 @@
 services:
   weather-agent-bot:
+    networks:
+      - internal
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,7 +15,7 @@ services:
       WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "from weather_agent import __version__; print(__version__)"]
+      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:8080/health', timeout=5).raise_for_status()\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -36,9 +38,11 @@ services:
       - .env
     environment:
       WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
+    networks:
+      - internal
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"from weather_agent import __version__; print(__version__)\""]
+      test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:8081/health', timeout=5).raise_for_status()\""]
       interval: 60s
       timeout: 15s
       retries: 3
@@ -72,6 +76,58 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
+
+  grafana-alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./ops/alloy/config.alloy:/etc/alloy/config.alloy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER}
+      GRAFANA_CLOUD_PROM_API_KEY: ${GRAFANA_CLOUD_PROM_API_KEY}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER}
+      GRAFANA_CLOUD_LOKI_API_KEY: ${GRAFANA_CLOUD_LOKI_API_KEY}
+    depends_on:
+      weather-agent-bot:
+        condition: service_started
+      weather-agent-worker:
+        condition: service_started
+      postgres-timescaledb:
+        condition: service_started
+    ports:
+      - "12345:12345"
+    networks:
+      - internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: ${POSTGRES_EXPORTER_DSN}
+    depends_on:
+      postgres-timescaledb:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   pgdata:

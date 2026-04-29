@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import sys
+import time
 from typing import Any
 
+from langsmith import trace
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,13 +16,30 @@ from sqlalchemy.ext.asyncio import (
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from weather_agent.api.health import create_health_app
 from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.date_resolver import DateResolver
 from weather_agent.domain.holidays import CachedHolidayProvider
 from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
+from weather_agent.observability.logging import (
+    bound_telegram_context,
+    bound_worker_context,
+    generate_correlation_id,
+    get_logger,
+)
+from weather_agent.observability.metrics import (
+    CONVERSATION_FAILURES_TOTAL,
+    CONVERSATION_TURN_DURATION_SECONDS,
+    CONVERSATION_TURNS_TOTAL,
+    REPLY_CONTEXT_HITS_TOTAL,
+    REPLY_SEND_DURATION_SECONDS,
+    REPLY_SEND_TOTAL,
+)
+from weather_agent.observability.server import start_observability_server
+from weather_agent.observability.tracing import build_graph_config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _normalize_database_url(url: str) -> str:
@@ -103,6 +121,7 @@ class _BotServices:
         location_service: Any = None,
         rule_service: Any = None,
         user_id: int = 0,
+        memory_service: Any = None,
     ) -> Any:
         from weather_agent.graphs.conversation import ConversationDeps, compile_conversation_graph
 
@@ -116,6 +135,7 @@ class _BotServices:
             rule_service=rule_service,
             geocoder=self.geocoder,
             user_id=user_id,
+            memory_service=memory_service,
         )
         return compile_conversation_graph(deps)
 
@@ -142,61 +162,128 @@ async def _make_message_handler(services: _BotServices) -> Any:
         if text is None:
             return
 
+        message_id = update.message.message_id
+        reply_to_message_id = None
+        reply_to_message_text = None
+        if update.message.reply_to_message is not None:
+            reply_to_message_id = update.message.reply_to_message.message_id
+            reply_to_message_text = update.message.reply_to_message.text
+
         context_key = f"{chat_id}:{thread_id}" if thread_id else str(chat_id)
 
-        from weather_agent.domain.auth import AuthorizationService
-        from weather_agent.domain.locations import LocationService
-        from weather_agent.domain.rules.service import NotificationRuleService
-        from weather_agent.graphs.state import ConversationState
-        from weather_agent.infrastructure.db.repos import SqlAlchemyAuthorizedUserRepo
+        with bound_telegram_context(
+            correlation_id=generate_correlation_id(),
+            chat_id=chat_id,
+            message_thread_id=thread_id,
+            telegram_user_id=user_id,
+            message_id=message_id,
+            reply_to_message_id=reply_to_message_id,
+            context_key=context_key,
+        ):
+            from weather_agent.adapters.telegram.context import TelegramContextService
+            from weather_agent.domain.locations import LocationService
+            from weather_agent.domain.rules.service import NotificationRuleService
+            from weather_agent.graphs.state import ConversationState
+            from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 
-        async with services.session_factory() as session:
-            auth_repo = SqlAlchemyAuthorizedUserRepo(session)
-            auth_service = AuthorizationService(
-                allowed_user_ids=list(services.settings.telegram.allowed_user_ids),
-                repo=auth_repo,
-            )
-            if not auth_service.is_authorized(user_id):
-                await update.message.reply_text("Brak uprawnień do korzystania z tego bota.")
-                return
-
-            location_service = LocationService(session)
-            rule_service = NotificationRuleService(
-                session=session,
-                cel_evaluator=services.cel_evaluator,
-            )
-
-            graph = services.compile_graph(
-                location_service=location_service,
-                rule_service=rule_service,
-                user_id=user_id,
-            )
-
-            state: ConversationState = {
-                "authorized_user_id": user_id,
-                "chat_id": chat_id,
-                "message_thread_id": thread_id,
-                "context_key": context_key,
-                "user_message": text,
-            }
-
-            try:
-                result_state = await graph.ainvoke(state)
-                answer = result_state.get(
-                    "answer",
-                    "Przepraszam, nie udało się przetworzyć zapytania.",
+            async with services.session_factory() as session:
+                location_service = LocationService(session)
+                rule_service = NotificationRuleService(
+                    session=session,
+                    cel_evaluator=services.cel_evaluator,
                 )
+                context_service = TelegramContextService(session)
+                memory_service = ThreadMemoryService(context_service)
+
+                graph = services.compile_graph(
+                    location_service=location_service,
+                    rule_service=rule_service,
+                    user_id=user_id,
+                    memory_service=memory_service,
+                )
+
+                state: ConversationState = {
+                    "authorized_user_id": user_id,
+                    "chat_id": chat_id,
+                    "message_thread_id": thread_id,
+                    "context_key": context_key,
+                    "user_message": text,
+                    "message_id": message_id,
+                    "reply_to_message_id": reply_to_message_id,
+                    "reply_to_message_text": reply_to_message_text,
+                }
+
+                graph_config = build_graph_config(state)
+                if services.model_factory is not None:
+                    graph_config["metadata"]["model_provider"] = services.model_factory.provider
+                    graph_config["metadata"]["model_name"] = services.model_factory.model_name
+
+                CONVERSATION_TURNS_TOTAL.inc()
+                turn_start = time.perf_counter()
+                try:
+                    result_state = await graph.ainvoke(state, config=graph_config)
+                    answer = result_state.get(
+                        "answer",
+                        "Przepraszam, nie udało się przetworzyć zapytania.",
+                    )
+                except Exception as exc:
+                    CONVERSATION_FAILURES_TOTAL.inc()
+                    logger.exception(
+                        "conversation_graph_failed",
+                        error_class=type(exc).__name__,
+                        outcome="failure",
+                    )
+                    answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
+                finally:
+                    CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+                await session.commit()
+
+            if reply_to_message_id is not None:
+                REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()
+
+            reply_start = time.perf_counter()
+            try:
+                async with trace(
+                    "send_telegram_reply",
+                    run_type="chain",
+                    metadata={
+                        "chat_id": chat_id,
+                        "message_thread_id": thread_id,
+                        "context_key": context_key,
+                        "inbound_message_id": message_id,
+                        "is_reply_follow_up": reply_to_message_id is not None,
+                    },
+                ):
+                    sent_message = await update.message.reply_text(answer)
+                    bot_message_id = sent_message.message_id if sent_message else None
+                REPLY_SEND_TOTAL.labels(outcome="success").inc()
             except Exception as exc:
-                logger.exception("conversation graph failed")
-                answer = f"Przepraszam, wystąpił błąd: {exc}"
-            await session.commit()
+                REPLY_SEND_TOTAL.labels(outcome="failure").inc()
+                logger.exception(
+                    "reply_send_failed",
+                    error_class=type(exc).__name__,
+                    outcome="failure",
+                )
+                bot_message_id = None
+            finally:
+                REPLY_SEND_DURATION_SECONDS.observe(time.perf_counter() - reply_start)
 
-        try:
-            await update.message.reply_text(answer)
-        except Exception:
-            logger.exception("failed to send reply")
+            if bot_message_id is not None:
+                try:
+                    async with services.session_factory() as session:
+                        context_service2 = TelegramContextService(session)
+                        memory_service2 = ThreadMemoryService(context_service2)
+                        await memory_service2.update_last_bot_turn_message_id(
+                            context_key, bot_message_id
+                        )
+                        await session.commit()
+                except Exception:
+                    logger.warning(
+                        "bot_message_id_persist_failed",
+                        exc_info=True,
+                    )
 
-    logger.info("Message handler ready")
+    logger.info("message_handler_ready")
     return message_handler
 
 
@@ -204,11 +291,23 @@ def cmd_bot(_args: argparse.Namespace) -> None:
     print("Initializing bot services...")
     services = _BotServices()
 
+    if services.settings.observability.enabled:
+        health_app = create_health_app(session_factory=services.session_factory)
+        start_observability_server(
+            app=health_app,
+            host="0.0.0.0",
+            port=services.settings.observability.bot_port,
+        )
+
     print("Running database migrations...")
     try:
         run_migrations()
     except Exception as exc:
-        logger.warning("Migration failed (tables may already exist): %s", exc)
+        logger.warning(
+            "migration_failed",
+            error_class=type(exc).__name__,
+            error_message=str(exc),
+        )
 
     from weather_agent.adapters.telegram.bot import TelegramBot
     from weather_agent.domain.auth import AuthorizationService
@@ -233,11 +332,23 @@ def cmd_bot(_args: argparse.Namespace) -> None:
 def cmd_worker(_args: argparse.Namespace) -> None:
     services = _BotServices()
 
+    if services.settings.observability.enabled:
+        health_app = create_health_app(session_factory=services.session_factory)
+        start_observability_server(
+            app=health_app,
+            host="0.0.0.0",
+            port=services.settings.observability.worker_port,
+        )
+
     print("Running database migrations...")
     try:
         run_migrations()
     except Exception as exc:
-        logger.warning("Migration failed (tables may already exist): %s", exc)
+        logger.warning(
+            "migration_failed",
+            error_class=type(exc).__name__,
+            error_message=str(exc),
+        )
 
     async def _run_worker() -> None:
         from weather_agent.domain.rules.service import NotificationRuleService
@@ -247,23 +358,29 @@ def cmd_worker(_args: argparse.Namespace) -> None:
         from weather_agent.infrastructure.worker.rule_evaluator import RuleEvaluationWorker
 
         async with services.session_factory() as session:
-            cel_evaluator = CELEvaluator()
-            rule_service = NotificationRuleService(
-                session=session,
-                cel_evaluator=cel_evaluator,
-            )
-            forecast_repo = ForecastRepository(session=session)
+            async with trace(
+                "worker_startup",
+                run_type="tool",
+                metadata={"mode": "worker"},
+            ):
+                cel_evaluator = CELEvaluator()
+                rule_service = NotificationRuleService(
+                    session=session,
+                    cel_evaluator=cel_evaluator,
+                )
+                forecast_repo = ForecastRepository(session=session)
 
-            worker = RuleEvaluationWorker(
-                session=session,
-                forecast_repo=forecast_repo,
-                cel_evaluator=cel_evaluator,
-                rule_service=rule_service,
-                settings=services.settings.scheduler,
-            )
+                worker = RuleEvaluationWorker(
+                    session=session,
+                    forecast_repo=forecast_repo,
+                    cel_evaluator=cel_evaluator,
+                    rule_service=rule_service,
+                    settings=services.settings.scheduler,
+                )
 
-            logger.info("Starting rule evaluation worker...")
-            await worker.run_loop()
+            with bound_worker_context():
+                logger.info("starting_rule_evaluation_worker")
+                await worker.run_loop()
 
     asyncio.run(_run_worker())
 

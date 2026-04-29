@@ -306,13 +306,13 @@ async def _verify_rule_response_pattern(case: EvalCase) -> None:
 
 
 async def _verify_command_response_pattern(case: EvalCase) -> None:
-    from weather_agent.graphs.conversation import _stub_answer_user
+    from weather_agent.graphs.conversation import route_to_command_or_help
 
     state = _state(
         message=case.input_message,
         resolved_intent="command",
     )
-    result = _stub_answer_user(state)
+    result = await route_to_command_or_help(state)
     answer = result.get("answer", "")
     pattern = case.expected_response_pattern
     assert re.search(pattern, answer, re.IGNORECASE), (

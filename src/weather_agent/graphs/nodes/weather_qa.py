@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
+import time
 from typing import Any
 
+from langsmith import traceable
 from pydantic import BaseModel, Field
 
 from weather_agent.domain.date_resolver import DateResolver
@@ -19,9 +20,19 @@ from weather_agent.domain.weather import (
 from weather_agent.graphs.state import ConversationState
 from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.model_factory import ModelFactory
+from weather_agent.observability.logging import get_logger
+from weather_agent.observability.metrics import (
+    LLM_REQUEST_DURATION_SECONDS,
+    LLM_REQUESTS_TOTAL,
+    PROVIDER_REQUEST_DURATION_SECONDS,
+    PROVIDER_REQUESTS_TOTAL,
+    TOOL_CALL_DURATION_SECONDS,
+    TOOL_CALLS_TOTAL,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
+_GENERIC_USER_ERROR = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
 
 _WEATHER_CODE_MAP: dict[int, str] = {
     0: "bezchmurnie",
@@ -153,6 +164,7 @@ async def _extract_location_and_focus(
 ) -> _LocationExtraction:
     if model_factory is None:
         return _LocationExtraction(location_name=None, focus=None)
+    start = time.perf_counter()
     try:
         chat = model_factory.create_chat_model()
         structured = chat.with_structured_output(_LocationExtraction)
@@ -177,10 +189,17 @@ async def _extract_location_and_focus(
                 {"role": "user", "content": message},
             ],
         )
+        LLM_REQUESTS_TOTAL.labels(outcome="success").inc()
         if isinstance(result, _LocationExtraction):
             return result
     except Exception:
-        logger.warning("LLM location extraction failed", exc_info=True)
+        LLM_REQUESTS_TOTAL.labels(outcome="failure").inc()
+        logger.warning(
+            "llm_location_extraction_failed",
+            exc_info=True,
+        )
+    finally:
+        LLM_REQUEST_DURATION_SECONDS.observe(time.perf_counter() - start)
     return _LocationExtraction(location_name=None, focus=None)
 
 
@@ -254,6 +273,7 @@ def _build_tools(
     return tools
 
 
+@traceable(run_type="tool")
 async def _execute_tool_call(
     tool_name: str,
     tool_args: dict[str, Any],
@@ -264,39 +284,56 @@ async def _execute_tool_call(
     location_service: LocationService | None,
     user_id: int,
 ) -> str:
-    if tool_name == "get_forecast":
-        return await _execute_get_forecast(
-            tool_args,
-            forecast_provider,
-            geocoder,
-            date_resolver,
-            location_service,
-            user_id,
-        )
-    if tool_name == "get_observations":
-        return await _execute_get_observations(
-            tool_args,
-            observation_provider,
-            geocoder,
-            location_service,
-            user_id,
-        )
-    return json.dumps({"error": f"Unknown tool: {tool_name}"})
+    TOOL_CALLS_TOTAL.labels(tool=tool_name).inc()
+    start = time.perf_counter()
+    try:
+        if tool_name == "get_forecast":
+            result = await _execute_get_forecast(
+                tool_args,
+                forecast_provider,
+                geocoder,
+                date_resolver,
+                location_service,
+                user_id,
+            )
+        elif tool_name == "get_observations":
+            result = await _execute_get_observations(
+                tool_args,
+                observation_provider,
+                geocoder,
+                location_service,
+                user_id,
+            )
+        else:
+            result = json.dumps({"error": f"Unknown tool: {tool_name}"})
+    finally:
+        TOOL_CALL_DURATION_SECONDS.labels(tool=tool_name).observe(time.perf_counter() - start)
+    return result
 
 
+@traceable(run_type="tool")
 async def _resolve_location(
     name: str,
     geocoder: Geocoder,
     location_service: LocationService | None,
     user_id: int,
 ) -> LocationRef | None:
-    if location_service is not None:
-        resolved = await location_service.resolve_location(name, user_id)
-        if resolved is not None:
-            return resolved
-    return await geocoder.geocode(name)
+    try:
+        if location_service is not None:
+            resolved = await location_service.resolve_location(name, user_id)
+            if resolved is not None:
+                return resolved
+        return await geocoder.geocode(name)
+    except Exception:
+        logger.exception(
+            "resolve_location_failed",
+            location_name=name,
+            user_id=user_id,
+        )
+        return None
 
 
+@traceable(run_type="tool")
 async def _execute_get_forecast(
     args: dict[str, Any],
     forecast_provider: ForecastProvider,
@@ -331,6 +368,8 @@ async def _execute_get_forecast(
     from weather_agent.domain.weather import TimeRange
 
     tr = TimeRange(start=time_range.start, end=time_range.end)
+    provider_name = getattr(forecast_provider, "provider", "unknown")
+    start = time.perf_counter()
     try:
         forecast = await forecast_provider.get_forecast(
             location=location,
@@ -338,9 +377,34 @@ async def _execute_get_forecast(
             variables=variables,
             resolution=ForecastResolution.hourly,
         )
+        PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
     except WeatherProviderError as exc:
+        PROVIDER_REQUESTS_TOTAL.labels(
+            provider=getattr(exc, "provider", provider_name), outcome="failure"
+        ).inc()
+        logger.warning(
+            "forecast_provider_error",
+            provider=exc.provider,
+            error_message=exc.message,
+            location_name=location_name,
+        )
         err_msg = f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
+    except Exception:
+        PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
+        logger.exception(
+            "forecast_provider_unexpected_error",
+            location_name=location_name,
+            time_expression=time_expr,
+        )
+        return json.dumps(
+            {"error": "Błąd podczas pobierania prognozy. Spróbuj ponownie."},
+            ensure_ascii=False,
+        )
+    finally:
+        PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(
+            time.perf_counter() - start
+        )
 
     points_data = [_format_point(p) for p in forecast.points]
     result = {
@@ -353,6 +417,7 @@ async def _execute_get_forecast(
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
+@traceable(run_type="tool")
 async def _execute_get_observations(
     args: dict[str, Any],
     observation_provider: ObservationProvider | None,
@@ -369,14 +434,43 @@ async def _execute_get_observations(
         err_msg = f"Nie znaleziono lokalizacji: {location_name}"
         return json.dumps({"error": err_msg}, ensure_ascii=False)
 
+    provider_name = getattr(observation_provider, "provider", "unknown")
+    start = time.perf_counter()
     try:
         obs = await observation_provider.get_observations(
             location=location,
             radius_km=50.0,
             variables=list(WeatherVariable),
         )
+        PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
     except WeatherProviderError as exc:
-        return json.dumps({"error": f"Błąd dostawcy obserwacji: {exc.message}"}, ensure_ascii=False)
+        PROVIDER_REQUESTS_TOTAL.labels(
+            provider=getattr(exc, "provider", provider_name), outcome="failure"
+        ).inc()
+        logger.warning(
+            "observation_provider_error",
+            provider=exc.provider,
+            error_message=exc.message,
+            location_name=location_name,
+        )
+        return json.dumps(
+            {"error": f"Błąd dostawcy obserwacji: {exc.message}"},
+            ensure_ascii=False,
+        )
+    except Exception:
+        PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
+        logger.exception(
+            "observation_provider_unexpected_error",
+            location_name=location_name,
+        )
+        return json.dumps(
+            {"error": "Błąd podczas pobierania obserwacji. Spróbuj ponownie."},
+            ensure_ascii=False,
+        )
+    finally:
+        PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(
+            time.perf_counter() - start
+        )
 
     points_data = [_format_observation_point(p) for p in obs.points]
     return json.dumps(
@@ -397,7 +491,11 @@ async def weather_agent_node(
     user_id: int = 0,
 ) -> dict[str, Any]:
     if state.get("error"):
-        return {"answer": f"Przepraszam, wystąpił błąd: {state['error']}"}
+        logger.error(
+            "weather_agent_node_error_in_state",
+            state_error=state["error"],
+        )
+        return {"answer": _GENERIC_USER_ERROR}
 
     user_message = state.get("user_message") or ""
 
@@ -409,106 +507,130 @@ async def weather_agent_node(
     ):
         return {"answer": "Przepraszam, usługa pogodowa jest niedostępna."}
 
-    extraction = await _extract_location_and_focus(user_message, model_factory)
-    location_hint = ""
-    if extraction.location_name:
-        location_hint = f"Użytkownik pyta o miejscowość: {extraction.location_name}.\n"
+    try:
+        extraction = await _extract_location_and_focus(user_message, model_factory)
+        location_hint = ""
+        if extraction.location_name:
+            location_hint = f"Użytkownik pyta o miejscowość: {extraction.location_name}.\n"
 
-    focus_hint = ""
-    if extraction.focus:
-        focus_hint = (
-            f"Użytkownik pyta szczegółowo o: {extraction.focus}. Skoncentruj się na tym aspekcie.\n"
+        focus_hint = ""
+        if extraction.focus:
+            focus_hint = (
+                f"Użytkownik pyta szczegółowo o: {extraction.focus}."
+                " Skoncentruj się na tym aspekcie.\n"
+            )
+
+        tools = _build_tools(
+            forecast_provider,
+            observation_provider,
+            geocoder,
+            date_resolver,
+            location_service,
+            user_id,
         )
 
-    tools = _build_tools(
-        forecast_provider,
-        observation_provider,
-        geocoder,
-        date_resolver,
-        location_service,
-        user_id,
-    )
+        chat = model_factory.create_chat_model()
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
+                    "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
+                    "(get_forecast, get_observations)."
+                    " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
+                    " poproś tylko o wind_speed_10m_ms,"
+                    " wind_gusts_10m_ms, wind_direction_10m_deg.\n"
+                    f"{location_hint}{focus_hint}"
+                    "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
+                    " Podaj lokalizację i zakres czasu."
+                ),
+            },
+            {"role": "user", "content": user_message},
+        ]
 
-    chat = model_factory.create_chat_model()
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": (
-                "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
-                "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
-                "(get_forecast, get_observations)."
-                " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
-                " poproś tylko o wind_speed_10m_ms,"
-                " wind_gusts_10m_ms, wind_direction_10m_deg.\n"
-                f"{location_hint}{focus_hint}"
-                "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
-                " Podaj lokalizację i zakres czasu."
-            ),
-        },
-        {"role": "user", "content": user_message},
-    ]
+        max_iterations = 5
+        for _ in range(max_iterations):
+            llm_start = time.perf_counter()
+            try:
+                response = await chat.ainvoke(messages, tools=tools)
+                LLM_REQUESTS_TOTAL.labels(outcome="success").inc()
+            except Exception:
+                LLM_REQUESTS_TOTAL.labels(outcome="failure").inc()
+                raise
+            finally:
+                LLM_REQUEST_DURATION_SECONDS.observe(time.perf_counter() - llm_start)
 
-    max_iterations = 5
-    for _ in range(max_iterations):
-        response = await chat.ainvoke(messages, tools=tools)
+            if not response.tool_calls:
+                answer = str(response.content) if response.content else ""
+                if not answer:
+                    answer = "Przepraszam, nie udało się przetworzyć zapytania."
+                return {"answer": answer, "resolved_location": state.get("resolved_location")}
 
-        if not response.tool_calls:
-            answer = str(response.content) if response.content else ""
-            if not answer:
-                answer = "Przepraszam, nie udało się przetworzyć zapytania."
-            return {"answer": answer, "resolved_location": state.get("resolved_location")}
+            for tc in response.tool_calls:
+                tc_dict = tc if isinstance(tc, dict) else dict(tc)
+                tool_name: str = tc_dict.get("name", "")
+                tool_args: Any = tc_dict.get("args", {})
+                if isinstance(tool_args, str):
+                    try:
+                        tool_args = json.loads(tool_args)
+                    except json.JSONDecodeError:
+                        tool_args = {}
 
-        for tc in response.tool_calls:
-            tc_dict = tc if isinstance(tc, dict) else dict(tc)
-            tool_name: str = tc_dict.get("name", "")
-            tool_args: Any = tc_dict.get("args", {})
-            if isinstance(tool_args, str):
-                try:
-                    tool_args = json.loads(tool_args)
-                except json.JSONDecodeError:
-                    tool_args = {}
+                logger.info(
+                    "tool_call_executed",
+                    tool_name=tool_name,
+                    location_name=tool_args.get("location_name")
+                    if isinstance(tool_args, dict)
+                    else None,
+                    time_expression=tool_args.get("time_expression")
+                    if isinstance(tool_args, dict)
+                    else None,
+                )
+                result = await _execute_tool_call(
+                    tool_name,
+                    tool_args,
+                    forecast_provider,
+                    observation_provider,
+                    geocoder,
+                    date_resolver,
+                    location_service,
+                    user_id,
+                )
 
-            logger.info("Tool call: %s(%s)", tool_name, tool_args)
-            result = await _execute_tool_call(
-                tool_name,
-                tool_args,
-                forecast_provider,
-                observation_provider,
-                geocoder,
-                date_resolver,
-                location_service,
-                user_id,
-            )
+                messages.append({"role": "assistant", "content": None, "tool_calls": [tc_dict]})
+                tc_id: str = str(tc_dict.get("id", ""))
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": result,
+                        "tool_call_id": tc_id,
+                    }
+                )
 
-            messages.append(
-                {"role": "assistant", "content": None, "tool_calls": [tc_dict]}
-            )
-            tc_id: str = str(tc_dict.get("id", ""))
-            messages.append(
-                {
-                    "role": "tool",
-                    "content": result,
-                    "tool_call_id": tc_id,
-                }
-            )
+                if tool_name == "get_forecast" and '"error"' not in result:
+                    try:
+                        data = json.loads(result)
+                        loc_name = data.get("location")
+                        if loc_name:
+                            loc_ref = await _resolve_location(
+                                loc_name,
+                                geocoder,
+                                location_service,
+                                user_id,
+                            )
+                            if loc_ref:
+                                state = {**state, "resolved_location": loc_ref}
+                    except Exception:
+                        pass
 
-            if tool_name == "get_forecast" and '"error"' not in result:
-                try:
-                    data = json.loads(result)
-                    loc_name = data.get("location")
-                    if loc_name:
-                        loc_ref = await _resolve_location(
-                            loc_name,
-                            geocoder,
-                            location_service,
-                            user_id,
-                        )
-                        if loc_ref:
-                            state = {**state, "resolved_location": loc_ref}
-                except Exception:
-                    pass
-
-    return {"answer": "Przepraszam, nie udało się przetworzyć zapytania po zbyt wielu krokach."}
+        return {"answer": "Przepraszam, nie udało się przetworzyć zapytania po zbyt wielu krokach."}
+    except Exception:
+        logger.exception(
+            "weather_agent_node_failed",
+            user_id=user_id,
+            user_message=user_message,
+        )
+        return {"answer": _GENERIC_USER_ERROR}
 
 
 async def resolve_location_node(

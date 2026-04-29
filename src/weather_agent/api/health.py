@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -34,9 +35,7 @@ async def _check_db(session: AsyncSession) -> bool:
 async def _get_last_forecast_fetch(session: AsyncSession) -> datetime | None:
     from sqlalchemy import select
 
-    stmt = select(ForecastSnapshot.fetched_at).order_by(
-        ForecastSnapshot.fetched_at.desc()
-    ).limit(1)
+    stmt = select(ForecastSnapshot.fetched_at).order_by(ForecastSnapshot.fetched_at.desc()).limit(1)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     return row
@@ -45,9 +44,11 @@ async def _get_last_forecast_fetch(session: AsyncSession) -> datetime | None:
 async def _get_last_rule_evaluation(session: AsyncSession) -> datetime | None:
     from sqlalchemy import select
 
-    stmt = select(RuleEvaluationRun.evaluated_at).order_by(
-        RuleEvaluationRun.evaluated_at.desc()
-    ).limit(1)
+    stmt = (
+        select(RuleEvaluationRun.evaluated_at)
+        .order_by(RuleEvaluationRun.evaluated_at.desc())
+        .limit(1)
+    )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     return row
@@ -84,6 +85,13 @@ def create_health_app(
             scheduler_status=scheduler_status,
             langsmith_enabled=langsmith_enabled,
             timestamp=datetime.now(UTC),
+        )
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(
+            content=generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
         )
 
     return app

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
-logger = logging.getLogger(__name__)
+from weather_agent.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class Holiday(BaseModel):

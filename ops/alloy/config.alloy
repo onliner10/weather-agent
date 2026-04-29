@@ -1,0 +1,59 @@
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  forward_to = [loki.relabel.containers.receiver]
+}
+
+loki.relabel "containers" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+    action        = "replace"
+    regex         = "/(.+)"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+}
+
+prometheus.scrape "weather_agent_bot" {
+  targets      = [{"__address__" = "weather-agent-bot:8080"}]
+  metrics_path = "/metrics"
+  forward_to   = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "weather_agent_worker" {
+  targets      = [{"__address__" = "weather-agent-worker:8081"}]
+  metrics_path = "/metrics"
+  forward_to   = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "postgres_exporter" {
+  targets      = [{"__address__" = "postgres-exporter:9187"}]
+  metrics_path = "/metrics"
+  forward_to   = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_LOKI_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_LOKI_USER")
+      password = env("GRAFANA_CLOUD_LOKI_API_KEY")
+    }
+  }
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_PROM_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_PROM_USER")
+      password = env("GRAFANA_CLOUD_PROM_API_KEY")
+    }
+  }
+}

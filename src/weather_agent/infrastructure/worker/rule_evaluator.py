@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
+from langsmith import trace
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +16,25 @@ from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.db.base import ForecastPoint as ForecastPointORM
 from weather_agent.infrastructure.db.base import RuleEvaluationRun as RuleEvaluationRunORM
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
+from weather_agent.observability.logging import (
+    bound_worker_context,
+    generate_correlation_id,
+    get_logger,
+)
+from weather_agent.observability.metrics import (
+    FORECAST_REFRESH_DURATION_SECONDS,
+    FORECAST_REFRESH_TOTAL,
+    LAST_SUCCESSFUL_FORECAST_REFRESH_TIMESTAMP_SECONDS,
+    LAST_SUCCESSFUL_WORKER_CYCLE_TIMESTAMP_SECONDS,
+    RULE_EVALUATION_DURATION_SECONDS,
+    RULE_EVALUATION_FAILURES_TOTAL,
+    RULES_EVALUATED_TOTAL,
+    WORKER_CYCLE_DURATION_SECONDS,
+    WORKER_CYCLES_TOTAL,
+)
 from weather_agent.settings import SchedulerSettings
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EvaluationResult(BaseModel):
@@ -36,8 +53,7 @@ class EvaluationResult(BaseModel):
 
 @runtime_checkable
 class ForecastFetcher(Protocol):
-    async def fetch_fresh_forecast(self, location_id: int) -> int | None:
-        ...
+    async def fetch_fresh_forecast(self, location_id: int) -> int | None: ...
 
 
 class RuleEvaluationWorker:
@@ -59,29 +75,83 @@ class RuleEvaluationWorker:
 
     async def evaluate_rules(self, dry_run: bool = False) -> list[EvaluationResult]:
         rules = await self._rule_service.list_all_enabled_rules()
-        results: list[EvaluationResult] = []
+        async with trace(
+            "evaluate_rules",
+            run_type="tool",
+            metadata={"rule_count": len(rules), "dry_run": dry_run},
+        ):
+            results: list[EvaluationResult] = []
 
-        for rule in rules:
-            rule_dry_run = dry_run or rule.dry_run
-            result = await self._evaluate_single_rule(rule, rule_dry_run)
-            results.append(result)
+            for rule in rules:
+                rule_dry_run = dry_run or rule.dry_run
+                try:
+                    result = await self._evaluate_single_rule(rule, rule_dry_run)
+                    RULES_EVALUATED_TOTAL.labels(
+                        outcome="success" if result.evaluated else "error"
+                    ).inc()
+                except Exception:
+                    RULE_EVALUATION_FAILURES_TOTAL.inc()
+                    RULES_EVALUATED_TOTAL.labels(outcome="failure").inc()
+                    raise
+                results.append(result)
 
-        return results
+            return results
 
     async def _evaluate_single_rule(
         self, rule: NotificationRule, dry_run: bool
     ) -> EvaluationResult:
-        if self._forecast_fetcher is not None:
-            try:
-                await self._forecast_fetcher.fetch_fresh_forecast(rule.location_id)
-            except Exception as exc:
-                logger.warning(
-                    "forecast fetch failed for location_id=%d: %s",
-                    rule.location_id,
-                    exc,
-                )
+        eval_start = time.perf_counter()
+        async with trace(
+            "evaluate_single_rule",
+            run_type="tool",
+            metadata={
+                "rule_id": rule.id,
+                "rule_short_id": rule.short_id,
+                "location_id": rule.location_id,
+                "dry_run": dry_run,
+            },
+        ):
+            import structlog
 
-        data = await self._build_evaluation_data(rule.location_id)
+            structlog.contextvars.bind_contextvars(
+                rule_id=rule.id,
+                rule_short_id=rule.short_id,
+                location_id=rule.location_id,
+            )
+            if self._forecast_fetcher is not None:
+                refresh_start = time.perf_counter()
+                try:
+                    async with trace(
+                        "forecast_refresh",
+                        run_type="tool",
+                        metadata={"location_id": rule.location_id},
+                    ):
+                        await self._forecast_fetcher.fetch_fresh_forecast(rule.location_id)
+                    FORECAST_REFRESH_TOTAL.labels(outcome="success").inc()
+                    LAST_SUCCESSFUL_FORECAST_REFRESH_TIMESTAMP_SECONDS.set(time.time())
+                except Exception as exc:
+                    FORECAST_REFRESH_TOTAL.labels(outcome="failure").inc()
+                    logger.warning(
+                        "forecast_fetch_failed",
+                        location_id=rule.location_id,
+                        error_class=type(exc).__name__,
+                    )
+                finally:
+                    FORECAST_REFRESH_DURATION_SECONDS.observe(time.perf_counter() - refresh_start)
+
+            data = await self._build_evaluation_data(rule.location_id)
+            try:
+                result = await self._finish_evaluation(rule, dry_run, data)
+            finally:
+                RULE_EVALUATION_DURATION_SECONDS.observe(time.perf_counter() - eval_start)
+            return result
+
+    async def _finish_evaluation(
+        self,
+        rule: NotificationRule,
+        dry_run: bool,
+        data: dict[str, Any],
+    ) -> EvaluationResult:
 
         if data.get("points") is None or len(data["points"]) == 0:
             evaluation_detail: dict[str, Any] = {
@@ -118,10 +188,7 @@ class RuleEvaluationWorker:
             result_value = cel_result.result
         else:
             result_type = type(cel_result.result).__name__
-            error = (
-                f"Expression did not return boolean, "
-                f"got {result_type}: {cel_result.result}"
-            )
+            error = f"Expression did not return boolean, got {result_type}: {cel_result.result}"
             evaluated = False
 
         notification_candidate = evaluated and result_value is True
@@ -141,12 +208,8 @@ class RuleEvaluationWorker:
         if notification_candidate:
             first_point = data["points"][0] if data["points"] else {}
             last_point = data["points"][-1] if data["points"] else {}
-            evaluation_detail["forecast_window_start"] = str(
-                first_point.get("target_time", "")
-            )
-            evaluation_detail["forecast_window_end"] = str(
-                last_point.get("target_time", "")
-            )
+            evaluation_detail["forecast_window_start"] = str(first_point.get("target_time", ""))
+            evaluation_detail["forecast_window_end"] = str(last_point.get("target_time", ""))
             key_metrics: dict[str, float | str | None] = {}
             for metric in cel_result.evaluated_metrics:
                 key_metrics[metric] = first_point.get(metric)
@@ -164,11 +227,26 @@ class RuleEvaluationWorker:
 
         if dry_run and notification_candidate:
             logger.info(
-                "dry-run: notification candidate for rule #%s (id=%d) expression=%r",
-                rule.short_id,
-                rule.id,
-                rule.expression,
+                "dry_run_notification_candidate",
+                rule_id=rule.id,
+                rule_short_id=rule.short_id,
+                expression=rule.expression,
             )
+
+        with trace(
+            "evaluation_result",
+            run_type="tool",
+            metadata={
+                "rule_id": rule.id,
+                "rule_short_id": rule.short_id,
+                "evaluated": evaluated,
+                "result": result_value,
+                "notification_candidate": notification_candidate,
+                "error": error,
+                "dry_run": dry_run,
+            },
+        ):
+            pass
 
         return EvaluationResult(
             rule_id=rule.id,
@@ -188,10 +266,13 @@ class RuleEvaluationWorker:
             return {"points": [], "snapshot_id": None}
 
         now = datetime.now(UTC)
-        points = await self._forecast_repo.get_points_by_time_range(
-            str(location_id),
-            start=now - timedelta(hours=1),
-            end=now + timedelta(days=7),
+        time_start = now - timedelta(hours=1)
+        time_end = now + timedelta(days=7)
+
+        points = await self._forecast_repo.get_points_for_snapshot(
+            snapshot.id,
+            start=time_start,
+            end=time_end,
         )
 
         point_dicts: list[dict[str, Any]] = []
@@ -204,10 +285,10 @@ class RuleEvaluationWorker:
                 str(location_id), before=snapshot.fetched_at
             )
             if prev_snapshot is not None:
-                prev_points = await self._forecast_repo.get_points_by_time_range(
-                    str(location_id),
-                    start=now - timedelta(hours=1),
-                    end=now + timedelta(days=7),
+                prev_points = await self._forecast_repo.get_points_for_snapshot(
+                    prev_snapshot.id,
+                    start=time_start,
+                    end=time_end,
                 )
                 for p in prev_points:
                     previous_points.append(self._orm_point_to_dict(p))
@@ -274,8 +355,23 @@ class RuleEvaluationWorker:
     async def run_loop(self) -> None:
         interval_seconds = self._settings.rule_evaluation_minutes * 60
         while True:
-            try:
-                await self.run_once()
-            except Exception:
-                logger.exception("rule evaluation cycle failed")
+            with bound_worker_context(
+                correlation_id=generate_correlation_id(),
+            ):
+                try:
+                    cycle_start = time.perf_counter()
+                    WORKER_CYCLES_TOTAL.inc()
+                    async with trace(
+                        "worker_cycle",
+                        run_type="tool",
+                    ):
+                        await self.run_once()
+                    WORKER_CYCLE_DURATION_SECONDS.observe(time.perf_counter() - cycle_start)
+                    LAST_SUCCESSFUL_WORKER_CYCLE_TIMESTAMP_SECONDS.set(time.time())
+                except Exception as exc:
+                    logger.exception(
+                        "rule_evaluation_cycle_failed",
+                        error_class=type(exc).__name__,
+                        outcome="failure",
+                    )
             await asyncio.sleep(interval_seconds)

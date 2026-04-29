@@ -142,9 +142,7 @@ class TestCreateHealthApp:
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         mock_factory = MagicMock(spec=async_sessionmaker)
-        mock_factory.return_value.__aenter__ = AsyncMock(
-            return_value=mock_session
-        )
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
         app = create_health_app(session_factory=mock_factory)
@@ -164,14 +162,10 @@ class TestCreateHealthApp:
         )
 
         mock_session = AsyncMock(spec=AsyncSession)
-        mock_session.execute = AsyncMock(
-            side_effect=Exception("connection refused")
-        )
+        mock_session.execute = AsyncMock(side_effect=Exception("connection refused"))
 
         mock_factory = MagicMock(spec=async_sessionmaker)
-        mock_factory.return_value.__aenter__ = AsyncMock(
-            return_value=mock_session
-        )
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
         app = create_health_app(session_factory=mock_factory)
@@ -183,6 +177,16 @@ class TestCreateHealthApp:
         assert data["status"] == "degraded"
         assert data["db_connected"] is False
 
+    @pytest.mark.asyncio()
+    async def test_metrics_endpoint_returns_prometheus_text(self) -> None:
+        app = create_health_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/metrics")
+        assert response.status_code == 200
+        assert "text/plain" in response.headers["content-type"]
+        assert "process_" in response.text or "python_" in response.text
+
 
 class TestTelegramStatusCommand:
     @pytest.mark.asyncio()
@@ -190,18 +194,27 @@ class TestTelegramStatusCommand:
         from weather_agent.domain.locations import Location
 
         loc_svc = MagicMock(spec=LocationService)
-        loc_svc.list_locations = AsyncMock(return_value=[
-            Location(
-                id=1, name="Warszawa", aliases=[], latitude=52.2297,
-                longitude=21.0122, description=None, enabled=True,
-                created_at=datetime(2026, 1, 1, tzinfo=UTC),
-                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-            ),
-        ])
+        loc_svc.list_locations = AsyncMock(
+            return_value=[
+                Location(
+                    id=1,
+                    name="Warszawa",
+                    aliases=[],
+                    latitude=52.2297,
+                    longitude=21.0122,
+                    description=None,
+                    enabled=True,
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+            ]
+        )
         rule_svc = MagicMock(spec=NotificationRuleService)
-        rule_svc.list_rules = AsyncMock(return_value=[
-            _make_rule(short_id="R7K2", enabled=True),
-        ])
+        rule_svc.list_rules = AsyncMock(
+            return_value=[
+                _make_rule(short_id="R7K2", enabled=True),
+            ]
+        )
 
         sys_status = SystemStatus(
             db_connected=True,
@@ -264,9 +277,11 @@ class TestTelegramStatusCommand:
         loc_svc = MagicMock(spec=LocationService)
         loc_svc.list_locations = AsyncMock(return_value=[])
         rule_svc = MagicMock(spec=NotificationRuleService)
-        rule_svc.list_rules = AsyncMock(return_value=[
-            _make_rule(short_id="R7K2", enabled=True, dry_run=True),
-        ])
+        rule_svc.list_rules = AsyncMock(
+            return_value=[
+                _make_rule(short_id="R7K2", enabled=True, dry_run=True),
+            ]
+        )
 
         ctx = CommandContext(
             user_id=42,
@@ -288,9 +303,7 @@ class TestTelegramStatusCommand:
         rule_svc = MagicMock(spec=NotificationRuleService)
         rule_svc.list_rules = AsyncMock(return_value=[])
 
-        sys_status = SystemStatus(
-            db_connected=True, scheduler_status="running"
-        )
+        sys_status = SystemStatus(db_connected=True, scheduler_status="running")
 
         ctx = CommandContext(
             user_id=42,
@@ -302,10 +315,7 @@ class TestTelegramStatusCommand:
             system_status=sys_status,
         )
 
-        patch_path = (
-            "weather_agent.adapters.telegram.commands"
-            ".LangSmithTracing.is_enabled"
-        )
+        patch_path = "weather_agent.adapters.telegram.commands.LangSmithTracing.is_enabled"
         with patch(patch_path, return_value=True):
             result = await handle_status(ctx)
         assert "LangSmith: włączony" in result
@@ -317,9 +327,7 @@ class TestTelegramStatusCommand:
         rule_svc = MagicMock(spec=NotificationRuleService)
         rule_svc.list_rules = AsyncMock(return_value=[])
 
-        sys_status = SystemStatus(
-            db_connected=True, scheduler_status="running"
-        )
+        sys_status = SystemStatus(db_connected=True, scheduler_status="running")
 
         ctx = CommandContext(
             user_id=42,
@@ -331,10 +339,7 @@ class TestTelegramStatusCommand:
             system_status=sys_status,
         )
 
-        patch_path = (
-            "weather_agent.adapters.telegram.commands"
-            ".LangSmithTracing.is_enabled"
-        )
+        patch_path = "weather_agent.adapters.telegram.commands.LangSmithTracing.is_enabled"
         with patch(patch_path, return_value=False):
             result = await handle_status(ctx)
         assert "LangSmith: wyłączony" in result

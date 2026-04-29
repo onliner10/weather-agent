@@ -64,3 +64,26 @@ def test_settings_fail_fast_when_required_values_are_missing(
     message = str(exc_info.value)
     assert "telegram" in message
     assert "database_url" in message
+
+
+def test_settings_observability_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_base_env(monkeypatch)
+
+    settings = AppSettings()
+
+    assert settings.observability.enabled is True
+    assert settings.observability.bot_port == 8080
+    assert settings.observability.worker_port == 8081
+
+
+def test_settings_observability_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_base_env(monkeypatch)
+    monkeypatch.setenv("WEATHER_AGENT_OBSERVABILITY__ENABLED", "false")
+    monkeypatch.setenv("WEATHER_AGENT_OBSERVABILITY__BOT_PORT", "9090")
+    monkeypatch.setenv("WEATHER_AGENT_OBSERVABILITY__WORKER_PORT", "9091")
+
+    settings = AppSettings()
+
+    assert settings.observability.enabled is False
+    assert settings.observability.bot_port == 9090
+    assert settings.observability.worker_port == 9091

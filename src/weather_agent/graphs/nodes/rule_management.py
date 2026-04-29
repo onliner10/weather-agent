@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langsmith import trace
 
 from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluationResult, CELEvaluator
@@ -14,6 +16,13 @@ from weather_agent.domain.rules.models import RuleCreate, RuleUpdate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
 from weather_agent.graphs.state import ConversationState
+from weather_agent.observability.logging import get_logger
+
+logger = get_logger(__name__)
+
+_GENERIC_RULE_ERROR = (
+    "Przepraszam, wystąpił błąd podczas przygotowywania reguły. Spróbuj ponownie za chwilę."
+)
 
 _RULE_PROPOSAL_SYSTEM_PROMPT = """\
 Jesteś asystentem botu pogodowego dla użytkowników mówiących po polsku.
@@ -43,6 +52,9 @@ Jeśli nie da się zamienić opisu na wyrażenie CEL, zwróć:
 
 _SHORT_ID_PATTERN = re.compile(r"(?:#|\b)R[A-HJKMNP-Z0-9]{3,6}\b")
 
+_YES_WORDS = frozenset({"tak", "yes", "t", "y", "potwierdz", "potwierdzam", "ok"})
+_NO_WORDS = frozenset({"nie", "no", "n", "anuluj", "anuluję", "rezygnuj"})
+
 
 def _extract_short_id(text: str) -> str | None:
     match = _SHORT_ID_PATTERN.search(text)
@@ -59,6 +71,14 @@ def _build_system_prompt() -> str:
         cel_functions=functions_json,
         cel_metrics=metrics_json,
     )
+
+
+def is_confirmation_yes(text: str) -> bool:
+    return text.strip().lower() in _YES_WORDS
+
+
+def is_confirmation_no(text: str) -> bool:
+    return text.strip().lower() in _NO_WORDS
 
 
 async def propose_cel_rule_node(
@@ -82,9 +102,11 @@ async def propose_cel_rule_node(
     ]
 
     try:
-        response = await chat_model.ainvoke(messages)
-    except Exception as exc:
-        return {"error": f"Błąd modelu LLM: {exc}"}
+        async with trace("propose_cel_rule_llm", run_type="llm"):
+            response = await chat_model.ainvoke(messages)
+    except Exception:
+        logger.exception("llm_rule_proposal_failed")
+        return {"error": _GENERIC_RULE_ERROR}
 
     response_raw = response.content if hasattr(response, "content") else str(response)
     response_text = str(response_raw)
@@ -96,14 +118,22 @@ async def propose_cel_rule_node(
         try:
             parsed = json.loads(cleaned)
         except (json.JSONDecodeError, TypeError):
-            return {"error": "Nie udało się przetworzyć odpowiedzi modelu"}
+            logger.warning(
+                "llm_rule_response_parse_failed",
+                response_text=response_text[:500],
+            )
+            return {"error": _GENERIC_RULE_ERROR}
 
     cel_expression = parsed.get("cel_expression")
     explanation = parsed.get("explanation", "")
 
     if cel_expression is None:
+        logger.warning(
+            "llm_rule_no_cel_expression",
+            explanation=explanation,
+        )
         return {
-            "error": explanation or "Nie udało się wygenerować wyrażenia CEL",
+            "error": _GENERIC_RULE_ERROR,
             "cel_expression": None,
             "pending_confirmation": None,
         }
@@ -111,19 +141,36 @@ async def propose_cel_rule_node(
     validation: CELEvaluationResult = cel_evaluator.validate(cel_expression)
 
     if not validation.valid:
+        logger.error(
+            "cel_validation_failed",
+            cel_expression=cel_expression,
+            validation_error=validation.error,
+        )
         return {
-            "error": f"Niepoprawne wyrażenie CEL: {validation.error}",
+            "error": _GENERIC_RULE_ERROR,
             "cel_expression": None,
             "pending_confirmation": None,
         }
 
     short_id = _extract_short_id(user_message)
 
+    resolved_location = state.get("resolved_location")
+    location_id: int | None = None
+    if resolved_location is not None:
+        try:
+            location_id = int(resolved_location.id)
+        except (ValueError, TypeError):
+            location_id = None
+
     pending: dict[str, Any] = {
         "action": "edit_rule" if short_id else "create_rule",
         "cel_expression": validation.expression,
         "explanation": explanation,
         "validated": True,
+        "location_id": location_id,
+        "chat_id": state.get("chat_id"),
+        "message_thread_id": state.get("message_thread_id"),
+        "stored_at": datetime.now(UTC).isoformat(),
     }
     if short_id:
         pending["edit_short_id"] = short_id
@@ -154,14 +201,114 @@ async def require_user_confirmation_node(state: ConversationState) -> dict[str, 
     lines = [
         header,
         "",
-        f"📝 Wyrażenie CEL: `{cel_expression}`",
-        f"📖 Opis: {explanation}",
+        f"\U0001f4dd Wyrażenie CEL: `{cel_expression}`",
+        f"\U0001f4d6 Opis: {explanation}",
         "",
         "Czy chcesz potwierdzić? (tak/nie)",
     ]
     answer = "\n".join(lines)
 
     return {"answer": answer}
+
+
+async def confirm_rule_node(
+    state: ConversationState,
+    rule_service: NotificationRuleService | None,
+    location_service: LocationService | None,
+) -> dict[str, Any]:
+    if rule_service is None or location_service is None:
+        return {"error": "Reguły powiadomień są niedostępne bez pełnej konfiguracji."}
+
+    pending = state.get("pending_confirmation")
+    if pending is None:
+        return {"error": "Brak danych do zapisania reguły"}
+
+    cel_expression = pending.get("cel_expression", "")
+    explanation = pending.get("explanation", "")
+    action = pending.get("action", "create_rule")
+
+    user_id = state.get("authorized_user_id")
+    if user_id is None:
+        return {
+            "error": "Użytkownik nie jest autoryzowany",
+            "pending_confirmation": None,
+        }
+
+    chat_id = pending.get("chat_id") or state.get("chat_id", 0)
+    message_thread_id = pending.get("message_thread_id") or state.get("message_thread_id")
+
+    location_id: int | None = pending.get("location_id")
+    if location_id is None:
+        resolved_location = state.get("resolved_location")
+        if resolved_location is not None:
+            try:
+                location_id = int(resolved_location.id)
+            except (ValueError, TypeError):
+                location_id = None
+
+    if location_id is None:
+        return {
+            "error": "Nie udało się rozpoznać lokalizacji",
+            "pending_confirmation": None,
+        }
+
+    if action == "edit_rule":
+        short_id = pending.get("edit_short_id", "")
+        existing_rule = await rule_service.get_rule(short_id=short_id)
+        if existing_rule is None:
+            return {"error": f"Nie znaleziono reguły #{short_id}", "pending_confirmation": None}
+
+        rule = await rule_service.update_rule(
+            existing_rule.id,
+            RuleUpdate(
+                expression=cel_expression,
+                description=explanation,
+            ),
+        )
+        answer = (
+            f"Reguła #{rule.short_id} została zaktualizowana.\n\U0001f4dd CEL: `{rule.expression}`"
+        )
+    else:
+        rule = await rule_service.create_rule(
+            user_id,
+            RuleCreate(
+                telegram_chat_id=chat_id,
+                telegram_message_thread_id=message_thread_id,
+                location_id=location_id,
+                expression=cel_expression,
+                description=explanation,
+            ),
+        )
+        answer = (
+            f"Nowa reguła #{rule.short_id} została zapisana.\n\U0001f4dd CEL: `{rule.expression}`"
+        )
+
+    return {
+        "answer": answer,
+        "pending_confirmation": None,
+        "cel_expression": None,
+        "error": None,
+    }
+
+
+async def cancel_rule_node(state: ConversationState) -> dict[str, Any]:
+    pending = state.get("pending_confirmation")
+    if pending is None:
+        return {"answer": "Nie ma oczekującej reguły do anulowania."}
+
+    action = pending.get("action", "create_rule")
+    if action == "edit_rule":
+        short_id = pending.get("edit_short_id", "")
+        answer = f"Edycja reguły #{short_id} została anulowana."
+    else:
+        answer = "Reguła została anulowana."
+
+    return {
+        "answer": answer,
+        "pending_confirmation": None,
+        "cel_expression": None,
+        "error": None,
+    }
 
 
 async def persist_rule_change_node(
@@ -177,77 +324,14 @@ async def persist_rule_change_node(
         return {"error": "Brak danych do zapisania reguły"}
 
     user_message = (state.get("user_message") or "").strip().lower()
-    normalized = user_message
 
-    is_yes = normalized in ("tak", "yes", "t", "y", "potwierdz", "potwierdzam", "ok")
-    is_no = normalized in ("nie", "no", "n", "anuluj", "anuluję", "rezygnuj")
+    if is_confirmation_no(user_message):
+        return await cancel_rule_node(state)
 
-    if is_no:
-        return {
-            "answer": "Reguła została anulowana.",
-            "pending_confirmation": None,
-            "cel_expression": None,
-            "error": None,
-        }
-
-    if not is_yes:
+    if not is_confirmation_yes(user_message):
         return {
             "answer": "Oczekuję na potwierdzenie (tak) lub odrzucenie (nie).",
             "error": None,
         }
 
-    cel_expression = pending.get("cel_expression", "")
-    explanation = pending.get("explanation", "")
-    action = pending.get("action", "create_rule")
-
-    user_id = state.get("authorized_user_id")
-    if user_id is None:
-        return {"error": "Użytkownik nie jest autoryzowany"}
-
-    chat_id = state.get("chat_id", 0)
-    message_thread_id = state.get("message_thread_id")
-
-    resolved_location = state.get("resolved_location")
-    location_id: int | None = None
-    if resolved_location is not None:
-        try:
-            location_id = int(resolved_location.id)
-        except (ValueError, TypeError):
-            location_id = None
-
-    if location_id is None:
-        return {"error": "Nie udało się rozpoznać lokalizacji"}
-
-    if action == "edit_rule":
-        short_id = pending.get("edit_short_id", "")
-        existing_rule = await rule_service.get_rule(short_id=short_id)
-        if existing_rule is None:
-            return {"error": f"Nie znaleziono reguły #{short_id}"}
-
-        rule = await rule_service.update_rule(
-            existing_rule.id,
-            RuleUpdate(
-                expression=cel_expression,
-                description=explanation,
-            ),
-        )
-        answer = f"Reguła #{rule.short_id} została zaktualizowana.\n📝 CEL: `{rule.expression}`"
-    else:
-        rule = await rule_service.create_rule(
-            user_id,
-            RuleCreate(
-                telegram_chat_id=chat_id,
-                telegram_message_thread_id=message_thread_id,
-                location_id=location_id,
-                expression=cel_expression,
-                description=explanation,
-            ),
-        )
-        answer = f"Nowa reguła #{rule.short_id} została zapisana.\n📝 CEL: `{rule.expression}`"
-
-    return {
-        "answer": answer,
-        "pending_confirmation": None,
-        "cel_expression": None,
-        "error": None,
-    }
+    return await confirm_rule_node(state, rule_service, location_service)

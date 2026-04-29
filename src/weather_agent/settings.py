@@ -104,6 +104,16 @@ class SchedulerSettings(BaseModel):
     warning_poll_minutes: int = 15
 
 
+class ObservabilitySettings(BaseModel):
+    """HTTP observability surface configuration for bot and worker processes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    bot_port: int = 8080
+    worker_port: int = 8081
+
+
 class RetentionSettings(BaseModel):
     """Retention windows for user context, weather data, and audit evidence."""
 
@@ -131,7 +141,7 @@ class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="WEATHER_AGENT_",
         env_nested_delimiter="__",
-        env_file=".env",
+        env_file="/nonexistent",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -145,6 +155,7 @@ class AppSettings(BaseSettings):
     nager_date: NagerDateSettings = NagerDateSettings()
     units: GlobalUnitsSettings = GlobalUnitsSettings()
     scheduler: SchedulerSettings = SchedulerSettings()
+    observability: ObservabilitySettings = ObservabilitySettings()
     retention: RetentionSettings = RetentionSettings()
     default_timezone: str = "Europe/Warsaw"
     default_language: str = "pl-PL"
@@ -159,6 +170,10 @@ class AppSettings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def load_settings() -> AppSettings:
-    """Load and cache validated application settings."""
+    """Load and cache validated application settings.
 
-    return AppSettings()  # type: ignore[call-arg]
+    Production entry point that explicitly loads from ``.env`` so tests
+    calling ``AppSettings()`` directly remain hermetic.
+    """
+
+    return AppSettings(_env_file=".env")  # type: ignore[call-arg]

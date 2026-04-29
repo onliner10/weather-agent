@@ -72,5 +72,13 @@ class ModelFactory:
 
         raise ValueError(f"Unsupported model provider: {self._provider}")
 
+    @property
+    def provider(self) -> str:
+        return str(self._provider)
+
+    @property
+    def model_name(self) -> str:
+        return self._settings.model_name
+
     def create_structured_output(self, schema: type) -> Runnable[Any, Any]:
         return self.create_chat_model().with_structured_output(schema)

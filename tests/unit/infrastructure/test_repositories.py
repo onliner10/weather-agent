@@ -313,6 +313,41 @@ class TestForecastRepository:
         assert point.wind_speed_10m_ms == 3.0
         assert point.weather_code == "1"
 
+    @pytest.mark.asyncio()
+    async def test_get_points_for_snapshot_scopes_by_snapshot_id(
+        self, async_session: AsyncSession
+    ) -> None:
+        repo = ForecastRepository(async_session)
+        early = _make_forecast_result(
+            fetched_at=datetime(2026, 1, 15, 6, 0, tzinfo=UTC),
+            num_points=2,
+        )
+        late = _make_forecast_result(
+            fetched_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
+            num_points=3,
+        )
+        await repo.save_snapshot(early)
+        await repo.save_snapshot(late)
+        await async_session.flush()
+
+        early_snapshot = await repo.get_latest_snapshot(location_id="1")
+        assert early_snapshot is not None
+        late_snapshot_id = early_snapshot.id
+
+        all_points = await repo.get_points_by_time_range(
+            location_id="1",
+            start=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            end=datetime(2026, 12, 31, 23, 59, tzinfo=UTC),
+        )
+        assert len(all_points) == 5
+
+        late_points = await repo.get_points_for_snapshot(
+            snapshot_id=late_snapshot_id,
+            start=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+            end=datetime(2026, 12, 31, 23, 59, tzinfo=UTC),
+        )
+        assert len(late_points) == 3
+
 
 class TestObservationRepository:
     @pytest.mark.asyncio()

@@ -102,6 +102,87 @@ See `.env.example` for the full list. Key variables:
 | `WEATHER_AGENT_OPEN_METEO__BASE_URL` | No | `https://api.open-meteo.com/v1/forecast` | Open-Meteo forecast API |
 | `WEATHER_AGENT_LANGSMITH__ENABLED` | No | `false` | Enable LangSmith tracing |
 
+## LangSmith tracing
+
+Tracing is available via [LangSmith](https://smith.langchain.com) for monitoring conversational turns, worker evaluation cycles, and provider calls.
+
+### Settings
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WEATHER_AGENT_LANGSMITH__ENABLED` | No | `false` | Master switch for tracing |
+| `WEATHER_AGENT_LANGSMITH__API_KEY` | No | — | LangSmith API key |
+| `WEATHER_AGENT_LANGSMITH__PROJECT` | No | `weather-agent-dev` | LangSmith project name |
+| `WEATHER_AGENT_LANGSMITH__ENDPOINT` | No | `https://api.smith.langchain.com` | LangSmith endpoint |
+
+### Honored environment variables
+
+The following LangSmith/LangChain legacy env vars are set by `configure_tracing()` when `ENABLED=true` and are also honoured at read time:
+
+| Env var | Set by agent | Read by LangSmith |
+|---|---|---|
+| `LANGCHAIN_TRACING_V2` / `LANGSMITH_TRACING_V2` | Yes (to `"true"`) | Yes |
+| `LANGCHAIN_API_KEY` / `LANGSMITH_API_KEY` | Yes (from settings) | Yes |
+| `LANGCHAIN_PROJECT` / `LANGSMITH_PROJECT` | Yes (from settings) | Yes |
+| `LANGCHAIN_ENDPOINT` / `LANGSMITH_ENDPOINT` | Yes (from settings) | Yes |
+| `LANGSMITH_TRACING` / `LANGCHAIN_TRACING` | No | Yes |
+
+If you set any of these manually before the app starts, they take precedence. When `ENABLED=false` all of the above are removed from the environment.
+
+### Trace hierarchy
+
+A typical conversational turn produces this hierarchy in LangSmith:
+
+```
+telegram-turn:<context_key>:<intent>         ← top-level, run_type="chain"
+├── load_thread_context                       ← chain
+├── classify_intent                           ← chain
+├── handle_<intent>                           ← chain
+│   ├── resolve_location_node                 ← implicit via subtraces
+│   ├── propose_cel_rule_llm                  ← llm (rule flow only)
+│   └── weather_agent_node                    ← chain, calls tool functions
+│       ├── get_forecast / get_observations   ← @traceable(run_type="tool")
+│       └── resolve_location                  ← @traceable(run_type="tool")
+└── save_thread_context                       ← chain
+```
+
+Worker cycles create a separate trace tree:
+
+```
+worker_cycle                          ← tool
+└── evaluate_rules                    ← tool
+    └── evaluate_single_rule          ← tool
+        ├── forecast_refresh          ← tool
+        └── evaluation_result         ← tool (sync)
+```
+
+Notification sending (triggered by the bot process) appears as:
+
+```
+send_notification                     ← chain (from sender.py)
+```
+
+### Intentionally excluded from traces
+
+- **Raw message bodies** — `user_message` is truncated to 80 characters (`user_message_preview`). Full message text never appears in LangSmith metadata.
+- **`recent_context` (turn history)** — not included in metadata to avoid leaking prior conversation content.
+- **`reply_anchor`** — the replied-to message content is not included.
+- **`forecast_result` / `observation_result`** — raw forecast/observation payloads are excluded; only resolved summaries (location name, time explanation) are included.
+- **`pending_confirmation`** — pending rule confirmation data is not traced.
+- **`cel_expression` / `cel_validation_result`** — raw CEL expressions from state are excluded.
+- **Secrets** — `api_key` values are never written to trace metadata. Only environment variables are set for the LangSmith client.
+
+### Troubleshooting
+
+If `/status` reports LangSmith as enabled but no traces appear:
+
+1. **Check the API key** — `has_api_key` must be `true` in the status response. Without a key, the LangSmith client silently drops traces. Set `WEATHER_AGENT_LANGSMITH__API_KEY`.
+2. **Verify the endpoint** — `endpoint` in the status should match `https://api.smith.langchain.com` (or your custom endpoint). Corporate proxies or DNS issues can prevent traces from being uploaded.
+3. **Check the project** — `project` in the status must exist in your LangSmith workspace. If the project name is wrong, traces are created in the default project or dropped.
+4. **Confirm the trace actually ran** — the health endpoint at `/health` returns `{"langsmith_enabled": true/false}`. If it says `false`, the env vars were not set during startup.
+5. **Inspect the client-side filtering** — LangSmith SDK caches env var state at import time. Restart the process after changing env vars. The `configure_tracing()` call clears the SDK cache via `get_env_var.cache_clear()`.
+6. **Network connectivity** — the bot/worker processes must be able to reach `api.smith.langchain.com`. Check firewall rules and proxy settings.
+
 ## Location examples
 
 Add locations using the `/dodaj_lok` command or through conversation:
@@ -146,7 +227,7 @@ cat backup.sql | docker compose exec -T postgres-timescaledb psql -U weather_age
 | Database connection failed | Verify `WEATHER_AGENT_DATABASE_URL` and that Postgres is running: `docker compose ps` |
 | No weather data | Check Open-Meteo API availability and `WEATHER_AGENT_OPEN_METEO__BASE_URL` |
 | Wrong timezone | Ensure `WEATHER_AGENT_DEFAULT_TIMEZONE=Europe/Warsaw` |
-| LangSmith traces missing | Set `WEATHER_AGENT_LANGSMITH__ENABLED=true` and `WEATHER_AGENT_LANGSMITH__API_KEY` |
+| LangSmith traces missing | Check `/status` for `has_api_key` and `project`. See [LangSmith tracing](#langsmith-tracing) troubleshooting. |
 
 ## Testing
 

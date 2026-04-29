@@ -63,9 +63,7 @@ def scheduler_settings() -> SchedulerSettings:
 
 
 @pytest.fixture()
-def rule_service(
-    session: AsyncSession, cel_evaluator: CELEvaluator
-) -> NotificationRuleService:
+def rule_service(session: AsyncSession, cel_evaluator: CELEvaluator) -> NotificationRuleService:
     return NotificationRuleService(session, cel_evaluator)
 
 
@@ -125,6 +123,7 @@ async def _seed_forecast_data(
     num_points: int = 3,
     fetched_at: datetime | None = None,
     wind_gusts_base: float = 6.0,
+    target_times: list[datetime] | None = None,
 ) -> int:
     fetched = fetched_at or datetime.now(UTC)
     snapshot = ForecastSnapshot(
@@ -139,10 +138,13 @@ async def _seed_forecast_data(
     await session.refresh(snapshot)
 
     for i in range(num_points):
-        target_time = fetched + timedelta(hours=i + 1)
+        if target_times is not None:
+            tt = target_times[i]
+        else:
+            tt = fetched + timedelta(hours=i + 1)
         point = ForecastPointORM(
             snapshot_id=snapshot.id,
-            target_time=target_time,
+            target_time=tt,
             location_id=location_id,
             temperature_2m_c=5.0 + i,
             apparent_temperature_c=3.0 + i,
@@ -230,7 +232,10 @@ class TestRuleEvaluationWorker:
         scheduler_settings: SchedulerSettings,
     ) -> None:
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -250,7 +255,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -281,7 +289,10 @@ class TestRuleEvaluationWorker:
         _ = await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -321,7 +332,10 @@ class TestRuleEvaluationWorker:
         await session.flush()
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -346,7 +360,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -373,7 +390,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules(dry_run=True)
@@ -397,7 +417,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service, dry_run=True)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -420,7 +443,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service, enabled=False)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -445,7 +471,10 @@ class TestRuleEvaluationWorker:
         )
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results1 = await worker.evaluate_rules()
@@ -470,7 +499,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -501,7 +533,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -530,7 +565,10 @@ class TestRuleEvaluationWorker:
         rule = await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -540,9 +578,7 @@ class TestRuleEvaluationWorker:
         assert r.evaluation_detail is not None
         assert "evaluation_run_id" in r.evaluation_detail
 
-        stmt = select(RuleEvaluationRun).where(
-            RuleEvaluationRun.rule_id == rule.id
-        )
+        stmt = select(RuleEvaluationRun).where(RuleEvaluationRun.rule_id == rule.id)
         db_result = await session.execute(stmt)
         eval_run = db_result.scalar_one_or_none()
         assert eval_run is not None
@@ -572,7 +608,10 @@ class TestRuleEvaluationWorker:
         )
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -597,14 +636,15 @@ class TestRuleEvaluationWorker:
         rule = await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         await worker.run_once()
 
-        stmt = select(RuleEvaluationRun).where(
-            RuleEvaluationRun.rule_id == rule.id
-        )
+        stmt = select(RuleEvaluationRun).where(RuleEvaluationRun.rule_id == rule.id)
         db_result = await session.execute(stmt)
         eval_run = db_result.scalar_one_or_none()
         assert eval_run is not None
@@ -626,7 +666,10 @@ class TestRuleEvaluationWorker:
         fetcher.fetch_fresh_forecast = AsyncMock(return_value=snapshot_id)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
             forecast_fetcher=fetcher,
         )
@@ -649,12 +692,13 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         fetcher = AsyncMock()
-        fetcher.fetch_fresh_forecast = AsyncMock(
-            side_effect=Exception("network error")
-        )
+        fetcher.fetch_fresh_forecast = AsyncMock(side_effect=Exception("network error"))
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
             forecast_fetcher=fetcher,
         )
@@ -677,7 +721,10 @@ class TestRuleEvaluationWorker:
         await _create_rule(rule_service)
 
         worker = _make_worker(
-            session, forecast_repo, rule_service, cel_evaluator,
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -689,3 +736,66 @@ class TestRuleEvaluationWorker:
         assert "expression_result" in r.evaluation_detail
         assert "evaluated_metrics" in r.evaluation_detail
         assert "evaluated_functions" in r.evaluation_detail
+
+    async def test_forecast_delta_uses_previous_snapshot_values(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+
+        now = datetime.now(UTC)
+        prev_fetched = now - timedelta(hours=6)
+        curr_fetched = now - timedelta(hours=1)
+
+        shared_targets = [now + timedelta(hours=i + 1) for i in range(3)]
+
+        await _seed_forecast_data(
+            session,
+            fetched_at=prev_fetched,
+            wind_gusts_base=10.0,
+            num_points=3,
+            target_times=shared_targets,
+        )
+
+        curr_snapshot_id = await _seed_forecast_data(
+            session,
+            fetched_at=curr_fetched,
+            wind_gusts_base=20.0,
+            num_points=3,
+            target_times=shared_targets,
+        )
+
+        await _create_rule(
+            rule_service,
+            expression=(
+                'forecast_delta("wind_gusts_10m_ms", next_hours(24), previous_snapshot()) >= 5'
+            ),
+        )
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+        )
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.evaluated is True
+        assert r.result is True
+        assert r.notification_candidate is True
+        assert r.evaluation_detail is not None
+        assert r.evaluation_detail["snapshot_id"] == curr_snapshot_id
+
+        data = await worker._build_evaluation_data(1)
+        assert len(data["points"]) == 3
+        assert len(data["previous_points"]) == 3
+        assert data["previous_points"][0]["wind_gusts_10m_ms"] == 10.0
+        assert data["points"][0]["wind_gusts_10m_ms"] == 20.0

@@ -159,6 +159,7 @@ class TestCmdBot:
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
         mock_services.settings.telegram.allowed_user_ids = ()
+        mock_services.settings.observability.enabled = False
 
         with (
             patch("weather_agent.__main__._BotServices", return_value=mock_services),
@@ -178,6 +179,7 @@ class TestCmdBot:
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
         mock_services.settings.telegram.allowed_user_ids = ()
+        mock_services.settings.observability.enabled = False
 
         with (
             patch("weather_agent.__main__._BotServices", return_value=mock_services),
@@ -201,6 +203,7 @@ class TestCmdBot:
         mock_services = MagicMock()
         mock_services.settings.telegram = MagicMock()
         mock_services.settings.telegram.allowed_user_ids = ()
+        mock_services.settings.observability.enabled = False
 
         with (
             patch("weather_agent.__main__._BotServices", return_value=mock_services),
@@ -219,6 +222,31 @@ class TestCmdBot:
             cmd_bot(MagicMock())
             mock_bot.setup.assert_called_once()
 
+    def test_cmd_bot_starts_observability_server_when_enabled(self) -> None:
+        from weather_agent.__main__ import cmd_bot
+
+        mock_services = MagicMock()
+        mock_services.settings.telegram = MagicMock()
+        mock_services.settings.telegram.allowed_user_ids = ()
+        mock_services.settings.observability.enabled = True
+        mock_services.settings.observability.bot_port = 9999
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.__main__.run_migrations"),
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+            patch("weather_agent.__main__.start_observability_server") as mock_start_server,
+        ):
+            mock_asyncio.new_event_loop.return_value = MagicMock()
+            mock_asyncio.run = MagicMock()
+
+            cmd_bot(MagicMock())
+            mock_start_server.assert_called_once()
+            call_kwargs = mock_start_server.call_args.kwargs
+            assert call_kwargs["port"] == 9999
+            assert call_kwargs["host"] == "0.0.0.0"
+
 
 class TestCmdWorker:
     def test_cmd_worker_calls_run_migrations(self) -> None:
@@ -226,6 +254,7 @@ class TestCmdWorker:
 
         mock_services = MagicMock()
         mock_services.settings.scheduler = MagicMock()
+        mock_services.settings.observability.enabled = False
 
         with (
             patch("weather_agent.__main__._BotServices", return_value=mock_services),
@@ -235,6 +264,27 @@ class TestCmdWorker:
             mock_asyncio.run = MagicMock()
             cmd_worker(MagicMock())
             mock_migrate.assert_called_once()
+
+    def test_cmd_worker_starts_observability_server_when_enabled(self) -> None:
+        from weather_agent.__main__ import cmd_worker
+
+        mock_services = MagicMock()
+        mock_services.settings.scheduler = MagicMock()
+        mock_services.settings.observability.enabled = True
+        mock_services.settings.observability.worker_port = 9998
+
+        with (
+            patch("weather_agent.__main__._BotServices", return_value=mock_services),
+            patch("weather_agent.__main__.run_migrations"),
+            patch("weather_agent.__main__.asyncio") as mock_asyncio,
+            patch("weather_agent.__main__.start_observability_server") as mock_start_server,
+        ):
+            mock_asyncio.run = MagicMock()
+            cmd_worker(MagicMock())
+            mock_start_server.assert_called_once()
+            call_kwargs = mock_start_server.call_args.kwargs
+            assert call_kwargs["port"] == 9998
+            assert call_kwargs["host"] == "0.0.0.0"
 
 
 class TestCreateEngine:

@@ -80,6 +80,24 @@ class ForecastRepository(BaseRepository):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_points_for_snapshot(
+        self,
+        snapshot_id: int,
+        start: datetime,
+        end: datetime,
+    ) -> list[ForecastPointORM]:
+        stmt = (
+            select(ForecastPointORM)
+            .where(
+                ForecastPointORM.snapshot_id == snapshot_id,
+                ForecastPointORM.target_time >= start,
+                ForecastPointORM.target_time <= end,
+            )
+            .order_by(ForecastPointORM.target_time)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_previous_snapshot(
         self,
         location_id: str,
