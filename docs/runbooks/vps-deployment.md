@@ -5,7 +5,8 @@ containers. PostgreSQL is expected to be an external hosted database.
 
 ## One-Time VPS Setup
 
-1. Install Docker and the Docker Compose plugin on the VPS.
+1. Install Docker and either the Docker Compose plugin (`docker compose`) or legacy
+   `docker-compose` on the VPS.
 2. Create the deployment directory:
 
    ```bash

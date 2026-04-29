@@ -116,6 +116,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
             "cd '$DEPLOY_PATH' && \
              docker login ghcr.io -u '$GHCR_USER' --password-stdin && \
-             docker compose --env-file .deploy.env -f docker-compose.prod.yml pull && \
-             docker compose --env-file .deploy.env -f docker-compose.prod.yml --profile migrate run --rm weather-agent-migrate && \
-             docker compose --env-file .deploy.env -f docker-compose.prod.yml up -d --remove-orphans" <<< "$GHCR_TOKEN"
+             if docker compose version >/dev/null 2>&1; then compose='docker compose'; else compose='docker-compose'; fi && \
+             \$compose --env-file .deploy.env -f docker-compose.prod.yml pull && \
+             \$compose --env-file .deploy.env -f docker-compose.prod.yml --profile migrate run --rm weather-agent-migrate && \
+             \$compose --env-file .deploy.env -f docker-compose.prod.yml up -d --remove-orphans" <<< "$GHCR_TOKEN"
