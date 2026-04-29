@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time as _time
 from datetime import date, datetime
 from typing import Any
@@ -106,13 +105,33 @@ class GetForecastArgs(BaseModel):
     )
 
 
+class ForecastToolResult(BaseModel):
+    location: str | None = None
+    time_range: str | None = None
+    forecast_points: list[dict[str, Any]] | None = None
+    provider: str | None = None
+    model: str | None = None
+    error: str | None = None
+
+
 class GetObservationsArgs(BaseModel):
     location_name: str = Field(description="Nazwa miejscowości")
+
+
+class ObservationToolResult(BaseModel):
+    location: str | None = None
+    observations: list[dict[str, Any]] | None = None
+    error: str | None = None
 
 
 class SaveLocationArgs(BaseModel):
     location_name: str = Field(description="Adres lub nazwa miejscowości do zapisania")
     alias: str = Field(default="", description="Opcjonalny alias, np. 'dom', 'praca'")
+
+
+class SaveLocationToolResult(BaseModel):
+    success: str | None = None
+    error: str | None = None
 
 
 class WeatherToolbox:
@@ -144,18 +163,28 @@ class WeatherToolbox:
             return None
 
     @traceable(run_type="tool")
-    async def get_forecast(self, location_name: str, start_date: str, end_date: str, variables: list[str] | None = None) -> str:
+    async def get_forecast(
+        self, location_name: str, start_date: str, end_date: str,
+        variables: list[str] | None = None,
+    ) -> ForecastToolResult:
         TOOL_CALLS_TOTAL.labels(tool="get_forecast").inc()
         start = _time.perf_counter()
         try:
-            return await self._execute_get_forecast(location_name, start_date, end_date, variables or [])
+            return await self._execute_get_forecast(
+                location_name, start_date, end_date, variables or []
+            )
         finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="get_forecast").observe(_time.perf_counter() - start)
+            TOOL_CALL_DURATION_SECONDS.labels(tool="get_forecast").observe(
+                _time.perf_counter() - start
+            )
 
-    async def _execute_get_forecast(self, location_name: str, start_date_str: str, end_date_str: str, variable_names: list[str]) -> str:
+    async def _execute_get_forecast(
+        self, location_name: str, start_date_str: str, end_date_str: str,
+        variable_names: list[str],
+    ) -> ForecastToolResult:
         location = await self._resolve_location(location_name)
         if location is None:
-            return json.dumps({"error": f"Nie znaleziono lokalizacji: {location_name}"}, ensure_ascii=False)
+            return ForecastToolResult(error=f"Nie znaleziono lokalizacji: {location_name}")
 
         try:
             s = date.fromisoformat(start_date_str)
@@ -163,10 +192,13 @@ class WeatherToolbox:
             start_dt = datetime(s.year, s.month, s.day, tzinfo=_WARSAW)
             end_dt = datetime(e.year, e.month, e.day, 23, 59, tzinfo=_WARSAW)
             if start_dt > end_dt:
-                return json.dumps({"error": "start_date nie może być późniejsza niż end_date"}, ensure_ascii=False)
-            time_range = ResolvedTimeRange(start=start_dt, end=end_dt, explanation=f"{start_date_str} – {end_date_str}")
+                return ForecastToolResult(error="start_date nie może być późniejsza niż end_date")
+            time_range = ResolvedTimeRange(
+                start=start_dt, end=end_dt,
+                explanation=f"{start_date_str} – {end_date_str}",
+            )
         except ValueError:
-            return json.dumps({"error": "Nieprawidłowy format daty. Użyj yyyy-mm-dd."}, ensure_ascii=False)
+            return ForecastToolResult(error="Nieprawidłowy format daty. Użyj yyyy-mm-dd.")
 
         variables = []
         for vn in variable_names:
@@ -188,19 +220,24 @@ class WeatherToolbox:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
         except WeatherProviderError as exc:
             PROVIDER_REQUESTS_TOTAL.labels(provider=getattr(exc, "provider", provider_name), outcome="failure").inc()
-            return json.dumps({"error": f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}"}, ensure_ascii=False)
+            return ForecastToolResult(error=f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}")
         except Exception:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
-            return json.dumps({"error": "Błąd podczas pobierania prognozy. Spróbuj ponownie."}, ensure_ascii=False)
+            return ForecastToolResult(error="Błąd podczas pobierania prognozy. Spróbuj ponownie.")
         finally:
             PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(_time.perf_counter() - start)
 
         points_data = [_format_point(p) for p in forecast.points]
-        result = {"location": location.name, "time_range": time_range.explanation, "forecast_points": points_data, "provider": forecast.provider, "model": forecast.model}
-        return json.dumps(result, ensure_ascii=False, default=str)
+        return ForecastToolResult(
+            location=location.name,
+            time_range=time_range.explanation,
+            forecast_points=points_data,
+            provider=forecast.provider,
+            model=forecast.model,
+        )
 
     @traceable(run_type="tool")
-    async def get_observations(self, location_name: str) -> str:
+    async def get_observations(self, location_name: str) -> ObservationToolResult:
         TOOL_CALLS_TOTAL.labels(tool="get_observations").inc()
         start = _time.perf_counter()
         try:
@@ -208,13 +245,13 @@ class WeatherToolbox:
         finally:
             TOOL_CALL_DURATION_SECONDS.labels(tool="get_observations").observe(_time.perf_counter() - start)
 
-    async def _execute_get_observations(self, location_name: str) -> str:
+    async def _execute_get_observations(self, location_name: str) -> ObservationToolResult:
         if self.observation_provider is None:
-            return json.dumps({"error": "Obserwacje niedostępne"})
+            return ObservationToolResult(error="Obserwacje niedostępne")
 
         location = await self._resolve_location(location_name)
         if location is None:
-            return json.dumps({"error": f"Nie znaleziono lokalizacji: {location_name}"}, ensure_ascii=False)
+            return ObservationToolResult(error=f"Nie znaleziono lokalizacji: {location_name}")
 
         provider_name = getattr(self.observation_provider, "provider", "unknown")
         start = _time.perf_counter()
@@ -225,18 +262,18 @@ class WeatherToolbox:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
         except WeatherProviderError as exc:
             PROVIDER_REQUESTS_TOTAL.labels(provider=getattr(exc, "provider", provider_name), outcome="failure").inc()
-            return json.dumps({"error": f"Błąd dostawcy obserwacji: {exc.message}"}, ensure_ascii=False)
+            return ObservationToolResult(error=f"Błąd dostawcy obserwacji: {exc.message}")
         except Exception:
             PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
-            return json.dumps({"error": "Błąd podczas pobierania obserwacji. Spróbuj ponownie."}, ensure_ascii=False)
+            return ObservationToolResult(error="Błąd podczas pobierania obserwacji. Spróbuj ponownie.")
         finally:
             PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(_time.perf_counter() - start)
 
         points_data = [_format_observation_point(p) for p in obs.points]
-        return json.dumps({"location": location.name, "observations": points_data}, ensure_ascii=False, default=str)
+        return ObservationToolResult(location=location.name, observations=points_data)
 
     @traceable(run_type="tool")
-    async def save_location(self, location_name: str, alias: str = "") -> str:
+    async def save_location(self, location_name: str, alias: str = "") -> SaveLocationToolResult:
         TOOL_CALLS_TOTAL.labels(tool="save_location").inc()
         start = _time.perf_counter()
         try:
@@ -244,19 +281,19 @@ class WeatherToolbox:
         finally:
             TOOL_CALL_DURATION_SECONDS.labels(tool="save_location").observe(_time.perf_counter() - start)
 
-    async def _execute_save_location(self, location_name: str, alias: str) -> str:
+    async def _execute_save_location(self, location_name: str, alias: str) -> SaveLocationToolResult:
         if self.location_service is None:
-            return json.dumps({"error": "Usługa lokalizacji jest niedostępna."})
+            return SaveLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
 
         if not location_name.strip():
-            return json.dumps({"error": "Podaj nazwę lokalizacji do zapisania."})
+            return SaveLocationToolResult(error="Podaj nazwę lokalizacji do zapisania.")
 
         if self.geocoder is None:
-            return json.dumps({"error": "Geokoder jest niedostępny."})
+            return SaveLocationToolResult(error="Geokoder jest niedostępny.")
 
         resolved = await self.geocoder.geocode(location_name)
         if resolved is None:
-            return json.dumps({"error": f"Nie udało się rozpoznać lokalizacji „{location_name}”."}, ensure_ascii=False)
+            return SaveLocationToolResult(error=f"Nie udało się rozpoznać lokalizacji „{location_name}”.")
 
         try:
             aliases = [alias] if alias else []
@@ -267,12 +304,12 @@ class WeatherToolbox:
             msg = f"Zapamiętałem lokalizację: {location_name}"
             if alias:
                 msg += f" (alias: {alias})"
-            return json.dumps({"success": msg}, ensure_ascii=False)
+            return SaveLocationToolResult(success=msg)
         except (LocationAliasConflictError, LocationNameConflictError):
-            return json.dumps({"error": "Masz już zapisaną lokalizację o tej nazwie lub aliasie."}, ensure_ascii=False)
+            return SaveLocationToolResult(error="Masz już zapisaną lokalizację o tej nazwie lub aliasie.")
         except Exception as exc:
             logger.exception("save_location_failed", user_id=self.user_id, location_name=location_name)
-            return json.dumps({"error": f"Błąd podczas zapisywania lokalizacji: {exc}"}, ensure_ascii=False)
+            return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
 
     def to_langchain_tools(self) -> list:
         return [

@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import respx
 
-from weather_agent.infrastructure.geocoder import Geocoder, _LocationGuess
+from weather_agent.infrastructure.geocoder import Geocoder
+from weather_agent.llm.contracts.geocoder import LocationGuess
 
 _GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1/search"
 
@@ -23,7 +24,7 @@ def _geocoder_response(name: str, lat: float, lon: float, geo_id: int = 1) -> di
     }
 
 
-def _make_llm_mocks(guess: _LocationGuess) -> MagicMock:
+def _make_llm_mocks(guess: LocationGuess) -> MagicMock:
     mock_factory = MagicMock()
     mock_chat = MagicMock()
     mock_structured = MagicMock()
@@ -70,7 +71,7 @@ class TestGeocodeWithoutLlm:
 class TestGeocodeWithLlm:
     @respx.mock
     async def test_llm_search_query_routes_to_deterministic_geocoder(self) -> None:
-        guess = _LocationGuess(display_name="Gdańsk", search_query="Gdańsk")
+        guess = LocationGuess(display_name="Gdańsk", search_query="Gdańsk")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(
@@ -89,7 +90,7 @@ class TestGeocodeWithLlm:
 
     @respx.mock
     async def test_llm_no_search_query_uses_display_name(self) -> None:
-        guess = _LocationGuess(display_name="Kraków")
+        guess = LocationGuess(display_name="Kraków")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(
@@ -106,7 +107,7 @@ class TestGeocodeWithLlm:
 
     @respx.mock
     async def test_llm_returns_no_llm_prefix_ids(self) -> None:
-        guess = _LocationGuess(display_name="Szczecin", search_query="Szczecin")
+        guess = LocationGuess(display_name="Szczecin", search_query="Szczecin")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(
@@ -122,7 +123,7 @@ class TestGeocodeWithLlm:
 
     @respx.mock
     async def test_llm_guess_falls_back_to_original_name(self) -> None:
-        guess = _LocationGuess(display_name="Gdańsk", search_query="Gdańsk")
+        guess = LocationGuess(display_name="Gdańsk", search_query="Gdańsk")
         mock_factory = _make_llm_mocks(guess)
 
         route = respx.get(_GEOCODE_BASE)
@@ -158,7 +159,7 @@ class TestGeocodeWithLlm:
 
     @respx.mock
     async def test_llm_normalizes_inflected_input(self) -> None:
-        guess = _LocationGuess(display_name="Lotnisko Modlin", search_query="Modlin lotnisko")
+        guess = LocationGuess(display_name="Lotnisko Modlin", search_query="Modlin lotnisko")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(
@@ -175,7 +176,7 @@ class TestGeocodeWithLlm:
 
 class TestNoLlmCoordinatesTrusted:
     async def test_location_guess_has_no_lat_lon_fields(self) -> None:
-        guess = _LocationGuess(display_name="Test", search_query="Test")
+        guess = LocationGuess(display_name="Test", search_query="Test")
         assert not hasattr(guess, "lat")
         assert not hasattr(guess, "lon")
 
@@ -193,7 +194,7 @@ class TestNoLlmCoordinatesTrusted:
 
     @respx.mock
     async def test_geocoder_with_llm_never_produces_llm_location_ids(self) -> None:
-        guess = _LocationGuess(display_name="Łódź", search_query="Łódź")
+        guess = LocationGuess(display_name="Łódź", search_query="Łódź")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(
@@ -211,7 +212,7 @@ class TestNoLlmCoordinatesTrusted:
 
     @respx.mock
     async def test_coordinates_always_from_deterministic_geocoder(self) -> None:
-        guess = _LocationGuess(display_name="Katowice", search_query="Katowice")
+        guess = LocationGuess(display_name="Katowice", search_query="Katowice")
         mock_factory = _make_llm_mocks(guess)
 
         respx.get(_GEOCODE_BASE).mock(

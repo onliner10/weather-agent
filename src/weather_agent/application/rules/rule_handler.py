@@ -1,32 +1,29 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import traceable
-from pydantic import BaseModel, Field
-
 from weather_agent.application.conversation_models import PendingConfirmation, TurnResult
 from weather_agent.application.intent_classifier import is_confirmation_no, is_confirmation_yes
-from weather_agent.domain.cel.evaluator import CELEvaluationResult, CELEvaluator
+from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
+from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.models import RuleCreate, RuleUpdate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
+from weather_agent.llm.contracts.rules import RuleProposalExtraction
 from weather_agent.llm.model_factory import ModelFactory
-from weather_agent.llm.prompts.rule_prompts import build_rule_proposal_prompt
+from weather_agent.llm.prompts.rule_prompts import RULE_PROPOSAL_PROMPT
 from weather_agent.observability.logging import get_logger
 
 logger = get_logger(__name__)
 
-_GENERIC_RULE_ERROR = "Przepraszam, wystąpił błąd podczas przygotowywania reguły. Spróbuj ponownie za chwilę."
-
-
-class RuleProposalExtraction(BaseModel):
-    cel_expression: str | None = Field(description="Wyrażenie CEL lub null, jeśli nie da się stworzyć reguły.")
-    explanation: str = Field(description="Wyjaśnienie reguły po polsku.")
-    short_id: str | None = Field(description="ID reguły (np. R123) jeśli użytkownik odnosi się do konkretnej reguły.")
+_GENERIC_RULE_ERROR = (
+    "Przepraszam, wystąpił błąd podczas przygotowywania reguły."
+    " Spróbuj ponownie za chwilę."
+)
 
 
 @traceable(run_type="chain", name="propose_rule")
@@ -43,12 +40,18 @@ async def propose_rule(
 
     chat_model = model_factory.create_chat_model()
     structured = chat_model.with_structured_output(RuleProposalExtraction)
-    system_prompt = build_rule_proposal_prompt()
+
+    allowlist = get_allowlist_for_prompt()
+    functions_json = json.dumps(allowlist["functions"], ensure_ascii=False, indent=2)
+    metrics_json = json.dumps(allowlist["metrics"], ensure_ascii=False, indent=2)
 
     try:
-        parsed = await structured.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
-        )
+        chain = RULE_PROPOSAL_PROMPT | structured
+        parsed = await chain.ainvoke({
+            "cel_functions": functions_json,
+            "cel_metrics": metrics_json,
+            "user_message": user_message
+        })
     except Exception:
         logger.exception("llm_rule_proposal_failed")
         return {"error": _GENERIC_RULE_ERROR}
@@ -59,13 +62,25 @@ async def propose_rule(
 
     if cel_expression is None:
         logger.warning("llm_rule_no_cel_expression", explanation=explanation)
-        return {"error": _GENERIC_RULE_ERROR, "cel_expression": None, "pending_confirmation": None}
+        return {
+            "error": _GENERIC_RULE_ERROR,
+            "cel_expression": None,
+            "pending_confirmation": None,
+        }
 
-    validation: CELEvaluationResult = cel_evaluator.validate(cel_expression)
+    validation = cel_evaluator.validate(cel_expression)
 
     if not validation.valid:
-        logger.error("cel_validation_failed", cel_expression=cel_expression, validation_error=validation.error)
-        return {"error": _GENERIC_RULE_ERROR, "cel_expression": None, "pending_confirmation": None}
+        logger.error(
+            "cel_validation_failed",
+            cel_expression=cel_expression,
+            validation_error=validation.error,
+        )
+        return {
+            "error": _GENERIC_RULE_ERROR,
+            "cel_expression": None,
+            "pending_confirmation": None,
+        }
 
     if short_id:
         short_id = strip_hash_prefix(short_id.upper().replace("#", ""))
@@ -142,7 +157,10 @@ async def confirm_rule(
         return TurnResult(error="Nie udało się rozpoznać lokalizacji", pending_confirmation=None)
 
     effective_chat_id = pending.chat_id if pending.chat_id is not None else (chat_id or 0)
-    effective_thread_id = pending.message_thread_id if pending.message_thread_id is not None else message_thread_id
+    effective_thread_id = (
+        pending.message_thread_id if pending.message_thread_id is not None
+        else message_thread_id
+    )
 
     if action == "edit_rule":
         short_id = pending.edit_short_id or ""
@@ -154,7 +172,10 @@ async def confirm_rule(
             existing_rule.id,
             RuleUpdate(expression=cel_expression, description=explanation),
         )
-        answer = f"Reguła #{rule.short_id} została zaktualizowana.\n\U0001f4dd CEL: `{rule.expression}`"
+        answer = (
+            f"Reguła #{rule.short_id} została zaktualizowana.\n"
+            f"\U0001f4dd CEL: `{rule.expression}`"
+        )
     else:
         rule = await rule_service.create_rule(
             user_id,
@@ -166,9 +187,16 @@ async def confirm_rule(
                 description=explanation,
             ),
         )
-        answer = f"Nowa reguła #{rule.short_id} została zapisana.\n\U0001f4dd CEL: `{rule.expression}`"
+        answer = (
+            f"Nowa reguła #{rule.short_id} została zapisana.\n"
+            f"\U0001f4dd CEL: `{rule.expression}`"
+        )
 
-    return TurnResult(answer=answer, pending_confirmation=PendingConfirmation(), cel_expression=None)
+    return TurnResult(
+        answer=answer,
+        pending_confirmation=PendingConfirmation(),
+        cel_expression=None,
+    )
 
 
 async def cancel_rule(pending: PendingConfirmation) -> TurnResult:
@@ -179,7 +207,11 @@ async def cancel_rule(pending: PendingConfirmation) -> TurnResult:
     else:
         answer = "Reguła została anulowana."
 
-    return TurnResult(answer=answer, pending_confirmation=PendingConfirmation(), cel_expression=None)
+    return TurnResult(
+        answer=answer,
+        pending_confirmation=PendingConfirmation(),
+        cel_expression=None,
+    )
 
 
 async def handle_rule_confirmation(
@@ -198,4 +230,7 @@ async def handle_rule_confirmation(
     if not is_confirmation_yes(user_message):
         return TurnResult(answer="Oczekuję na potwierdzenie (tak) lub odrzucenie (nie).")
 
-    return await confirm_rule(pending, user_id, rule_service, location_service, resolved_location, chat_id, message_thread_id)
+    return await confirm_rule(
+        pending, user_id, rule_service, location_service,
+        resolved_location, chat_id, message_thread_id,
+    )

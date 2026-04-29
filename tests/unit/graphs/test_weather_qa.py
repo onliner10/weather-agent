@@ -16,6 +16,7 @@ from weather_agent.domain.weather import (
     ObservationPoint,
     ObservationResult,
 )
+from weather_agent.llm.contracts.location import LocationExtraction
 from weather_agent.graphs.conversation import compile_conversation_graph
 from weather_agent.graphs.nodes.weather_qa import (
     resolve_location_node,
@@ -182,11 +183,9 @@ def _mock_model_factory_with_location(
     location_name: str | None = "Warszawa",
     focus: str | None = None,
 ) -> MagicMock:
-    from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
-
     mf = MagicMock()
     chat = MagicMock()
-    extraction = _LocationExtraction(location_name=location_name, focus=focus)
+    extraction = LocationExtraction(location_name=location_name, focus=focus)
     structured = AsyncMock()
     structured.ainvoke = AsyncMock(return_value=extraction)
     chat.with_structured_output = MagicMock(return_value=structured)

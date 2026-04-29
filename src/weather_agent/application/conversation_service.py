@@ -60,11 +60,22 @@ class ConversationDeps:
 
     @property
     def has_weather_deps(self) -> bool:
-        return all(v is not None for v in (self.date_resolver, self.forecast_provider, self.model_factory, self.geocoder))
+        return all(
+            v is not None
+            for v in (
+                self.date_resolver,
+                self.forecast_provider,
+                self.model_factory,
+                self.geocoder,
+            )
+        )
 
     @property
     def has_rule_deps(self) -> bool:
-        return all(v is not None for v in (self.model_factory, self.cel_evaluator, self.rule_service))
+        return all(
+            v is not None
+            for v in (self.model_factory, self.cel_evaluator, self.rule_service)
+        )
 
 
 class ConversationService:
@@ -121,7 +132,8 @@ class ConversationService:
                     message_thread_id=state.get("message_thread_id"),
                 )
                 result["answer"] = rule_result.answer
-                if rule_result.pending_confirmation is not None and rule_result.pending_confirmation.cel_expression == "" and rule_result.pending_confirmation.action == "create_rule":
+                pc = rule_result.pending_confirmation
+                if pc is not None and pc.cel_expression == "" and pc.action == "create_rule":
                     result["pending_confirmation"] = None
                 else:
                     result["pending_confirmation"] = rule_result.pending_confirmation
@@ -147,24 +159,37 @@ class ConversationService:
                     geocoder=self.deps.geocoder,
                     model_factory=self.deps.model_factory,
                     existing_location=resolved_location,
-                    reply_context_turns=reply_context_turns if isinstance(reply_context_turns, list) else None,
+                    reply_context_turns=(
+                        reply_context_turns if isinstance(reply_context_turns, list) else None
+                    ),
                 )
                 result.update(loc_result)
                 if resolved_location is None and result.get("resolved_location") is not None:
                     resolved_location = result["resolved_location"]
 
-                propose_result = await propose_rule(user_message, self.deps.model_factory, self.deps.cel_evaluator)
+                propose_result = await propose_rule(
+                    user_message, self.deps.model_factory, self.deps.cel_evaluator
+                )
                 result.update(propose_result)
                 if result.get("cel_expression") and result.get("pending_confirmation") is not None:
                     from weather_agent.application.conversation_models import PendingConfirmation
-                    pending = PendingConfirmation.from_dict(result["pending_confirmation"]) if isinstance(result["pending_confirmation"], dict) else result["pending_confirmation"]
+                    raw = result["pending_confirmation"]
+                    pending = PendingConfirmation.from_dict(raw) if isinstance(raw, dict) else raw
                     result["answer"] = format_rule_confirmation(pending)
                 elif result.get("error") and not result.get("answer"):
                     result["answer"] = result["error"]
 
             else:
+                weather_state = {
+                    **state,
+                    "resolved_location": resolved_location,
+                    "user_focus": user_focus,
+                    "reply_context_turns": (
+                        reply_context_turns if isinstance(reply_context_turns, list) else None
+                    ),
+                }
                 weather_result = await handle_weather(
-                    {**state, "resolved_location": resolved_location, "user_focus": user_focus, "reply_context_turns": reply_context_turns if isinstance(reply_context_turns, list) else None},
+                    weather_state,
                     model_factory=self.deps.model_factory,
                     forecast_provider=self.deps.forecast_provider,
                     observation_provider=self.deps.observation_provider,
@@ -177,7 +202,9 @@ class ConversationService:
 
             answer = result.get("answer")
             pending_conf = result.get("pending_confirmation")
-            pending_dict = pending_conf.to_dict() if hasattr(pending_conf, "to_dict") else pending_conf
+            pending_dict = (
+                pending_conf.to_dict() if hasattr(pending_conf, "to_dict") else pending_conf
+            )
 
             await save_thread_context(
                 self.deps.memory_service,
@@ -188,7 +215,11 @@ class ConversationService:
                 resolved_location,
                 resolved_time_range,
                 user_focus,
-                PendingConfirmation.from_dict(pending_dict) if isinstance(pending_dict, dict) and pending_dict else None,
+                (
+                    PendingConfirmation.from_dict(pending_dict)
+                    if isinstance(pending_dict, dict) and pending_dict
+                    else None
+                ),
             )
 
             for key in ("authorized_user_id", "chat_id", "message_thread_id", "context_key"):
@@ -205,7 +236,9 @@ class CompiledConversationService:
     def __init__(self, service: ConversationService) -> None:
         self._service = service
 
-    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def ainvoke(
+        self, state: dict[str, Any], config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return await self._service.handle_turn(state)
 
 
@@ -213,5 +246,7 @@ def build_conversation_service(deps: ConversationDeps | None = None) -> Conversa
     return ConversationService(deps)
 
 
-def compile_conversation_service(deps: ConversationDeps | None = None) -> CompiledConversationService:
+def compile_conversation_service(
+    deps: ConversationDeps | None = None,
+) -> CompiledConversationService:
     return ConversationService(deps).compile()

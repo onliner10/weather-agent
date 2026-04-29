@@ -173,9 +173,10 @@ class MockModelFactory(ModelFactory):
         self._call_count = 0
 
     def create_chat_model(self) -> MagicMock:
-        from weather_agent.graphs.conversation import IntentExtraction
-        from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction
-        from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
+        from weather_agent.application.intent_classifier import IntentExtraction
+        from weather_agent.llm.contracts.location import LocationExtraction
+        from weather_agent.application.rules.rule_handler import RuleProposalExtraction as RulePropHandler
+        from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction as RulePropNode
 
         idx = min(self._call_count, len(self._responses) - 1)
         response_content = self._responses[idx] if self._responses else "Brak danych"
@@ -210,19 +211,19 @@ class MockModelFactory(ModelFactory):
                         intent = "command"
                     return IntentExtraction(intent=intent)
 
-                if schema is _LocationExtraction:
-                    return _LocationExtraction(
+                if schema is LocationExtraction:
+                    return LocationExtraction(
                         location_name=self._location_name,
                         focus=None,
                     )
 
-                if schema is RuleProposalExtraction:
+                if schema is RulePropHandler or schema is RulePropNode:
                     # If response_content is JSON, use it, otherwise return default
                     try:
                         data = json.loads(response_content)
-                        return RuleProposalExtraction(**data)
+                        return schema(**data)
                     except Exception:
-                        return RuleProposalExtraction(
+                        return schema(
                             cel_expression='max("wind_gusts_10m_ms", weekend()) >= 12',
                             explanation="Test rule description",
                             short_id=None,

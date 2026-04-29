@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langsmith import trace
 from pydantic import BaseModel, Field
 
+from weather_agent.application.intent_classifier import is_confirmation_no, is_confirmation_yes
 from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluationResult, CELEvaluator
 from weather_agent.domain.locations import LocationService
@@ -15,6 +16,8 @@ from weather_agent.domain.rules.models import RuleCreate, RuleUpdate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
 from weather_agent.graphs.state import ConversationState
+from weather_agent.llm.contracts.rules import RuleProposalExtraction
+from weather_agent.llm.prompts.rule_prompts import RULE_PROPOSAL_PROMPT
 from weather_agent.observability.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,64 +25,6 @@ logger = get_logger(__name__)
 _GENERIC_RULE_ERROR = (
     "Przepraszam, wystąpił błąd podczas przygotowywania reguły. Spróbuj ponownie za chwilę."
 )
-
-_RULE_PROPOSAL_SYSTEM_PROMPT = """\
-Jesteś asystentem botu pogodowego dla użytkowników mówiących po polsku.
-Twoim zadaniem jest przekształcenie naturalnego opisu reguły powiadomień w wyrażenie CEL.
-
-Dostępne funkcje CEL:
-{cel_functions}
-
-Dostępne metryki pogodowe:
-{cel_metrics}
-
-Zasady tworzenia wyrażeń CEL:
-1. Używaj TYLKO wymienionych funkcji i metryk.
-2. Metryki podawaj jako string (np. "temperature_2m_c").
-3. Funkcje agregujące przyjmują metrykę jako string oraz zakres czasowy.
-4. Funkcje czasu (now, today, tomorrow, weekend) zwracają zakresy czasowe.
-5. Nie używaj żadnych funkcji ani metryk spoza listy.
-
-Odpowiedź MUSI być w formacie JSON z polami:
-- "cel_expression": wyrażenie CEL
-- "explanation": opis po polsku, co wyrażenie oznacza
-
-Jeśli nie da się zamienić opisu na wyrażenie CEL, zwróć:
-- "cel_expression": null
-- "explanation": opis problemu po polsku
-"""
-
-_YES_WORDS = frozenset({"tak", "yes", "t", "y", "potwierdz", "potwierdzam", "ok"})
-_NO_WORDS = frozenset({"nie", "no", "n", "anuluj", "anuluję", "rezygnuj"})
-
-
-def _build_system_prompt() -> str:
-    allowlist = get_allowlist_for_prompt()
-    functions_json = json.dumps(allowlist["functions"], ensure_ascii=False, indent=2)
-    metrics_json = json.dumps(allowlist["metrics"], ensure_ascii=False, indent=2)
-    return _RULE_PROPOSAL_SYSTEM_PROMPT.format(
-        cel_functions=functions_json,
-        cel_metrics=metrics_json,
-    )
-
-
-def is_confirmation_yes(text: str) -> bool:
-    return text.strip().lower() in _YES_WORDS
-
-
-def is_confirmation_no(text: str) -> bool:
-    return text.strip().lower() in _NO_WORDS
-
-
-class RuleProposalExtraction(BaseModel):
-    cel_expression: str | None = Field(
-        description="Wyrażenie CEL lub null, jeśli nie da się stworzyć reguły."
-    )
-    explanation: str = Field(description="Wyjaśnienie reguły po polsku.")
-    short_id: str | None = Field(
-        description="ID reguły (np. R123) jeśli użytkownik odnosi się do konkretnej reguły."
-    )
-
 
 async def propose_cel_rule_node(
     state: ConversationState,
@@ -95,16 +40,19 @@ async def propose_cel_rule_node(
 
     chat_model = model_factory.create_chat_model()
     structured = chat_model.with_structured_output(RuleProposalExtraction)
-    system_prompt = _build_system_prompt()
+
+    allowlist = get_allowlist_for_prompt()
+    functions_json = json.dumps(allowlist["functions"], ensure_ascii=False, indent=2)
+    metrics_json = json.dumps(allowlist["metrics"], ensure_ascii=False, indent=2)
 
     try:
         async with trace("propose_cel_rule_llm", run_type="llm"):
-            parsed = await structured.ainvoke(
-                [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_message),
-                ]
-            )
+            chain = RULE_PROPOSAL_PROMPT | structured
+            parsed = await chain.ainvoke({
+                "cel_functions": functions_json,
+                "cel_metrics": metrics_json,
+                "user_message": user_message
+            })
     except Exception:
         logger.exception("llm_rule_proposal_failed")
         return {"error": _GENERIC_RULE_ERROR}

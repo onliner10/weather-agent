@@ -1,0 +1,21 @@
+{
+    "pythonVersion": "3.12",
+    "pythonPlatform": "Linux",
+    "venvPath": ".",
+    "venv": ".venv",
+    "include": ["src", "tests"],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".uv-bootstrap"
+    ],
+    "typeCheckingMode": "strict",
+    "reportUnknownMemberType": false,
+    "reportUnknownVariableType": false,
+    "reportUnknownParameterType": false,
+    "reportUnknownArgumentType": false,
+    "reportMissingTypeStubs": "warning"
+}

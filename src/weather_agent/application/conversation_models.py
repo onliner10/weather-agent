@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
+
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 from weather_agent.domain.weather import LocationRef
 
@@ -85,3 +87,31 @@ class TurnResult:
         if self.error:
             return self.error
         return "Przepraszam, nie udało się przetworzyć zapytania."
+
+
+class TurnRecord(TypedDict, total=False):
+    message_id: int | None
+    role: str
+    text: str | None
+    answer_summary: str | None
+    resolved_location: dict[str, Any] | None
+    resolved_time_range: dict[str, Any] | None
+    user_focus: str | None
+    timestamp: str | None
+
+
+def convert_turns_to_messages(turns: list[TurnRecord] | None) -> list[BaseMessage]:
+    if not turns:
+        return []
+    messages: list[BaseMessage] = []
+    for turn in turns:
+        role = turn.get("role")
+        if role == "user":
+            text = turn.get("text")
+            if text:
+                messages.append(HumanMessage(content=text))
+        elif role == "bot":
+            answer = turn.get("answer_summary")
+            if answer:
+                messages.append(AIMessage(content=answer))
+    return messages

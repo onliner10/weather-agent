@@ -10,8 +10,9 @@ from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.models import NotificationRule
 from weather_agent.domain.rules.service import NotificationRuleService
+from weather_agent.llm.contracts.rules import RuleProposalExtraction
+from weather_agent.llm.prompts.rule_prompts import RULE_PROPOSAL_PROMPT
 from weather_agent.graphs.nodes.rule_management import (
-    _build_system_prompt,
     cancel_rule_node,
     confirm_rule_node,
     is_confirmation_no,
@@ -51,8 +52,6 @@ def _mock_model_factory(
     explanation: str = "Test explanation",
     short_id: str | None = None,
 ) -> MagicMock:
-    from weather_agent.graphs.nodes.rule_management import RuleProposalExtraction
-
     res = RuleProposalExtraction(
         cel_expression=cel_expression,
         explanation=explanation,
@@ -74,14 +73,14 @@ _INVALID_CEL = "unknown_func(foo) > bar"
 
 class TestBuildSystemPrompt:
     def test_prompt_contains_cel_functions(self) -> None:
-        prompt = _build_system_prompt()
+        prompt = str(RULE_PROPOSAL_PROMPT)
         assert "time_range_helpers" in prompt
         assert "aggregation" in prompt
         assert "max" in prompt
         assert "min" in prompt
 
     def test_prompt_contains_metrics(self) -> None:
-        prompt = _build_system_prompt()
+        prompt = str(RULE_PROPOSAL_PROMPT)
         assert "temperature_2m_c" in prompt
         assert "wind_speed_10m_ms" in prompt
 

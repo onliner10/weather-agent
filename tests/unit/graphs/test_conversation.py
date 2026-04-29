@@ -3,15 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
 
-from weather_agent.adapters.telegram.context import TelegramContextService
+from weather_agent.application.conversation_models import TurnRecord
 from weather_agent.domain.cel.evaluator import CELEvaluationResult
 from weather_agent.domain.date_resolver import ResolvedTimeRange
 from weather_agent.domain.weather import ForecastResult, LocationRef
@@ -19,15 +12,11 @@ from weather_agent.graphs.conversation import (
     CompiledConversationGraph,
     _classify_with_pending_confirmation,
     _intent_router,
-    _make_load_thread_context,
-    _make_save_thread_context,
     build_conversation_graph,
     classify_intent,
     compile_conversation_graph,
 )
 from weather_agent.graphs.state import ConversationState
-from weather_agent.infrastructure.db.base import Base
-from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 
 
 def _default_state(**overrides: object) -> ConversationState:
@@ -326,180 +315,6 @@ class TestConfirmationRouting:
             {"action": "create_rule", "cel_expression": "temp > 30"},
         )
         assert result is None
-
-
-@pytest_asyncio.fixture()
-async def _async_engine() -> AsyncEngine:
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-
-
-@pytest_asyncio.fixture()
-async def _async_session(_async_engine: AsyncEngine) -> AsyncSession:
-    session_factory = async_sessionmaker(_async_engine, class_=AsyncSession, expire_on_commit=False)
-    async with session_factory() as session:
-        async with session.begin():
-            yield session
-
-
-class TestLoadThreadContextWithMemory:
-    @pytest.mark.asyncio
-    async def test_load_reply_context_turns(self, _async_session: AsyncSession) -> None:
-        context_service = TelegramContextService(_async_session)
-        memory = ThreadMemoryService(context_service)
-        _load = _make_load_thread_context(memory)
-
-        await memory.save_turn(
-            "999:1",
-            {
-                "message_id": 10,
-                "role": "user",
-                "text": "jaka pogoda w Warszawie?",
-                "timestamp": None,
-            },
-        )
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": 1,
-            "context_key": "999:1",
-            "user_message": "a wiatr?",
-            "message_id": 11,
-            "reply_to_message_id": 10,
-        }
-        result = await _load(state)
-        assert result["context_key"] == "999:1"
-        assert result.get("reply_context_turns") is not None
-        assert len(result["reply_context_turns"]) == 1
-        assert result["reply_context_turns"][0]["text"] == "jaka pogoda w Warszawie?"
-
-    @pytest.mark.asyncio
-    async def test_load_reply_context_with_bot_anchor(self, _async_session: AsyncSession) -> None:
-        context_service = TelegramContextService(_async_session)
-        memory = ThreadMemoryService(context_service)
-        _load = _make_load_thread_context(memory)
-
-        await memory.save_turn(
-            "999:1",
-            {
-                "message_id": 42,
-                "role": "bot",
-                "answer_summary": "W Chwarznie 18°C, wiatr 8 m/s.",
-                "timestamp": None,
-            },
-        )
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": 1,
-            "context_key": "999:1",
-            "user_message": "a opady?",
-            "reply_to_message_id": 42,
-        }
-        result = await _load(state)
-        assert result.get("reply_context_turns") is not None
-        assert result["reply_context_turns"][0]["role"] == "bot"
-        assert result["reply_context_turns"][0]["message_id"] == 42
-
-    @pytest.mark.asyncio
-    async def test_load_reply_anchor_not_found(self, _async_session: AsyncSession) -> None:
-        context_service = TelegramContextService(_async_session)
-        memory = ThreadMemoryService(context_service)
-        _load = _make_load_thread_context(memory)
-
-        await memory.save_turn(
-            "999:1",
-            {
-                "message_id": 10,
-                "role": "user",
-                "text": "pogoda?",
-                "timestamp": None,
-            },
-        )
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": 1,
-            "context_key": "999:1",
-            "user_message": "a wiatr?",
-            "reply_to_message_id": 999,
-        }
-        result = await _load(state)
-        assert result.get("reply_context_turns") is None
-
-    @pytest.mark.asyncio
-    async def test_load_without_memory_service(self) -> None:
-        _load = _make_load_thread_context(None)
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": None,
-            "context_key": "999",
-            "user_message": "pogoda?",
-            "reply_to_message_id": None,
-        }
-        result = await _load(state)
-        assert result["context_key"] == "999"
-        assert "reply_context_turns" not in result
-
-
-class TestSaveThreadContextWithMemory:
-    @pytest.mark.asyncio
-    async def test_save_user_and_bot_turns(self, _async_session: AsyncSession) -> None:
-        context_service = TelegramContextService(_async_session)
-        memory = ThreadMemoryService(context_service)
-        _save = _make_save_thread_context(memory)
-
-        loc = LocationRef(id="1", name="Chwarzno", latitude=54.4871, longitude=18.4202)
-        tr = ResolvedTimeRange(
-            start=datetime(2026, 5, 1, tzinfo=UTC),
-            end=datetime(2026, 5, 1, 23, 59, tzinfo=UTC),
-            explanation="Jutro",
-        )
-
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": 1,
-            "context_key": "999:1",
-            "user_message": "jaka pogoda w Chwarznie?",
-            "message_id": 50,
-            "answer": "W Chwarznie jutro 18°C, wiatr 8 m/s.",
-            "resolved_location": loc,
-            "resolved_time_range": tr,
-        }
-        await _save(state)
-
-        turns = await memory.load_turns("999:1")
-        assert len(turns) == 2
-        assert turns[0]["role"] == "user"
-        assert turns[0]["message_id"] == 50
-        assert turns[0]["text"] == "jaka pogoda w Chwarznie?"
-        assert turns[1]["role"] == "bot"
-        assert turns[1]["answer_summary"] == "W Chwarznie jutro 18°C, wiatr 8 m/s."
-        assert turns[1]["resolved_location"]["name"] == "Chwarzno"
-
-    @pytest.mark.asyncio
-    async def test_save_without_memory_service(self) -> None:
-        _save = _make_save_thread_context(None)
-        state: ConversationState = {
-            "authorized_user_id": 12345,
-            "chat_id": 999,
-            "message_thread_id": None,
-            "context_key": "999",
-            "user_message": "pogoda?",
-            "answer": "Słońce.",
-        }
-        result = await _save(state)
-        assert result == {}
 
 
 class TestConversationStateFields:

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
+from weather_agent.application.conversation_models import convert_turns_to_messages
 from weather_agent.domain.date_resolver import DateResolver, ResolvedTimeRange
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import (
@@ -25,7 +26,11 @@ from weather_agent.domain.weather import (
 )
 from weather_agent.graphs.state import ConversationState
 from weather_agent.infrastructure.geocoder import Geocoder
+from weather_agent.llm.contracts.location import LocationExtraction
 from weather_agent.llm.model_factory import ModelFactory
+from weather_agent.llm.prompts.location_prompts import LOCATION_EXTRACTION_PROMPT
+from weather_agent.llm.prompts.weather_prompts import WEATHER_PROMPT
+from weather_agent.llm.tools.weather_tools import WeatherToolbox
 from weather_agent.observability.logging import get_logger
 from weather_agent.observability.metrics import (
     LLM_REQUEST_DURATION_SECONDS,
@@ -125,50 +130,20 @@ def _format_observation_point(p: Any) -> dict[str, Any]:
     return d
 
 
-class _LocationExtraction(BaseModel):
-    location_name: str | None = Field(
-        default=None,
-        description="Place name in nominative case, or null if none",
-    )
-    focus: str | None = Field(
-        default=None,
-        description="What user asks about e.g. wiatr, temperatura. Null if general.",
-    )
-
-
 async def _extract_location_and_focus(
     message: str,
     model_factory: ModelFactory | None,
-) -> _LocationExtraction:
+) -> LocationExtraction:
     if model_factory is None:
-        return _LocationExtraction(location_name=None, focus=None)
+        return LocationExtraction(location_name=None, focus=None)
     start = time.perf_counter()
     try:
         chat = model_factory.create_chat_model()
-        structured = chat.with_structured_output(_LocationExtraction)
-        result = await structured.ainvoke(
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Wyciągnij z wiadomości użytkownika:\n"
-                        "1. location_name — nazwa miejscowości w mianowniku"
-                        ' (np. „w Gdańsku" → „Gdańsk",'
-                        ' „w Chwarznie" → „Chwarzno").'
-                        " Zwróć null jeśli nie ma nazwy miejsca.\n"
-                        "2. focus — o co użytkownik pyta szczegółowo"
-                        " (np. wiatr, porywy, temperatura, opady, ciśnienie)."
-                        " Zwróć null jeśli ogólne pytanie.\n\n"
-                        'UWAGA: „w weekend", „w majówkę",'
-                        ' „w poniedziałek" to CZAS, nie lokalizacja.'
-                        " Nie myl przyimków czasowych z miejscowymi."
-                    ),
-                },
-                {"role": "user", "content": message},
-            ],
-        )
+        structured = chat.with_structured_output(LocationExtraction)
+        chain = LOCATION_EXTRACTION_PROMPT | structured
+        result = await chain.ainvoke({"user_message": message})
         LLM_REQUESTS_TOTAL.labels(outcome="success").inc()
-        if isinstance(result, _LocationExtraction):
+        if isinstance(result, LocationExtraction):
             return result
     except Exception:
         LLM_REQUESTS_TOTAL.labels(outcome="failure").inc()
@@ -178,7 +153,7 @@ async def _extract_location_and_focus(
         )
     finally:
         LLM_REQUEST_DURATION_SECONDS.observe(time.perf_counter() - start)
-    return _LocationExtraction(location_name=None, focus=None)
+    return LocationExtraction(location_name=None, focus=None)
 
 
 def _build_tools(
@@ -620,33 +595,22 @@ async def weather_agent_node(
         )
 
         now_warsaw = datetime.now(_WARSAW)
-        system_parts: list[str] = [
-            "Jesteś polskim asystentem pogodowym. Odpowiadaj krótko po polsku.\n\n"
-            f"Dziś jest {now_warsaw.strftime('%Y-%m-%d')} (dzień tygodnia: "
-            f"{now_warsaw.strftime('%A')}), godzina {now_warsaw.strftime('%H:%M')} "
-            f"w strefie czasowej Europe/Warsaw.\n\n"
-            "Aby odpowiedzieć na pytanie, użyj dostępnych narzędzi "
-            "(get_forecast, get_observations, save_location).\n\n"
-            "Jeśli użytkownik prosi o zapamiętanie lub zapisanie lokalizacji "
-            "(np. 'zapisz dom w Gdańsku'), użyj narzędzia save_location.\n"
-            " Wybierz tylko potrzebne zmienne — np. jeśli pytanie jest o wiatr,"
-            " poproś tylko o wind_speed_10m_ms,"
-            " wind_gusts_10m_ms, wind_direction_10m_deg.\n\n"
-            "Daty w narzędziach podawaj jako yyyy-mm-dd na podstawie "
-            "bieżącej daty i strefy czasowej.\n",
-        ]
+        location_context = ""
         if resolved_loc and resolved_loc.name:
-            system_parts.append(f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n")
+            location_context = f"Użytkownik pyta o miejscowość: {resolved_loc.name}.\n"
+
+        focus_context = ""
         focus = state.get("user_focus")
         if focus:
-            system_parts.append(
-                f"Użytkownik pyta szczegółowo o: {focus}. Skoncentruj się na tym aspekcie.\n"
-            )
-        system_parts.append(
-            "Po otrzymaniu danych, napisz zwięzłą, naturalną odpowiedź po polsku."
-            " Podaj lokalizację i zakres czasu."
+            focus_context = f"Użytkownik pyta szczegółowo o: {focus}. Skoncentruj się na tym aspekcie.\n"
+
+        system_content = WEATHER_SYSTEM_INSTRUCTIONS.format(
+            date=now_warsaw.strftime("%Y-%m-%d"),
+            day_of_week=now_warsaw.strftime("%A"),
+            time=now_warsaw.strftime("%H:%M"),
+            location_context=location_context,
+            focus_context=focus_context,
         )
-        system_content = "".join(system_parts)
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_content},

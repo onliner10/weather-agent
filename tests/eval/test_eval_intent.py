@@ -154,7 +154,7 @@ LOCATION_RESOLVE_CASES = [c for c in EVAL_CASES if c.expected_location is not No
 async def test_location_resolution(case: EvalCase) -> None:
     from unittest.mock import MagicMock
 
-    from weather_agent.graphs.nodes.weather_qa import _LocationExtraction
+    from weather_agent.llm.contracts.location import LocationExtraction
 
     mock_loc = _loc(name=case.expected_location, lat=54.0, lon=18.0)
     fallback_locations = [
@@ -174,7 +174,7 @@ async def test_location_resolution(case: EvalCase) -> None:
 
     mf = MagicMock()
     chat = MagicMock()
-    extraction = _LocationExtraction(location_name=case.expected_location, focus=None)
+    extraction = LocationExtraction(location_name=case.expected_location, focus=None)
     structured = AsyncMock()
     structured.ainvoke = AsyncMock(return_value=extraction)
     chat.with_structured_output = MagicMock(return_value=structured)

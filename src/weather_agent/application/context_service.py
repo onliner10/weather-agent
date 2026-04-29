@@ -6,6 +6,7 @@ from typing import Any
 from weather_agent.application.conversation_models import (
     LoadedContext,
     PendingConfirmation,
+    TurnRecord,
 )
 from weather_agent.domain.date_resolver import ResolvedTimeRange
 from weather_agent.domain.weather import LocationRef
@@ -48,10 +49,11 @@ async def load_thread_context(
                 ctx_turns = [anchor]
                 if turns:
                     aid = anchor.get("message_id")
-                    anchor_idx = next(
-                        (i for i, t in enumerate(turns) if t.get("message_id") is not None and t.get("message_id") == aid),
-                        -1,
-                    )
+                    anchor_idx = -1
+                    for i, t in enumerate(turns):
+                        if t.get("message_id") is not None and t.get("message_id") == aid:
+                            anchor_idx = i
+                            break
                     if anchor_idx > 0:
                         prev = turns[anchor_idx - 1]
                         if prev.get("role") == "user":
@@ -73,7 +75,12 @@ async def load_thread_context(
 def _serialize_location(location: LocationRef | None) -> dict[str, Any] | None:
     if location is None:
         return None
-    return {"id": location.id, "name": location.name, "latitude": location.latitude, "longitude": location.longitude}
+    return {
+        "id": location.id,
+        "name": location.name,
+        "latitude": location.latitude,
+        "longitude": location.longitude,
+    }
 
 
 def _json_safe(obj: Any) -> Any:
@@ -98,18 +105,22 @@ async def save_thread_context(
 
     try:
         if pending_confirmation is not None:
-            await memory_service.store_pending_confirmation(context_key, pending_confirmation.to_dict())
+            await memory_service.store_pending_confirmation(
+                context_key, pending_confirmation.to_dict()
+            )
         else:
             await memory_service.clear_pending_confirmation(context_key)
-
-        from weather_agent.graphs.state import TurnRecord
 
         user_turn: TurnRecord = {
             "message_id": user_message_id,
             "role": "user",
             "text": user_message,
             "resolved_location": _serialize_location(resolved_location),
-            "resolved_time_range": _json_safe(resolved_time_range.model_dump()) if resolved_time_range is not None else None,
+            "resolved_time_range": (
+                _json_safe(resolved_time_range.model_dump())
+                if resolved_time_range is not None
+                else None
+            ),
             "user_focus": user_focus,
             "timestamp": None,
         }
@@ -123,7 +134,11 @@ async def save_thread_context(
                 "text": None,
                 "answer_summary": summary,
                 "resolved_location": _serialize_location(resolved_location),
-                "resolved_time_range": _json_safe(resolved_time_range.model_dump()) if resolved_time_range is not None else None,
+                "resolved_time_range": (
+                    _json_safe(resolved_time_range.model_dump())
+                    if resolved_time_range is not None
+                    else None
+                ),
                 "user_focus": user_focus,
                 "timestamp": None,
             }

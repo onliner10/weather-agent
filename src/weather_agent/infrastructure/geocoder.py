@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 
 from weather_agent.domain.polish_utils import normalize_polish
 from weather_agent.domain.weather import LocationRef
+from weather_agent.llm.contracts.geocoder import LocationGuess
 from weather_agent.llm.model_factory import ModelFactory
+from weather_agent.llm.prompts.geocoder_prompts import GEOCODING_TEMPLATE
 from weather_agent.observability.logging import get_logger
 from weather_agent.observability.metrics import (
     GEOCODE_DURATION_SECONDS,
@@ -15,14 +17,6 @@ from weather_agent.observability.metrics import (
 )
 
 logger = get_logger(__name__)
-
-
-class _LocationGuess(BaseModel):
-    display_name: str = Field(description="Canonical Polish name of the place")
-    search_query: str | None = Field(
-        default=None,
-        description="Search query for geocoding API (mianownik miasta or phrase)",
-    )
 
 
 class Geocoder:
@@ -70,26 +64,13 @@ class Geocoder:
         finally:
             GEOCODE_DURATION_SECONDS.observe(time.perf_counter() - start)
 
-    async def _ask_llm(self, name: str) -> _LocationGuess | None:
+    async def _ask_llm(self, name: str) -> LocationGuess | None:
         try:
             chat = self._model_factory.create_chat_model()  # type: ignore[union-attr]
-            structured = chat.with_structured_output(_LocationGuess)
-            response = await structured.ainvoke(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Jesteś ekspertem polskiej geografii. Użytkownik podał nazwę miejsca"
-                            ' (może być w odmianie, np. miejscownik „w Gdańsku", lub opisową'
-                            ' np. „Lotnisko Modlin").\n\n'
-                            "Podaj search_query — mianownik miasta lub frazę do geocoding API."
-                            " display_name to zawsze poprawna polska nazwa w mianowniku."
-                        ),
-                    },
-                    {"role": "user", "content": name},
-                ],
-            )
-            if isinstance(response, _LocationGuess):
+            structured = chat.with_structured_output(LocationGuess)
+            chain = GEOCODING_TEMPLATE | structured
+            response = await chain.ainvoke({"location_name": name})
+            if isinstance(response, LocationGuess):
                 logger.info(
                     "llm_location_guess",
                     query_name=name,
