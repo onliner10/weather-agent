@@ -90,6 +90,13 @@ class BotServices:
         user_id: int = 0,
         memory_service: Any = None,
     ) -> Any:
+        import warnings
+
+        warnings.warn(
+            "compile_graph is deprecated — use direct agent invocation via handler",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         from weather_agent.application.conversation_service import (
             ConversationDeps,
             compile_conversation_service,

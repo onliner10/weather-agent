@@ -32,6 +32,7 @@ _LINE_COUNT_EXCEPTIONS: dict[str, str] = {
     "adapters/imgw/warnings_provider.py": "IMGW warning parsing and transformation",
     "adapters/open_meteo/forecast_provider.py": "Open-Meteo API forecast fetching",
     "llm/tools/weather_tools.py": "Weather toolbox with forecast/observations/location",
+    "llm/tools/rules_tools.py": "Rules toolbox with notification rule CRUD and CEL validation",
     "graphs/nodes/weather_qa.py": "Deprecated legacy node — slated for removal",
     "graphs/nodes/rule_management.py": "Deprecated legacy node — slated for removal",
 }

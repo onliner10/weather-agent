@@ -134,6 +134,19 @@ class SaveLocationToolResult(BaseModel):
     error: str | None = None
 
 
+class ListLocationsArgs(BaseModel):
+    include_disabled: bool = Field(
+        default=False,
+        description="Czy uwzględnić wyłączone lokalizacje (domyślnie nie)",
+    )
+
+
+class ListLocationsToolResult(BaseModel):
+    locations: list[dict[str, Any]] | None = None
+    count: int = 0
+    error: str | None = None
+
+
 class WeatherToolbox:
     def __init__(
         self,
@@ -293,7 +306,7 @@ class WeatherToolbox:
 
         resolved = await self.geocoder.geocode(location_name)
         if resolved is None:
-            return SaveLocationToolResult(error=f"Nie udało się rozpoznać lokalizacji „{location_name}”.")
+            return SaveLocationToolResult(error=f"Nie udało się rozpoznać lokalizacji '{location_name}'.")
 
         try:
             aliases = [alias] if alias else []
@@ -310,6 +323,40 @@ class WeatherToolbox:
         except Exception as exc:
             logger.exception("save_location_failed", user_id=self.user_id, location_name=location_name)
             return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
+
+    @traceable(run_type="tool")
+    async def list_locations(self, include_disabled: bool = False) -> ListLocationsToolResult:
+        TOOL_CALLS_TOTAL.labels(tool="list_locations").inc()
+        start = _time.perf_counter()
+        try:
+            return await self._execute_list_locations(include_disabled)
+        finally:
+            TOOL_CALL_DURATION_SECONDS.labels(tool="list_locations").observe(_time.perf_counter() - start)
+
+    async def _execute_list_locations(self, include_disabled: bool) -> ListLocationsToolResult:
+        if self.location_service is None:
+            return ListLocationsToolResult(error="Usługa lokalizacji jest niedostępna.")
+
+        try:
+            locations = await self.location_service.list_locations(self.user_id, include_disabled=include_disabled)
+            locations_data: list[dict[str, Any]] = []
+            for loc in locations:
+                entry: dict[str, Any] = {
+                    "id": loc.id,
+                    "name": loc.name,
+                    "latitude": loc.latitude,
+                    "longitude": loc.longitude,
+                    "enabled": loc.enabled,
+                }
+                if loc.aliases:
+                    entry["aliases"] = loc.aliases
+                if loc.description:
+                    entry["description"] = loc.description
+                locations_data.append(entry)
+            return ListLocationsToolResult(locations=locations_data, count=len(locations_data))
+        except Exception as exc:
+            logger.exception("list_locations_failed", user_id=self.user_id)
+            return ListLocationsToolResult(error=f"Błąd podczas pobierania lokalizacji: {exc}")
 
     def to_langchain_tools(self) -> list:
         return [
@@ -340,5 +387,14 @@ class WeatherToolbox:
                     " Jeśli użytkownik prosi o 'zapamiętanie lokalizacji domowej', ustaw alias na 'dom'."
                 ),
                 args_schema=SaveLocationArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.list_locations,
+                name="list_locations",
+                description=(
+                    "Wyświetl zapisane lokalizacje użytkownika. "
+                    "Domyślnie pokazuje tylko aktywne lokalizacje."
+                ),
+                args_schema=ListLocationsArgs,
             ),
         ]

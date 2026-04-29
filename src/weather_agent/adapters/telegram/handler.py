@@ -3,12 +3,17 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from weather_agent.agent_factory import build_context_suffix, create_weather_agent
 from weather_agent.domain.locations import LocationService
-from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
+from weather_agent.domain.rules.service import NotificationRuleService
+from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 from weather_agent.infrastructure.services import BotServices
+from weather_agent.llm.tools.rules_tools import RulesToolbox
+from weather_agent.llm.tools.weather_tools import WeatherToolbox
 from weather_agent.observability.logging import (
     bound_telegram_context,
     generate_correlation_id,
@@ -29,9 +34,7 @@ logger = get_logger(__name__)
 
 async def make_message_handler(services: BotServices) -> Any:
     services.init_services()
-    logger.info("Application services ready, compiling base graph...")
-    services.compile_graph()
-    logger.info("Base graph compiled")
+    logger.info("Application services ready")
 
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.effective_user is None:
@@ -66,12 +69,12 @@ async def make_message_handler(services: BotServices) -> Any:
             context_key=context_key,
         ):
             from weather_agent.adapters.telegram.context import TelegramContextService
-            from weather_agent.domain.rules.service import NotificationRuleService
-            from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
+            from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 
             async with services.session_factory() as session:
                 auth_repo = AuthRepository(session)
                 authorized_user_id = await auth_repo.get_or_create_authorized_user_id(user_id)
+
                 location_service = LocationService(session)
                 assert services.cel_evaluator is not None
                 rule_service = NotificationRuleService(
@@ -81,24 +84,68 @@ async def make_message_handler(services: BotServices) -> Any:
                 context_service = TelegramContextService(session)
                 memory_service = ThreadMemoryService(context_service)
 
-                graph = services.compile_graph(
+                assert services.forecast_provider is not None
+                assert services.geocoder is not None
+                assert services.date_resolver is not None
+                assert services.model_factory is not None
+
+                weather_toolbox = WeatherToolbox(
+                    forecast_provider=services.forecast_provider,
+                    observation_provider=services.observation_provider,
+                    geocoder=services.geocoder,
+                    date_resolver=services.date_resolver,
                     location_service=location_service,
-                    rule_service=rule_service,
                     user_id=authorized_user_id,
-                    memory_service=memory_service,
                 )
 
-                state: dict[str, object] = {
-                    "authorized_user_id": user_id,
-                    "chat_id": chat_id,
-                    "message_thread_id": thread_id,
-                    "context_key": context_key,
-                    "user_message": text,
-                    "message_id": message_id,
-                    "reply_to_message_id": reply_to_message_id,
-                }
+                rules_toolbox = RulesToolbox(
+                    rule_service=rule_service,
+                    location_service=location_service,
+                    cel_evaluator=services.cel_evaluator,
+                    geocoder=services.geocoder,
+                    memory_service=memory_service,
+                    context_key=context_key,
+                    user_id=authorized_user_id,
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                )
 
-                graph_config = build_graph_config(state)
+                all_tools = (
+                    weather_toolbox.to_langchain_tools()
+                    + rules_toolbox.to_langchain_tools()
+                )
+
+                pending_confirmation = await memory_service.get_pending_confirmation(context_key)
+                context_suffix = build_context_suffix(pending_confirmation)
+
+                model = services.model_factory.create_chat_model()
+
+                agent = create_weather_agent(
+                    model=model,
+                    tools=all_tools,
+                    system_prompt_suffix=context_suffix,
+                )
+
+                messages: list[BaseMessage] = []
+                reply_turns_data = None
+                if reply_to_message_id is not None:
+                    REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()
+                    reply_turns_data = await memory_service.load_turns(context_key)
+
+                if reply_turns_data:
+                    for turn in reply_turns_data:
+                        role = turn.get("role")
+                        content = turn.get("text") or turn.get("answer_summary")
+                        if content and role == "user":
+                            messages.append(HumanMessage(content=content))
+                        elif content and role == "bot":
+                            messages.append(AIMessage(content=content))
+
+                messages.append(HumanMessage(content=text))
+
+                graph_config = build_graph_config(
+                    {"authorized_user_id": user_id, "chat_id": chat_id, "context_key": context_key},
+                )
                 if services.model_factory is not None:
                     graph_config["metadata"]["model_provider"] = services.model_factory.provider
                     graph_config["metadata"]["model_name"] = services.model_factory.model_name
@@ -106,25 +153,39 @@ async def make_message_handler(services: BotServices) -> Any:
                 CONVERSATION_TURNS_TOTAL.inc()
                 turn_start = time.perf_counter()
                 try:
-                    result_state = await graph.ainvoke(state, config=graph_config)
-                    answer = result_state.get(
-                        "answer",
-                        "Przepraszam, nie udało się przetworzyć zapytania.",
+                    result = await agent.ainvoke(
+                        {"messages": messages},
+                        config={
+                            "configurable": {"thread_id": context_key},
+                            **graph_config,
+                        },
                     )
+                    final = result["messages"][-1]
+                    answer = final.content if hasattr(final, "content") else str(final)
+                    if not answer:
+                        answer = "Przepraszam, nie udało się przetworzyć zapytania."
                 except Exception as exc:
                     CONVERSATION_FAILURES_TOTAL.inc()
                     logger.exception(
-                        "conversation_graph_failed",
+                        "agent_invocation_failed",
                         error_class=type(exc).__name__,
                         outcome="failure",
                     )
                     answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
                 finally:
                     CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
-                await session.commit()
 
-            if reply_to_message_id is not None:
-                REPLY_CONTEXT_HITS_TOTAL.labels(source="reply_to").inc()
+                from weather_agent.application.conversation_models import PendingConfirmation as _PC
+
+                new_pending = await memory_service.get_pending_confirmation(context_key)
+                pending_for_save = None
+                if new_pending and isinstance(new_pending, dict):
+                    pending_for_save = _PC.from_dict(new_pending)
+
+                await _save_turn(
+                    memory_service, context_key, text, answer, message_id, pending_for_save,
+                )
+                await session.commit()
 
             reply_start = time.perf_counter()
             try:
@@ -148,14 +209,61 @@ async def make_message_handler(services: BotServices) -> Any:
                         context_service2 = TelegramContextService(session)
                         memory_service2 = ThreadMemoryService(context_service2)
                         await memory_service2.update_last_bot_turn_message_id(
-                            context_key, bot_message_id
+                            context_key, bot_message_id,
                         )
                         await session.commit()
                 except Exception:
-                    logger.warning(
-                        "bot_message_id_persist_failed",
-                        exc_info=True,
-                    )
+                    logger.warning("bot_message_id_persist_failed", exc_info=True)
 
     logger.info("message_handler_ready")
     return message_handler
+
+
+async def _save_turn(
+    memory_service: ThreadMemoryService,
+    context_key: str,
+    user_message: str,
+    answer: str,
+    message_id: int | None,
+    pending_confirmation: Any | None,
+) -> None:
+    from datetime import UTC, datetime
+
+    try:
+        user_turn = {
+            "message_id": message_id,
+            "role": "user",
+            "text": user_message,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        await memory_service.save_turn(context_key, user_turn)
+
+        if answer:
+            summary = answer[:200] if len(answer) > 200 else answer
+            bot_turn = {
+                "role": "bot",
+                "answer_summary": summary,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+            await memory_service.save_turn(context_key, bot_turn)
+
+        if pending_confirmation is not None:
+            await memory_service.store_pending_confirmation(
+                context_key, pending_confirmation.to_dict(),
+            )
+        else:
+            stored = await memory_service.get_pending_confirmation(context_key)
+            if stored is not None:
+                propag = _PC_from_dict_if_needed(stored)
+                if propag and propag.cel_expression == "" and propag.action == "create_rule":
+                    await memory_service.clear_pending_confirmation(context_key)
+    except Exception:
+        logger.warning("save_turn_failed", context_key=context_key, exc_info=True)
+
+
+def _PC_from_dict_if_needed(data: dict[str, Any]) -> Any:
+    from weather_agent.application.conversation_models import PendingConfirmation
+    try:
+        return PendingConfirmation.from_dict(data)
+    except Exception:
+        return None
