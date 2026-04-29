@@ -18,4 +18,15 @@ build/
 
 # Local configuration
 .env
+.env.*
+!.env.example
+opencode.json
 .idea/
+
+# Local secret-bearing files
+*.pem
+*.key
+*.p12
+*.pfx
+*.kubeconfig
+*.ovpn

@@ -19,7 +19,8 @@ Telegram weather AI agent foundations for a Polish-language MVP built around det
 2. Set required values in `.env`:
 
    - `WEATHER_AGENT_TELEGRAM__BOT_TOKEN` — your Telegram bot token from [@BotFather](https://t.me/BotFather)
-   - `WEATHER_AGENT_DATABASE_URL` — leave the default for Docker Compose (it is overridden in `docker-compose.yml`)
+   - `POSTGRES_PASSWORD` — set a local database password before starting Compose
+   - `WEATHER_AGENT_DATABASE_URL` — leave the template host value for local development; Docker Compose overrides it from `POSTGRES_*`
 
 3. Start the stack:
 
@@ -47,6 +48,7 @@ Telegram weather AI agent foundations for a Polish-language MVP built around det
 - Postgres data is stored in a named Docker volume (`pgdata`). A `pgbackups` volume is mounted at `/backups` for backup scripts.
 - Structured JSON logs are emitted via the `json-file` driver with 10 MB rotation and 3-file retention per service. Use `docker compose logs -f <service>` to follow.
 - No secrets are baked into images — all configuration comes from the `.env` file.
+- `.dockerignore` excludes `.env`, local caches, generated Beads runtime data, and common key/certificate formats from Docker build context.
 - Healthchecks are wired for bot and worker (Python import check) and Postgres (`pg_isready`).
 
 ### Telegram setup
@@ -68,6 +70,14 @@ Telegram weather AI agent foundations for a Polish-language MVP built around det
    - `uv run pytest`
    - `uv run ruff check .`
    - `uv run mypy`
+
+6. Install local git hooks that block likely secrets before commit and push:
+
+   ```bash
+   ./scripts/security/install-git-hooks.sh
+   ```
+
+   The hooks run `scripts/security/scan-secrets.sh`. If `gitleaks` is installed locally, the same hooks also run `gitleaks protect --staged` on commit and `gitleaks detect` on push.
 
 ## Repository layout
 
@@ -93,6 +103,9 @@ See `.env.example` for the full list. Key variables:
 |---|---|---|---|
 | `WEATHER_AGENT_TELEGRAM__BOT_TOKEN` | Yes | — | Telegram bot token |
 | `WEATHER_AGENT_TELEGRAM__ALLOWED_USER_IDS` | Yes | — | Comma-separated authorized Telegram user IDs |
+| `POSTGRES_DB` | Yes for Compose | `weather_agent` | Compose Postgres database name |
+| `POSTGRES_USER` | Yes for Compose | `weather_agent` | Compose Postgres user |
+| `POSTGRES_PASSWORD` | Yes for Compose | — | Compose Postgres password; keep only in local `.env` |
 | `WEATHER_AGENT_DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `WEATHER_AGENT_MODEL__PROVIDER` | No | `openai` | LLM provider: openai, anthropic, deepseek, glm |
 | `WEATHER_AGENT_MODEL__MODEL_NAME` | No | `gpt-5-mini` | Model name for selected provider |

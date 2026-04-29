@@ -12,7 +12,7 @@ services:
     env_file:
       - .env
     environment:
-      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
+      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres-timescaledb:5432/${POSTGRES_DB:?Set POSTGRES_DB}
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import httpx; httpx.get('http://localhost:8080/health', timeout=5).raise_for_status()\""]
@@ -37,7 +37,7 @@ services:
     env_file:
       - .env
     environment:
-      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://weather_agent:weather_agent@postgres-timescaledb:5432/weather_agent
+      WEATHER_AGENT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres-timescaledb:5432/${POSTGRES_DB:?Set POSTGRES_DB}
     networks:
       - internal
     restart: unless-stopped
@@ -59,9 +59,9 @@ services:
       - pgdata:/var/lib/postgresql/data
       - pgbackups:/backups
     environment:
-      POSTGRES_DB: weather_agent
-      POSTGRES_USER: weather_agent
-      POSTGRES_PASSWORD: weather_agent
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     restart: unless-stopped
@@ -112,7 +112,7 @@ services:
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:latest
     environment:
-      DATA_SOURCE_NAME: ${POSTGRES_EXPORTER_DSN}
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:?Set POSTGRES_USER}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres-timescaledb:5432/${POSTGRES_DB:?Set POSTGRES_DB}?sslmode=disable
     depends_on:
       postgres-timescaledb:
         condition: service_healthy

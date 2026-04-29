@@ -82,7 +82,10 @@ def test_postgres_exporter_dsn_env() -> None:
     data = _load_compose()
     env = data["services"]["postgres-exporter"].get("environment", {})
     assert "DATA_SOURCE_NAME" in env
-    assert "${POSTGRES_EXPORTER_DSN}" in env["DATA_SOURCE_NAME"]
+    dsn = env["DATA_SOURCE_NAME"]
+    assert "postgres-timescaledb" in dsn
+    assert "${POSTGRES_USER" in dsn
+    assert "${POSTGRES_PASSWORD" in dsn
 
 
 def test_postgres_exporter_depends_on_postgres() -> None:
@@ -174,9 +177,9 @@ def test_worker_has_database_url_override() -> None:
 def test_postgres_env_matches_dotenv_example() -> None:
     data = _load_compose()
     pg_env = data["services"]["postgres-timescaledb"]["environment"]
-    assert pg_env["POSTGRES_DB"] == "weather_agent"
-    assert pg_env["POSTGRES_USER"] == "weather_agent"
-    assert pg_env["POSTGRES_PASSWORD"] == "weather_agent"
+    assert pg_env["POSTGRES_DB"] == "${POSTGRES_DB:?Set POSTGRES_DB}"
+    assert pg_env["POSTGRES_USER"] == "${POSTGRES_USER:?Set POSTGRES_USER}"
+    assert pg_env["POSTGRES_PASSWORD"] == "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
 
 
 def test_no_redis_service() -> None:
@@ -243,8 +246,8 @@ def test_no_secrets_in_compose_environment() -> None:
             )
     for key, value in pg_env.items():
         if key in sensitive_keys:
-            assert value == "weather_agent", (
-                f"Postgres {key} uses non-default value — check .env instead"
+            assert value.startswith("${POSTGRES_PASSWORD"), (
+                f"Postgres {key} must come from .env interpolation"
             )
 
 
