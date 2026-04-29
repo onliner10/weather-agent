@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Literal, cast
 from zoneinfo import ZoneInfo
 
-from croniter import croniter
+from croniter import croniter  # type: ignore[import-untyped]
 
 _WARSAW = ZoneInfo("Europe/Warsaw")
 
@@ -77,6 +77,7 @@ def last_cron_slot(schedule: str, now: datetime | None = None) -> datetime | Non
         now = datetime.now(_WARSAW)
     elif now.tzinfo is None:
         now = now.replace(tzinfo=_WARSAW)
-    cron = croniter(expr, now - _WARSAW.utcoffset(now))
-    prev = cron.get_prev(datetime)
+    offset = _WARSAW.utcoffset(now) or timedelta()
+    cron = croniter(expr, now - offset)
+    prev = cast("datetime", cron.get_prev(datetime))
     return prev
