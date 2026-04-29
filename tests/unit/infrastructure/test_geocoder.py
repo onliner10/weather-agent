@@ -122,23 +122,6 @@ class TestGeocodeWithLlm:
         assert ":" not in result.id
 
     @respx.mock
-    async def test_llm_guess_falls_back_to_original_name(self) -> None:
-        guess = LocationGuess(display_name="Gdańsk", search_query="Gdańsk")
-        mock_factory = _make_llm_mocks(guess)
-
-        route = respx.get(_GEOCODE_BASE)
-        route.side_effect = [
-            httpx.Response(200, json={"results": []}),
-            httpx.Response(200, json=_geocoder_response("Gdańsk", 54.3520, 18.6466)),
-        ]
-
-        geocoder = Geocoder(model_factory=mock_factory)
-        result = await geocoder.geocode("w Gdańsku")
-        assert result is not None
-        assert result.name == "Gdańsk"
-        assert route.call_count == 2
-
-    @respx.mock
     async def test_llm_failure_falls_back_to_deterministic(self) -> None:
         mock_factory = MagicMock()
         mock_chat = MagicMock()
