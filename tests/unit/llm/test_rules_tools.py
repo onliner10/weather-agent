@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from weather_agent.domain.cel.evaluator import CELEvaluationResult
+from weather_agent.domain.locations import Location, LocationCreate
 from weather_agent.domain.rules.models import NotificationRule, RuleCreate
+from weather_agent.domain.weather import LocationRef
 from weather_agent.llm.tools.rules_tools import (
     RulesToolbox,
     ScheduleRuleToolResult,
@@ -28,6 +30,7 @@ def mock_location_service() -> MagicMock:
     svc = MagicMock()
     svc.get_default_location = AsyncMock(return_value=None)
     svc.resolve_location = AsyncMock(return_value=None)
+    svc.create_location = AsyncMock()
     return svc
 
 
@@ -182,6 +185,126 @@ class TestScheduleNotificationStoresPending:
         stored = call_args[1]
         assert stored["schedule"] == "cron:0 8 * * *"
         assert stored["cel_expression"] == "temperature_2m_c < 0"
+
+
+class TestScheduleNotificationAutoSaveLocation:
+    @pytest.mark.asyncio()
+    async def test_schedule_autosaves_unsaved_city(
+        self,
+        toolbox: RulesToolbox,
+        mock_location_service: MagicMock,
+        mock_geocoder: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        now = datetime.now(UTC)
+        expected_id = 99
+        mock_geocoder.geocode.return_value = LocationRef(
+            id="300",
+            name="Gdynia",
+            latitude=54.5189,
+            longitude=18.5305,
+        )
+        mock_location_service.create_location = AsyncMock(return_value=Location(
+            id=expected_id,
+            name="Gdynia",
+            aliases=[],
+            latitude=54.5189,
+            longitude=18.5305,
+            description=None,
+            enabled=True,
+            created_at=now,
+            updated_at=now,
+        ))
+
+        result = await toolbox.schedule_notification(
+            schedule_type="once",
+            schedule_expression="2026-05-01T09:00:00",
+            explanation="Aktualna pogoda dla Gdyni",
+            location_name="Gdynia",
+        )
+
+        assert result.pending is True
+        assert result.error is None
+
+        mock_location_service.create_location.assert_awaited_once_with(
+            100,
+            LocationCreate(
+                name="Gdynia",
+                aliases=[],
+                latitude=54.5189,
+                longitude=18.5305,
+            ),
+        )
+
+        mock_memory_service.store_pending_confirmation.assert_awaited_once()
+        call_args = mock_memory_service.store_pending_confirmation.call_args[0]
+        stored = call_args[1]
+        assert stored["location_id"] == expected_id
+
+    @pytest.mark.asyncio()
+    async def test_propose_autosaves_unsaved_city(
+        self,
+        toolbox: RulesToolbox,
+        mock_location_service: MagicMock,
+        mock_geocoder: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        now = datetime.now(UTC)
+        expected_id = 77
+        mock_geocoder.geocode.return_value = LocationRef(
+            id="400",
+            name="Sopot",
+            latitude=54.4418,
+            longitude=18.5600,
+        )
+        mock_location_service.create_location = AsyncMock(return_value=Location(
+            id=expected_id,
+            name="Sopot",
+            aliases=[],
+            latitude=54.4418,
+            longitude=18.5600,
+            description=None,
+            enabled=True,
+            created_at=now,
+            updated_at=now,
+        ))
+
+        result = await toolbox.propose_notification_rule(
+            cel_expression="True",
+            explanation="Powiadomienie o pogodzie w Sopocie",
+            location_name="Sopot",
+        )
+
+        assert result.pending is True
+        assert result.error is None
+
+        mock_location_service.create_location.assert_awaited_once()
+
+        mock_memory_service.store_pending_confirmation.assert_awaited_once()
+        call_args = mock_memory_service.store_pending_confirmation.call_args[0]
+        stored = call_args[1]
+        assert stored["location_id"] == expected_id
+
+    @pytest.mark.asyncio()
+    async def test_unresolvable_city_still_returns_error(
+        self,
+        toolbox: RulesToolbox,
+        mock_geocoder: MagicMock,
+        mock_location_service: MagicMock,
+    ) -> None:
+        mock_geocoder.geocode.return_value = None
+        mock_location_service.resolve_location.return_value = None
+
+        result = await toolbox.schedule_notification(
+            schedule_type="once",
+            schedule_expression="2026-05-01T09:00:00",
+            explanation="Test",
+            location_name="NieistniejaceMiasto",
+        )
+
+        assert result.pending is False
+        assert result.error is not None
+        assert "Nie znaleziono lokalizacji" in result.error
 
 
 class TestConfirmScheduleNotification:

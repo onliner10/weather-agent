@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from weather_agent.application.conversation_models import PendingConfirmation
 from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.cel.evaluator import CELEvaluator
-from weather_agent.domain.locations import LocationService
+from weather_agent.domain.locations import LocationCreate, LocationService
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.domain.rules.service import NotificationRuleService
@@ -175,7 +175,24 @@ class RulesToolbox:
 
         geo = await self.geocoder.geocode(location_name)
         if geo is not None:
-            return None
+            try:
+                created = await self.location_service.create_location(
+                    self.user_id,
+                    LocationCreate(
+                        name=geo.name,
+                        aliases=(
+                            [location_name]
+                            if location_name.lower() != geo.name.lower()
+                            else []
+                        ),
+                        latitude=geo.latitude,
+                        longitude=geo.longitude,
+                    ),
+                )
+                return created.id
+            except Exception:
+                logger.exception("auto_save_location_failed", location_name=location_name)
+                return None
 
         return None
 
