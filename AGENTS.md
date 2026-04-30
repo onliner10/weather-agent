@@ -1,8 +1,6 @@
 # Weather Agent Repository Instructions
 
-This file is for OpenCode and other coding agents working in this repository. It is not used as the runtime system prompt for the Telegram weather bot.
-
-Use `/tmp/deepagents` as a reference for development style: explicit workflow, small focused changes, typed Python, deterministic tests, stable public interfaces, and concise explanations of why a change exists. Adapt the style to this repository rather than copying Deep Agents project-specific rules.
+Development style for this repository: use an explicit workflow, make small focused changes, write typed Python, prefer deterministic tests, preserve stable public interfaces, and explain concisely why a change exists. Adapt these practices to the local codebase instead of importing rules from other projects.
 
 ## Runtime Prompt
 
@@ -19,6 +17,14 @@ Do not put bot persona, tool-use policy, or end-user conversational instructions
 - Add or update tests for behavior changes.
 - Run relevant quality checks before handing work back.
 - Do not commit or push changes unless the user explicitly asks for it. In particular, never run `git push` as an automatic session-close step.
+
+## Current Library Documentation
+
+- Use the Context7 MCP before relying on remembered API details for Python libraries, frameworks, SDKs, CLIs, or cloud services. This applies to implementation, debugging, setup, migration, dependency configuration, and examples involving third-party packages such as LangChain, Pydantic, SQLAlchemy, FastAPI, Celery, pytest, Ruff, Mypy, or Telegram libraries.
+- Start with Context7 library resolution for the exact package name, choose the best matching documented library by name, relevance, source reputation, available snippets, and version when the task names one, then query the docs with the concrete question or API surface being used.
+- Use Context7 results to confirm current signatures, imports, configuration keys, deprecations, async behavior, typing expectations, and recommended patterns before editing code. Prefer the documented API over memory or old examples.
+- If Context7 cannot identify the library or the retrieved docs do not answer the question, try one alternate package name or a more specific query. If still unresolved, state the uncertainty and fall back to local code, installed package metadata, or official docs rather than guessing.
+- Do not use Context7 for this repository's own code, pure Python language features, business logic, architecture decisions, or deterministic domain rules unless a third-party library API is directly involved.
 
 ## Project Boundaries
 
