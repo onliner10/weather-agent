@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -85,6 +86,7 @@ async def make_message_handler(container: AppContainer) -> Any:
                 assert container.forecast_provider is not None
                 assert container.geocoder is not None
                 assert container.model_factory is not None
+                tool_session_lock = asyncio.Lock()
 
                 weather_toolbox = WeatherToolbox(
                     forecast_provider=container.forecast_provider,
@@ -92,6 +94,7 @@ async def make_message_handler(container: AppContainer) -> Any:
                     geocoder=container.geocoder,
                     location_service=location_service,
                     user_id=authorized_user_id,
+                    session_lock=tool_session_lock,
                 )
 
                 rules_toolbox = RulesToolbox(
@@ -104,6 +107,7 @@ async def make_message_handler(container: AppContainer) -> Any:
                     user_id=authorized_user_id,
                     chat_id=chat_id,
                     message_thread_id=thread_id,
+                    session_lock=tool_session_lock,
                 )
 
                 all_tools = (
@@ -175,12 +179,10 @@ async def make_message_handler(container: AppContainer) -> Any:
                 if forecast_context:
                     await memory_service.store_last_forecast(context_key, forecast_context)
 
-                from weather_agent.application.conversation_models import PendingConfirmation as _PC
-
                 new_pending = await memory_service.get_pending_confirmation(context_key)
                 pending_for_save = None
                 if new_pending and isinstance(new_pending, dict):
-                    pending_for_save = _PC.from_dict(new_pending)
+                    pending_for_save = _PC_from_dict_if_needed(new_pending)
 
                 await _save_turn(
                     memory_service,

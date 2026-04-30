@@ -186,13 +186,14 @@ class WeatherToolbox:
         geocoder: Geocoder,
         location_service: LocationService | None,
         user_id: int,
+        session_lock: asyncio.Lock | None = None,
     ) -> None:
         self.forecast_provider = forecast_provider
         self.observation_provider = observation_provider
         self.geocoder = geocoder
         self.location_service = location_service
         self.user_id = user_id
-        self._lock = asyncio.Lock()
+        self._lock = session_lock or asyncio.Lock()
 
     async def _resolve_location(self, name: str) -> LocationRef | None:
         async with self._lock:

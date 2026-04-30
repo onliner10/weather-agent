@@ -146,6 +146,7 @@ class RulesToolbox:
         user_id: int,
         chat_id: int,
         message_thread_id: int | None,
+        session_lock: asyncio.Lock | None = None,
     ) -> None:
         self.rule_service = rule_service
         self.location_service = location_service
@@ -156,7 +157,7 @@ class RulesToolbox:
         self.user_id = user_id
         self.chat_id = chat_id
         self.message_thread_id = message_thread_id
-        self._lock = asyncio.Lock()
+        self._lock = session_lock or asyncio.Lock()
 
     async def _resolve_location_id(self, location_name: str) -> int | None:
         if not location_name.strip():
@@ -469,9 +470,7 @@ class RulesToolbox:
             pending = PendingConfirmation.from_dict(pending_dict)
         except Exception:
             await self.memory_service.clear_pending_confirmation(self.context_key)
-            return CancelActionToolResult(
-                answer="Nieprawidłowa oczekująca akcja została usunięta."
-            )
+            return CancelActionToolResult(answer="Nieprawidłowa oczekująca akcja została usunięta.")
 
         action = pending.action
 

@@ -122,6 +122,7 @@ class RuleEvaluationWorker:
                         and rule.schedule.startswith("once:")
                     ):
                         await self._rule_service.disable_rule(rule.id)
+                await self._session.commit()
 
             return results
 
@@ -411,6 +412,7 @@ class RuleEvaluationWorker:
                         run_type="tool",
                     ):
                         await self.run_once()
+                    await self._session.commit()
                     WORKER_CYCLE_DURATION_SECONDS.observe(time.perf_counter() - cycle_start)
                     LAST_SUCCESSFUL_WORKER_CYCLE_TIMESTAMP_SECONDS.set(time.time())
                 except Exception as exc:

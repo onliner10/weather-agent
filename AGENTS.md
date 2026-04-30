@@ -12,7 +12,7 @@ Use these instructions as operational rules for this repository. Keep changes sm
 - Run relevant checks before handing work back.
 - Do not commit or push unless the user explicitly asks. Never run `git push` as an automatic session-close step.
 - Keep user-facing weather and notification flows in Polish.
-- Keep bot runtime instructions in `src/weather_agent/llm/prompts/weather_agent.md`, not in this file.
+- Keep bot runtime instructions in `src/weather_agent/llm/prompts/weather_agent.md`, not in this file. `AGENTS.md` is an OpenCode/system prompt for coding agents only; never load it from application runtime code or include it in LLM prompts sent by the bot.
 
 ## Default Workflow
 
@@ -28,9 +28,22 @@ Use these instructions as operational rules for this repository. Keep changes sm
 ## Project Boundaries
 
 - Keep repository instructions, development workflow, and coding conventions in `AGENTS.md`.
+- Do not treat `AGENTS.md` as product data, runtime configuration, model context, or application prompt text. If runtime prompt content is needed, use files under `src/weather_agent/llm/prompts/` or explicit configuration.
 - Keep deterministic business logic independent from Telegram, databases, HTTP APIs, schedulers, LangChain, and LLM providers.
 - Treat LLM outputs as untrusted input. Parse and validate them into typed domain values before use.
 - Keep runtime rule evaluation deterministic. LLMs may propose CEL rules, but they must not execute or decide rule results.
+
+## Implementation Pitfalls
+
+These rules address common mistakes in this repository. Apply them before choosing an implementation.
+
+- Async SQLAlchemy sessions are not concurrency-safe. If parallel LangGraph/DeepAgents tool calls can touch the same `AsyncSession`, protect all session-using tools with one shared lock or give each tool call its own session. Separate locks per toolbox do not protect a shared session.
+- Prefer short session/transaction boundaries at the adapter or service boundary. Do not keep a failed `AsyncSession` alive without `rollback()`, and do not let a rollback for one item discard earlier successful writes that the code reports as successful.
+- If code flushes database changes and later code must make those changes durable, explicitly commit at the correct boundary. For example, disabling fired `once:` rules must be committed, not only flushed.
+- Do not run async applications in worker threads to paper over lifecycle issues. Keep Telegram/PTB, HTTP clients, SQLAlchemy async engines, and other async resources on one event loop; use async `start()`/`stop()` APIs when available.
+- Preserve shipped runtime behavior when replacing lifecycle helpers. For Telegram polling, keep `drop_pending_updates=True` unless the task explicitly asks to process backlog updates.
+- When injecting a shared `httpx.AsyncClient`, preserve per-provider settings such as timeouts by passing request-level `timeout=` values or configuring the shared client equivalently. Dependency injection must not silently change provider behavior.
+- Treat persisted JSON and database metadata as untrusted. Pydantic `model_validate()` can fail on old or malformed data; catch validation errors at the boundary, log useful context, clear bad state when safe, and return Polish user-facing errors in Telegram flows.
 
 ## Architecture
 

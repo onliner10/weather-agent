@@ -102,7 +102,10 @@ class ImgwSynopProvider:
     ) -> ObservationResult:
         fetched_at = datetime.now(tz=UTC)
         try:
-            response = await self._client.get(self._settings.synop_base_url)
+            response = await self._client.get(
+                self._settings.synop_base_url,
+                timeout=self._settings.timeout_seconds,
+            )
         except httpx.TimeoutException:
             raise WeatherProviderTimeoutError(_PROVIDER) from None
         except httpx.HTTPError:

@@ -102,7 +102,7 @@ class OpenMeteoDwdIconProvider:
         timeout = httpx.Timeout(self._timeout_seconds)
         try:
             if self._client is not None:
-                response = await self._client.get(self._base_url, params=params)
+                response = await self._client.get(self._base_url, params=params, timeout=timeout)
             else:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.get(self._base_url, params=params)

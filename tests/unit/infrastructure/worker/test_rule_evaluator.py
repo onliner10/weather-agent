@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
@@ -706,6 +707,35 @@ class TestRuleEvaluationWorker:
 
         assert len(results) == 1
         assert results[0].evaluated is True
+
+    async def test_run_loop_commits_read_only_cycle_before_sleep(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+        )
+
+        async def stop_after_first_cycle(_seconds: float) -> None:
+            assert not session.in_transaction()
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(
+            "weather_agent.infrastructure.worker.rule_evaluator.asyncio.sleep",
+            stop_after_first_cycle,
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await worker.run_loop()
 
     async def test_no_llm_calls_during_evaluation(
         self,

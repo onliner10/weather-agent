@@ -200,7 +200,7 @@ class _BaseImgwWarningsProvider:
         timeout = httpx.Timeout(self._timeout_seconds)
         try:
             if self._client is not None:
-                response = await self._client.get(self._base_url)
+                response = await self._client.get(self._base_url, timeout=timeout)
             else:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.get(self._base_url)

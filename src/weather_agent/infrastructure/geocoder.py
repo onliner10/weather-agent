@@ -94,6 +94,7 @@ class Geocoder:
                 r = await self._client.get(
                     self._base_url,
                     params={"name": normalized, "count": 1, "language": "pl"},
+                    timeout=self._timeout,
                 )
                 r.raise_for_status()
             else:

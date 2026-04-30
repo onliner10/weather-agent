@@ -59,7 +59,7 @@ class TelegramBot:
         await self._app.initialize()
         await self._app.start()
         assert self._app.updater is not None
-        await self._app.updater.start_polling()
+        await self._app.updater.start_polling(drop_pending_updates=True)
 
     async def stop(self) -> None:
         if self._app is None:
