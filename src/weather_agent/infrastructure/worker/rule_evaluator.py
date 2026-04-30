@@ -94,10 +94,23 @@ class RuleEvaluationWorker:
                     RULES_EVALUATED_TOTAL.labels(
                         outcome="success" if result.evaluated else "error"
                     ).inc()
-                except Exception:
+                except Exception as exc:
                     RULE_EVALUATION_FAILURES_TOTAL.inc()
                     RULES_EVALUATED_TOTAL.labels(outcome="failure").inc()
-                    raise
+                    await self._session.rollback()
+                    logger.exception(
+                        "rule_evaluation_failed",
+                        rule_id=rule.id,
+                        error_class=type(exc).__name__,
+                    )
+                    result = EvaluationResult(
+                        rule_id=rule.id,
+                        rule_short_id=rule.short_id,
+                        expression=rule.expression,
+                        evaluated=False,
+                        result=None,
+                        error=str(exc),
+                    )
                 results.append(result)
 
             if not dry_run:
@@ -400,6 +413,7 @@ class RuleEvaluationWorker:
                     WORKER_CYCLE_DURATION_SECONDS.observe(time.perf_counter() - cycle_start)
                     LAST_SUCCESSFUL_WORKER_CYCLE_TIMESTAMP_SECONDS.set(time.time())
                 except Exception as exc:
+                    await self._session.rollback()
                     logger.exception(
                         "rule_evaluation_cycle_failed",
                         error_class=type(exc).__name__,

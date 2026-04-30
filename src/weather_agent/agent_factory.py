@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from importlib import resources
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,20 @@ def _load_weather_agent_prompt() -> str:
     _WEATHER_AGENT_PROMPT = prompt_path.read_text(encoding="utf-8")
     logger.info("weather_agent_prompt_loaded", path=str(prompt_path))
     return _WEATHER_AGENT_PROMPT
+
+
+_AGENTS_MD: str | None = None
+
+
+def _load_agents_md() -> str:
+    global _AGENTS_MD
+    if _AGENTS_MD is not None:
+        return _AGENTS_MD
+
+    agents_md_path = Path(__file__).resolve().parent.parent.parent / "AGENTS.md"
+    _AGENTS_MD = agents_md_path.read_text(encoding="utf-8")
+    logger.info("agents_md_loaded", path=str(agents_md_path))
+    return _AGENTS_MD
 
 
 def create_weather_agent(

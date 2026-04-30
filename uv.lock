@@ -2174,6 +2174,18 @@ wheels = [
 ]
 
 [[package]]
+name = "returns"
+version = "0.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/d5/a3208e3193848ecfec2adb689f474cc6c66c4b7e1711c31528c5b3cfbc93/returns-0.27.0.tar.gz", hash = "sha256:f70a452dd81e6d024c97523683aba85076b15e00874e723afb23bcf3aa4ecea2", size = 105261, upload-time = "2026-04-14T07:11:21.206Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/9c/1db56b3a26b56abde214833556c83af7e9817999bc05163c9e1bf200952d/returns-0.27.0-py3-none-any.whl", hash = "sha256:a84f243b9a17e9b96c16b709f5cca819550c38a2fc4db725ee2539354956af12", size = 160133, upload-time = "2026-04-14T07:11:23.187Z" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.15.12"
 source = { registry = "https://pypi.org/simple" }
@@ -2533,6 +2545,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-telegram-bot", extra = ["all"] },
+    { name = "returns" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
     { name = "uvicorn" },
@@ -2569,6 +2582,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.0" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "python-telegram-bot", extras = ["all"], specifier = ">=21.0" },
+    { name = "returns", specifier = ">=0.21.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },

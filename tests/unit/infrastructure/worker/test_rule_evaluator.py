@@ -737,6 +737,102 @@ class TestRuleEvaluationWorker:
         assert "evaluated_metrics" in r.evaluation_detail
         assert "evaluated_functions" in r.evaluation_detail
 
+    async def test_individual_rule_failure_does_not_crash_cycle(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+
+        await _create_rule(
+            rule_service,
+            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+        )
+        await _create_rule(
+            rule_service,
+            expression='max("temperature_2m_c", next_hours(24)) >= 0',
+        )
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+        )
+
+        call_count = 0
+        original_evaluate = worker._evaluate_single_rule
+
+        async def failing_then_ok(rule, dry_run):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ValueError("ephemeral failure")
+            return await original_evaluate(rule, dry_run)
+
+        await session.commit()
+
+        worker._evaluate_single_rule = failing_then_ok
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 2
+        assert results[0].evaluated is False
+        assert results[0].error == "ephemeral failure"
+        assert results[1].evaluated is True
+
+        stmt = select(RuleEvaluationRun)
+        db_result = await session.execute(stmt)
+        eval_runs = db_result.scalars().all()
+        assert len(eval_runs) == 1
+        assert eval_runs[0].rule_id == 2
+
+    async def test_rule_evaluation_failure_rolls_back_session(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        await _create_rule(rule_service)
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+        )
+
+        await session.commit()
+
+        original = worker._evaluate_single_rule
+
+        async def failing(rule, dry_run):
+            raise ValueError("test failure")
+
+        worker._evaluate_single_rule = failing
+
+        results = await worker.evaluate_rules()
+        assert len(results) == 1
+        assert results[0].evaluated is False
+        assert results[0].error is not None
+
+        worker._evaluate_single_rule = original
+
+        results = await worker.evaluate_rules()
+        assert len(results) == 1
+        assert results[0].evaluated is True
+
     async def test_forecast_delta_uses_previous_snapshot_values(
         self,
         session: AsyncSession,

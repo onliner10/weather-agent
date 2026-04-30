@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time as _time
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -155,6 +156,7 @@ class RulesToolbox:
         self.user_id = user_id
         self.chat_id = chat_id
         self.message_thread_id = message_thread_id
+        self._lock = asyncio.Lock()
 
     async def _resolve_location_id(self, location_name: str) -> int | None:
         if not location_name.strip():
@@ -181,9 +183,7 @@ class RulesToolbox:
                     LocationCreate(
                         name=geo.name,
                         aliases=(
-                            [location_name]
-                            if location_name.lower() != geo.name.lower()
-                            else []
+                            [location_name] if location_name.lower() != geo.name.lower() else []
                         ),
                         latitude=geo.latitude,
                         longitude=geo.longitude,
@@ -201,49 +201,51 @@ class RulesToolbox:
         self,
         include_disabled: bool = False,
     ) -> ListRulesToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="list_notification_rules").inc()
-        start = _time.perf_counter()
-        try:
-            rules = await self.rule_service.list_rules(
-                self.user_id,
-                include_disabled=include_disabled,
-            )
-            rules_data: list[dict[str, Any]] = []
-            for r in rules:
-                rules_data.append(
-                    {
-                        "short_id": f"#{r.short_id}",
-                        "expression": r.expression,
-                        "description": r.description or "",
-                        "enabled": r.enabled,
-                        "location_id": r.location_id,
-                    }
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="list_notification_rules").inc()
+            start = _time.perf_counter()
+            try:
+                rules = await self.rule_service.list_rules(
+                    self.user_id,
+                    include_disabled=include_disabled,
                 )
-            return ListRulesToolResult(rules=rules_data, count=len(rules_data))
-        except Exception as exc:
-            logger.exception("list_notification_rules_failed", user_id=self.user_id)
-            return ListRulesToolResult(error=f"Błąd podczas pobierania reguł: {exc}")
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="list_notification_rules").observe(
-                _time.perf_counter() - start,
-            )
+                rules_data: list[dict[str, Any]] = []
+                for r in rules:
+                    rules_data.append(
+                        {
+                            "short_id": f"#{r.short_id}",
+                            "expression": r.expression,
+                            "description": r.description or "",
+                            "enabled": r.enabled,
+                            "location_id": r.location_id,
+                        }
+                    )
+                return ListRulesToolResult(rules=rules_data, count=len(rules_data))
+            except Exception as exc:
+                logger.exception("list_notification_rules_failed", user_id=self.user_id)
+                return ListRulesToolResult(error=f"Błąd podczas pobierania reguł: {exc}")
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="list_notification_rules").observe(
+                    _time.perf_counter() - start,
+                )
 
     @traceable(run_type="tool")
     async def get_cel_capabilities(self) -> CELCapabilitiesToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="get_cel_capabilities").inc()
-        start = _time.perf_counter()
-        try:
-            allowlist = get_allowlist_for_prompt()
-            functions: dict[str, list[str]] = allowlist["functions"]  # type: ignore[assignment]
-            metrics: list[str] = allowlist["metrics"]  # type: ignore[assignment]
-            return CELCapabilitiesToolResult(
-                functions=functions,
-                metrics=metrics,
-            )
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="get_cel_capabilities").observe(
-                _time.perf_counter() - start,
-            )
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="get_cel_capabilities").inc()
+            start = _time.perf_counter()
+            try:
+                allowlist = get_allowlist_for_prompt()
+                functions: dict[str, list[str]] = allowlist["functions"]  # type: ignore[assignment]
+                metrics: list[str] = allowlist["metrics"]  # type: ignore[assignment]
+                return CELCapabilitiesToolResult(
+                    functions=functions,
+                    metrics=metrics,
+                )
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="get_cel_capabilities").observe(
+                    _time.perf_counter() - start,
+                )
 
     @traceable(run_type="tool")
     async def propose_notification_rule(
@@ -253,19 +255,20 @@ class RulesToolbox:
         location_name: str = "",
         edit_short_id: str = "",
     ) -> ProposeRuleToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="propose_notification_rule").inc()
-        start = _time.perf_counter()
-        try:
-            return await self._execute_propose(
-                cel_expression,
-                explanation,
-                location_name,
-                edit_short_id,
-            )
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="propose_notification_rule").observe(
-                _time.perf_counter() - start,
-            )
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="propose_notification_rule").inc()
+            start = _time.perf_counter()
+            try:
+                return await self._execute_propose(
+                    cel_expression,
+                    explanation,
+                    location_name,
+                    edit_short_id,
+                )
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="propose_notification_rule").observe(
+                    _time.perf_counter() - start,
+                )
 
     async def _execute_propose(
         self,
@@ -293,7 +296,9 @@ class RulesToolbox:
         if edit_short_id:
             edit_short_id = strip_hash_prefix(edit_short_id.upper().replace("#", ""))
 
-        action = "edit_rule" if edit_short_id else "create_rule"
+        action: Literal["create_rule", "edit_rule", "schedule_notification"] = (
+            "edit_rule" if edit_short_id else "create_rule"
+        )
 
         pending = PendingConfirmation(
             action=action,
@@ -332,14 +337,15 @@ class RulesToolbox:
 
     @traceable(run_type="tool")
     async def confirm_pending_action(self) -> ConfirmActionToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="confirm_pending_action").inc()
-        start = _time.perf_counter()
-        try:
-            return await self._execute_confirm()
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="confirm_pending_action").observe(
-                _time.perf_counter() - start,
-            )
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="confirm_pending_action").inc()
+            start = _time.perf_counter()
+            try:
+                return await self._execute_confirm()
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="confirm_pending_action").observe(
+                    _time.perf_counter() - start,
+                )
 
     async def _execute_confirm(self) -> ConfirmActionToolResult:
         pending_dict = await self.memory_service.get_pending_confirmation(self.context_key)
@@ -438,14 +444,15 @@ class RulesToolbox:
 
     @traceable(run_type="tool")
     async def cancel_pending_action(self) -> CancelActionToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="cancel_pending_action").inc()
-        start = _time.perf_counter()
-        try:
-            return await self._execute_cancel()
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="cancel_pending_action").observe(
-                _time.perf_counter() - start,
-            )
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="cancel_pending_action").inc()
+            start = _time.perf_counter()
+            try:
+                return await self._execute_cancel()
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="cancel_pending_action").observe(
+                    _time.perf_counter() - start,
+                )
 
     async def _execute_cancel(self) -> CancelActionToolResult:
         pending_dict = await self.memory_service.get_pending_confirmation(self.context_key)
@@ -472,63 +479,64 @@ class RulesToolbox:
         location_name: str = "",
         cel_expression: str = "True",
     ) -> ScheduleRuleToolResult:
-        TOOL_CALLS_TOTAL.labels(tool="schedule_notification").inc()
-        start = _time.perf_counter()
-        try:
-            validation = self.cel_evaluator.validate(cel_expression)
-            if not validation.valid:
-                return ScheduleRuleToolResult(
-                    error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
+        async with self._lock:
+            TOOL_CALLS_TOTAL.labels(tool="schedule_notification").inc()
+            start = _time.perf_counter()
+            try:
+                validation = self.cel_evaluator.validate(cel_expression)
+                if not validation.valid:
+                    return ScheduleRuleToolResult(
+                        error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
+                    )
+
+                schedule_str = f"{schedule_type}:{schedule_expression}"
+                parsed = parse_schedule(schedule_str)
+                if not parsed.valid:
+                    return ScheduleRuleToolResult(
+                        error=f"Nieprawidłowy harmonogram: {parsed.error}",
+                    )
+
+                location_id = await self._resolve_location_id(location_name)
+                if location_id is None and location_name.strip():
+                    return ScheduleRuleToolResult(
+                        error=f"Nie znaleziono lokalizacji: {location_name}",
+                    )
+
+                pending = PendingConfirmation(
+                    action="schedule_notification",
+                    cel_expression=validation.expression,
+                    explanation=explanation,
+                    validated=True,
+                    location_id=location_id,
+                    chat_id=self.chat_id,
+                    message_thread_id=self.message_thread_id,
+                    stored_at=datetime.now(UTC).isoformat(),
+                    schedule=schedule_str,
                 )
 
-            schedule_str = f"{schedule_type}:{schedule_expression}"
-            parsed = parse_schedule(schedule_str)
-            if not parsed.valid:
-                return ScheduleRuleToolResult(
-                    error=f"Nieprawidłowy harmonogram: {parsed.error}",
+                await self.memory_service.store_pending_confirmation(
+                    self.context_key,
+                    pending.to_dict(),
                 )
 
-            location_id = await self._resolve_location_id(location_name)
-            if location_id is None and location_name.strip():
-                return ScheduleRuleToolResult(
-                    error=f"Nie znaleziono lokalizacji: {location_name}",
+                schedule_desc = (
+                    f"jednorazowo {schedule_expression}"
+                    if schedule_type == "once"
+                    else f"cyklicznie ({schedule_expression})"
+                )
+                proposal_text = (
+                    f"Propozycja zaplanowanego powiadomienia:\n\n"
+                    f"\U0001f4c5 Harmonogram: {schedule_desc}\n"
+                    f"\U0001f4dd Wyrażenie CEL: `{validation.expression}`\n"
+                    f"\U0001f4d6 Opis: {explanation}\n\n"
+                    "Czy chcesz potwierdzić? (tak/nie)"
                 )
 
-            pending = PendingConfirmation(
-                action="schedule_notification",
-                cel_expression=validation.expression,
-                explanation=explanation,
-                validated=True,
-                location_id=location_id,
-                chat_id=self.chat_id,
-                message_thread_id=self.message_thread_id,
-                stored_at=datetime.now(UTC).isoformat(),
-                schedule=schedule_str,
-            )
-
-            await self.memory_service.store_pending_confirmation(
-                self.context_key,
-                pending.to_dict(),
-            )
-
-            schedule_desc = (
-                f"jednorazowo {schedule_expression}"
-                if schedule_type == "once"
-                else f"cyklicznie ({schedule_expression})"
-            )
-            proposal_text = (
-                f"Propozycja zaplanowanego powiadomienia:\n\n"
-                f"\U0001f4c5 Harmonogram: {schedule_desc}\n"
-                f"\U0001f4dd Wyrażenie CEL: `{validation.expression}`\n"
-                f"\U0001f4d6 Opis: {explanation}\n\n"
-                "Czy chcesz potwierdzić? (tak/nie)"
-            )
-
-            return ScheduleRuleToolResult(proposal=proposal_text, pending=True)
-        finally:
-            TOOL_CALL_DURATION_SECONDS.labels(tool="schedule_notification").observe(
-                _time.perf_counter() - start,
-            )
+                return ScheduleRuleToolResult(proposal=proposal_text, pending=True)
+            finally:
+                TOOL_CALL_DURATION_SECONDS.labels(tool="schedule_notification").observe(
+                    _time.perf_counter() - start,
+                )
 
     def to_langchain_tools(self) -> list[StructuredTool]:
         return [

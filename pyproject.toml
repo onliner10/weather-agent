@@ -5,6 +5,7 @@ description = "Telegram weather AI agent foundations and runtime contracts."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "returns>=0.21.0",
     "httpx>=0.28.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.8.0",
@@ -66,3 +67,4 @@ python_version = "3.12"
 strict = true
 packages = ["weather_agent"]
 mypy_path = ["src"]
+plugins = ["returns.contrib.mypy.returns_plugin"]

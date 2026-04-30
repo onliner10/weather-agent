@@ -204,17 +204,19 @@ class TestScheduleNotificationAutoSaveLocation:
             latitude=54.5189,
             longitude=18.5305,
         )
-        mock_location_service.create_location = AsyncMock(return_value=Location(
-            id=expected_id,
-            name="Gdynia",
-            aliases=[],
-            latitude=54.5189,
-            longitude=18.5305,
-            description=None,
-            enabled=True,
-            created_at=now,
-            updated_at=now,
-        ))
+        mock_location_service.create_location = AsyncMock(
+            return_value=Location(
+                id=expected_id,
+                name="Gdynia",
+                aliases=[],
+                latitude=54.5189,
+                longitude=18.5305,
+                description=None,
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
         result = await toolbox.schedule_notification(
             schedule_type="once",
@@ -257,17 +259,19 @@ class TestScheduleNotificationAutoSaveLocation:
             latitude=54.4418,
             longitude=18.5600,
         )
-        mock_location_service.create_location = AsyncMock(return_value=Location(
-            id=expected_id,
-            name="Sopot",
-            aliases=[],
-            latitude=54.4418,
-            longitude=18.5600,
-            description=None,
-            enabled=True,
-            created_at=now,
-            updated_at=now,
-        ))
+        mock_location_service.create_location = AsyncMock(
+            return_value=Location(
+                id=expected_id,
+                name="Sopot",
+                aliases=[],
+                latitude=54.4418,
+                longitude=18.5600,
+                description=None,
+                enabled=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
         result = await toolbox.propose_notification_rule(
             cel_expression="True",

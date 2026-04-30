@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -163,74 +163,69 @@ class TestMissingConfiguration:
 
 
 class TestCmdBot:
+    def _make_mock_container(self) -> AsyncMock:
+        container = AsyncMock()
+        container.settings.telegram = MagicMock()
+        container.settings.telegram.allowed_user_ids = ()
+        container.settings.observability.enabled = False
+        container.__aenter__.return_value = container
+        container.__aexit__.return_value = None
+        return container
+
     def test_cmd_bot_calls_run_migrations(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
-        mock_services = MagicMock()
-        mock_services.settings.telegram = MagicMock()
-        mock_services.settings.telegram.allowed_user_ids = ()
-        mock_services.settings.observability.enabled = False
+        mock_container = self._make_mock_container()
 
         with (
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
-            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations") as mock_migrate,
-            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+            patch("weather_agent.adapters.telegram.handler.make_message_handler"),
+            patch("asyncio.to_thread"),
         ):
-            mock_asyncio.new_event_loop.return_value = MagicMock()
-            mock_asyncio.run = MagicMock()
-
             cmd_bot(MagicMock())
             mock_migrate.assert_called_once()
 
     def test_cmd_bot_creates_and_runs_telegram_bot(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
-        mock_services = MagicMock()
-        mock_services.settings.telegram = MagicMock()
-        mock_services.settings.telegram.allowed_user_ids = ()
-        mock_services.settings.observability.enabled = False
+        mock_container = self._make_mock_container()
 
         with (
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
-            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations"),
-            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
+            patch("weather_agent.adapters.telegram.handler.make_message_handler"),
+            patch("asyncio.to_thread") as mock_to_thread,
         ):
             mock_bot = MagicMock()
             mock_bot_cls.return_value = mock_bot
-            mock_loop = MagicMock()
-            mock_asyncio.new_event_loop.return_value = mock_loop
-            mock_asyncio.run = MagicMock()
 
             cmd_bot(MagicMock())
             mock_bot.setup.assert_called_once()
-            mock_bot.run.assert_called_once()
+            mock_to_thread.assert_called_once_with(mock_bot.run)
 
     def test_cmd_bot_migration_failure_is_warned(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
-        mock_services = MagicMock()
-        mock_services.settings.telegram = MagicMock()
-        mock_services.settings.telegram.allowed_user_ids = ()
-        mock_services.settings.observability.enabled = False
+        mock_container = self._make_mock_container()
 
         with (
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
-            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch(
                 "weather_agent.cmd.bot.run_migrations",
                 side_effect=RuntimeError("db not found"),
             ),
-            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
+            patch("weather_agent.adapters.telegram.handler.make_message_handler"),
+            patch("asyncio.to_thread"),
         ):
             mock_bot = MagicMock()
             mock_bot_cls.return_value = mock_bot
-            mock_asyncio.new_event_loop.return_value = MagicMock()
-            mock_asyncio.run = MagicMock()
 
             cmd_bot(MagicMock())
             mock_bot.setup.assert_called_once()
@@ -238,23 +233,19 @@ class TestCmdBot:
     def test_cmd_bot_starts_observability_server_when_enabled(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
-        mock_services = MagicMock()
-        mock_services.settings.telegram = MagicMock()
-        mock_services.settings.telegram.allowed_user_ids = ()
-        mock_services.settings.observability.enabled = True
-        mock_services.settings.observability.bot_port = 9999
+        mock_container = self._make_mock_container()
+        mock_container.settings.observability.enabled = True
+        mock_container.settings.observability.bot_port = 9999
 
         with (
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
-            patch("weather_agent.cmd.bot.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations"),
-            patch("weather_agent.cmd.bot.asyncio") as mock_asyncio,
             patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+            patch("weather_agent.adapters.telegram.handler.make_message_handler"),
             patch("weather_agent.cmd.bot.start_observability_server") as mock_start_server,
+            patch("asyncio.to_thread"),
         ):
-            mock_asyncio.new_event_loop.return_value = MagicMock()
-            mock_asyncio.run = MagicMock()
-
             cmd_bot(MagicMock())
             mock_start_server.assert_called_once()
             call_kwargs = mock_start_server.call_args.kwargs
@@ -263,39 +254,74 @@ class TestCmdBot:
 
 
 class TestCmdWorker:
+    def _make_mock_container(self) -> AsyncMock:
+        container = AsyncMock()
+        container.settings.scheduler = MagicMock()
+        container.settings.observability.enabled = False
+        container.cel_evaluator = MagicMock()
+        container.session_factory = MagicMock()
+        container.__aenter__.return_value = container
+        container.__aexit__.return_value = None
+        return container
+
     def test_cmd_worker_calls_run_migrations(self) -> None:
         from weather_agent.cmd.worker import cmd_worker
 
-        mock_services = MagicMock()
-        mock_services.settings.scheduler = MagicMock()
-        mock_services.settings.observability.enabled = False
+        mock_container = self._make_mock_container()
+        mock_session = AsyncMock()
+        mock_container.session_factory.return_value.__aenter__.return_value = mock_session
 
         with (
             patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
-            patch("weather_agent.cmd.worker.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.worker.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.worker.run_migrations") as mock_migrate,
-            patch("weather_agent.cmd.worker.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.worker.trace"),
+            patch(
+                "weather_agent.domain.rules.service.NotificationRuleService",
+            ),
+            patch(
+                "weather_agent.infrastructure.repositories.forecast_repository.ForecastRepository",
+            ),
+            patch(
+                "weather_agent.infrastructure.worker.rule_evaluator.RuleEvaluationWorker",
+            ) as mock_worker_cls,
         ):
-            mock_asyncio.run = MagicMock()
+            mock_worker = MagicMock()
+            mock_worker.run_loop = AsyncMock()
+            mock_worker_cls.return_value = mock_worker
+
             cmd_worker(MagicMock())
             mock_migrate.assert_called_once()
 
     def test_cmd_worker_starts_observability_server_when_enabled(self) -> None:
         from weather_agent.cmd.worker import cmd_worker
 
-        mock_services = MagicMock()
-        mock_services.settings.scheduler = MagicMock()
-        mock_services.settings.observability.enabled = True
-        mock_services.settings.observability.worker_port = 9998
+        mock_container = self._make_mock_container()
+        mock_container.settings.observability.enabled = True
+        mock_container.settings.observability.worker_port = 9998
+        mock_session = AsyncMock()
+        mock_container.session_factory.return_value.__aenter__.return_value = mock_session
 
         with (
             patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
-            patch("weather_agent.cmd.worker.BotServices", return_value=mock_services),
+            patch("weather_agent.cmd.worker.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.worker.run_migrations"),
-            patch("weather_agent.cmd.worker.asyncio") as mock_asyncio,
+            patch("weather_agent.cmd.worker.trace"),
+            patch(
+                "weather_agent.domain.rules.service.NotificationRuleService",
+            ),
+            patch(
+                "weather_agent.infrastructure.repositories.forecast_repository.ForecastRepository",
+            ),
+            patch(
+                "weather_agent.infrastructure.worker.rule_evaluator.RuleEvaluationWorker",
+            ) as mock_worker_cls,
             patch("weather_agent.cmd.worker.start_observability_server") as mock_start_server,
         ):
-            mock_asyncio.run = MagicMock()
+            mock_worker = MagicMock()
+            mock_worker.run_loop = AsyncMock()
+            mock_worker_cls.return_value = mock_worker
+
             cmd_worker(MagicMock())
             mock_start_server.assert_called_once()
             call_kwargs = mock_start_server.call_args.kwargs

@@ -159,6 +159,7 @@ def test_rule_runtime_does_not_call_llm(pyfile: Path) -> None:
 
 _INFRASTRUCTURE_BOUNDARY_EXCEPTIONS: frozenset[str] = frozenset(
     {
+        "infrastructure/app_container.py",
         "infrastructure/memory/thread_memory.py",
         "infrastructure/services.py",
     }

@@ -10,8 +10,8 @@ from telegram.ext import ContextTypes
 from weather_agent.agent_factory import build_context_suffix, create_weather_agent
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.service import NotificationRuleService
+from weather_agent.infrastructure.app_container import AppContainer
 from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
-from weather_agent.infrastructure.services import BotServices
 from weather_agent.llm.tools.rules_tools import RulesToolbox
 from weather_agent.llm.tools.weather_tools import WeatherToolbox
 from weather_agent.observability.logging import (
@@ -31,8 +31,7 @@ from weather_agent.observability.tracing import build_graph_config
 logger = get_logger(__name__)
 
 
-async def make_message_handler(services: BotServices) -> Any:
-    services.init_services()
+async def make_message_handler(container: AppContainer) -> Any:
     logger.info("Application services ready")
 
     async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -70,27 +69,27 @@ async def make_message_handler(services: BotServices) -> Any:
             from weather_agent.adapters.telegram.context import TelegramContextService
             from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 
-            async with services.session_factory() as session:
+            async with container.session_factory() as session:
                 auth_repo = AuthRepository(session)
                 authorized_user_id = await auth_repo.get_or_create_authorized_user_id(user_id)
 
                 location_service = LocationService(session)
-                assert services.cel_evaluator is not None
+                assert container.cel_evaluator is not None
                 rule_service = NotificationRuleService(
                     session=session,
-                    cel_evaluator=services.cel_evaluator,
+                    cel_evaluator=container.cel_evaluator,
                 )
                 context_service = TelegramContextService(session)
                 memory_service = ThreadMemoryService(context_service)
 
-                assert services.forecast_provider is not None
-                assert services.geocoder is not None
-                assert services.model_factory is not None
+                assert container.forecast_provider is not None
+                assert container.geocoder is not None
+                assert container.model_factory is not None
 
                 weather_toolbox = WeatherToolbox(
-                    forecast_provider=services.forecast_provider,
-                    observation_provider=services.observation_provider,
-                    geocoder=services.geocoder,
+                    forecast_provider=container.forecast_provider,
+                    observation_provider=container.observation_provider,
+                    geocoder=container.geocoder,
                     location_service=location_service,
                     user_id=authorized_user_id,
                 )
@@ -98,8 +97,8 @@ async def make_message_handler(services: BotServices) -> Any:
                 rules_toolbox = RulesToolbox(
                     rule_service=rule_service,
                     location_service=location_service,
-                    cel_evaluator=services.cel_evaluator,
-                    geocoder=services.geocoder,
+                    cel_evaluator=container.cel_evaluator,
+                    geocoder=container.geocoder,
                     memory_service=memory_service,
                     context_key=context_key,
                     user_id=authorized_user_id,
@@ -118,7 +117,7 @@ async def make_message_handler(services: BotServices) -> Any:
                     last_forecast_context=last_forecast,
                 )
 
-                model = services.model_factory.create_chat_model()
+                model = container.model_factory.create_chat_model()
 
                 agent = create_weather_agent(
                     model=model,
@@ -142,9 +141,9 @@ async def make_message_handler(services: BotServices) -> Any:
                 graph_config = build_graph_config(
                     {"authorized_user_id": user_id, "chat_id": chat_id, "context_key": context_key},
                 )
-                if services.model_factory is not None:
-                    graph_config["metadata"]["model_provider"] = services.model_factory.provider
-                    graph_config["metadata"]["model_name"] = services.model_factory.model_name
+                if container.model_factory is not None:
+                    graph_config["metadata"]["model_provider"] = container.model_factory.provider
+                    graph_config["metadata"]["model_name"] = container.model_factory.model_name
 
                 CONVERSATION_TURNS_TOTAL.inc()
                 turn_start = time.perf_counter()
@@ -211,7 +210,7 @@ async def make_message_handler(services: BotServices) -> Any:
 
             if bot_message_id is not None:
                 try:
-                    async with services.session_factory() as session:
+                    async with container.session_factory() as session:
                         context_service2 = TelegramContextService(session)
                         memory_service2 = ThreadMemoryService(context_service2)
                         await memory_service2.update_last_bot_turn_message_id(

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel
 
 
-@dataclass
-class PendingConfirmation:
-    action: str = "create_rule"
+class PendingConfirmation(BaseModel):
+    action: Literal["create_rule", "edit_rule", "schedule_notification"] = "create_rule"
     cel_expression: str = ""
     explanation: str = ""
     validated: bool = False
@@ -19,36 +19,8 @@ class PendingConfirmation:
     lead_time_minutes: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "action": self.action,
-            "cel_expression": self.cel_expression,
-            "explanation": self.explanation,
-            "validated": self.validated,
-            "location_id": self.location_id,
-            "chat_id": self.chat_id,
-            "message_thread_id": self.message_thread_id,
-            "stored_at": self.stored_at,
-        }
-        if self.edit_short_id is not None:
-            d["edit_short_id"] = self.edit_short_id
-        if self.schedule is not None:
-            d["schedule"] = self.schedule
-        if self.lead_time_minutes is not None:
-            d["lead_time_minutes"] = self.lead_time_minutes
-        return d
+        return self.model_dump(mode="json", exclude_none=True)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PendingConfirmation:
-        return cls(
-            action=data.get("action", "create_rule"),
-            cel_expression=data.get("cel_expression", ""),
-            explanation=data.get("explanation", ""),
-            validated=data.get("validated", False),
-            location_id=data.get("location_id"),
-            chat_id=data.get("chat_id"),
-            message_thread_id=data.get("message_thread_id"),
-            stored_at=data.get("stored_at"),
-            edit_short_id=data.get("edit_short_id"),
-            schedule=data.get("schedule"),
-            lead_time_minutes=data.get("lead_time_minutes"),
-        )
+        return cls.model_validate(data)
