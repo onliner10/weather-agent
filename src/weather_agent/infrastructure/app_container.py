@@ -94,7 +94,14 @@ class AppContainer:
         self.cel_evaluator = CELEvaluator()
         self.forecast_provider = OpenMeteoDwdIconProvider(
             settings=self.settings.open_meteo,
+            httpx_client=self.httpx_client,
         )
-        self.observation_provider = ImgwSynopProvider(settings=self.settings.imgw)
+        self.observation_provider = ImgwSynopProvider(
+            settings=self.settings.imgw,
+            httpx_client=self.httpx_client,
+        )
         self.model_factory = ModelFactory(settings=self.settings.model)
-        self.geocoder = Geocoder(model_factory=self.model_factory)
+        self.geocoder = Geocoder(
+            model_factory=self.model_factory,
+            httpx_client=self.httpx_client,
+        )

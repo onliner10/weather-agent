@@ -291,4 +291,5 @@ def _PC_from_dict_if_needed(data: dict[str, Any]) -> Any:
     try:
         return PendingConfirmation.from_dict(data)
     except Exception:
+        logger.warning("pending_confirmation_parse_failed", data_keys=list(data.keys()))
         return None

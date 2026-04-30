@@ -54,7 +54,12 @@ def cmd_bot(_args: argparse.Namespace) -> None:
             )
             bot.setup()
             logger.info("Starting Telegram bot polling...")
-            await asyncio.to_thread(bot.run)
+            try:
+                await bot.start()
+                while True:
+                    await asyncio.sleep(3600)
+            finally:
+                await bot.stop()
 
     try:
         asyncio.run(_run())

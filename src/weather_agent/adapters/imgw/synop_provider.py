@@ -84,9 +84,13 @@ def _map_station_to_observation(
 
 
 class ImgwSynopProvider:
-    def __init__(self, settings: ImgwSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: ImgwSettings | None = None,
+        httpx_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings or ImgwSettings()
-        self._client = httpx.AsyncClient(
+        self._client = httpx_client or httpx.AsyncClient(
             timeout=self._settings.timeout_seconds,
         )
 

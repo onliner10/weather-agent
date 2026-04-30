@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time as _time
 from datetime import date, datetime
 from typing import Any
@@ -191,17 +192,21 @@ class WeatherToolbox:
         self.geocoder = geocoder
         self.location_service = location_service
         self.user_id = user_id
+        self._lock = asyncio.Lock()
 
     async def _resolve_location(self, name: str) -> LocationRef | None:
-        try:
-            if self.location_service is not None:
-                resolved = await self.location_service.resolve_location(name, self.user_id)
-                if resolved is not None:
-                    return resolved
-            return await self.geocoder.geocode(name)
-        except Exception:
-            logger.exception("resolve_location_failed", location_name=name, user_id=self.user_id)
-            return None
+        async with self._lock:
+            try:
+                if self.location_service is not None:
+                    resolved = await self.location_service.resolve_location(name, self.user_id)
+                    if resolved is not None:
+                        return resolved
+                return await self.geocoder.geocode(name)
+            except Exception:
+                logger.exception(
+                    "resolve_location_failed", location_name=name, user_id=self.user_id
+                )
+                return None
 
     @traceable(run_type="tool")
     async def get_forecast(
@@ -348,45 +353,46 @@ class WeatherToolbox:
     async def _execute_save_location(
         self, location_name: str, alias: str
     ) -> SaveLocationToolResult:
-        if self.location_service is None:
-            return SaveLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
+        async with self._lock:
+            if self.location_service is None:
+                return SaveLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
 
-        if not location_name.strip():
-            return SaveLocationToolResult(error="Podaj nazwę lokalizacji do zapisania.")
+            if not location_name.strip():
+                return SaveLocationToolResult(error="Podaj nazwę lokalizacji do zapisania.")
 
-        if self.geocoder is None:
-            return SaveLocationToolResult(error="Geokoder jest niedostępny.")
+            if self.geocoder is None:
+                return SaveLocationToolResult(error="Geokoder jest niedostępny.")
 
-        resolved = await self.geocoder.geocode(location_name)
-        if resolved is None:
-            return SaveLocationToolResult(
-                error=f"Nie udało się rozpoznać lokalizacji '{location_name}'."
-            )
+            resolved = await self.geocoder.geocode(location_name)
+            if resolved is None:
+                return SaveLocationToolResult(
+                    error=f"Nie udało się rozpoznać lokalizacji '{location_name}'."
+                )
 
-        try:
-            aliases = [alias] if alias else []
-            await self.location_service.create_location(
-                self.user_id,
-                LocationCreate(
-                    name=location_name,
-                    aliases=aliases,
-                    latitude=resolved.latitude,
-                    longitude=resolved.longitude,
-                ),
-            )
-            msg = f"Zapamiętałem lokalizację: {location_name}"
-            if alias:
-                msg += f" (alias: {alias})"
-            return SaveLocationToolResult(success=msg)
-        except (LocationAliasConflictError, LocationNameConflictError):
-            return SaveLocationToolResult(
-                error="Masz już zapisaną lokalizację o tej nazwie lub aliasie."
-            )
-        except Exception as exc:
-            logger.exception(
-                "save_location_failed", user_id=self.user_id, location_name=location_name
-            )
-            return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
+            try:
+                aliases = [alias] if alias else []
+                await self.location_service.create_location(
+                    self.user_id,
+                    LocationCreate(
+                        name=location_name,
+                        aliases=aliases,
+                        latitude=resolved.latitude,
+                        longitude=resolved.longitude,
+                    ),
+                )
+                msg = f"Zapamiętałem lokalizację: {location_name}"
+                if alias:
+                    msg += f" (alias: {alias})"
+                return SaveLocationToolResult(success=msg)
+            except (LocationAliasConflictError, LocationNameConflictError):
+                return SaveLocationToolResult(
+                    error="Masz już zapisaną lokalizację o tej nazwie lub aliasie."
+                )
+            except Exception as exc:
+                logger.exception(
+                    "save_location_failed", user_id=self.user_id, location_name=location_name
+                )
+                return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
 
     @traceable(run_type="tool")
     async def list_locations(self, include_disabled: bool = False) -> ListLocationsToolResult:
@@ -400,31 +406,32 @@ class WeatherToolbox:
             )
 
     async def _execute_list_locations(self, include_disabled: bool) -> ListLocationsToolResult:
-        if self.location_service is None:
-            return ListLocationsToolResult(error="Usługa lokalizacji jest niedostępna.")
+        async with self._lock:
+            if self.location_service is None:
+                return ListLocationsToolResult(error="Usługa lokalizacji jest niedostępna.")
 
-        try:
-            locations = await self.location_service.list_locations(
-                self.user_id, include_disabled=include_disabled
-            )
-            locations_data: list[dict[str, Any]] = []
-            for loc in locations:
-                entry: dict[str, Any] = {
-                    "id": loc.id,
-                    "name": loc.name,
-                    "latitude": loc.latitude,
-                    "longitude": loc.longitude,
-                    "enabled": loc.enabled,
-                }
-                if loc.aliases:
-                    entry["aliases"] = loc.aliases
-                if loc.description:
-                    entry["description"] = loc.description
-                locations_data.append(entry)
-            return ListLocationsToolResult(locations=locations_data, count=len(locations_data))
-        except Exception as exc:
-            logger.exception("list_locations_failed", user_id=self.user_id)
-            return ListLocationsToolResult(error=f"Błąd podczas pobierania lokalizacji: {exc}")
+            try:
+                locations = await self.location_service.list_locations(
+                    self.user_id, include_disabled=include_disabled
+                )
+                locations_data: list[dict[str, Any]] = []
+                for loc in locations:
+                    entry: dict[str, Any] = {
+                        "id": loc.id,
+                        "name": loc.name,
+                        "latitude": loc.latitude,
+                        "longitude": loc.longitude,
+                        "enabled": loc.enabled,
+                    }
+                    if loc.aliases:
+                        entry["aliases"] = loc.aliases
+                    if loc.description:
+                        entry["description"] = loc.description
+                    locations_data.append(entry)
+                return ListLocationsToolResult(locations=locations_data, count=len(locations_data))
+            except Exception as exc:
+                logger.exception("list_locations_failed", user_id=self.user_id)
+                return ListLocationsToolResult(error=f"Błąd podczas pobierania lokalizacji: {exc}")
 
     def to_langchain_tools(self) -> list[BaseTool]:
         return [

@@ -352,7 +352,13 @@ class RulesToolbox:
         if pending_dict is None:
             return ConfirmActionToolResult(error="Brak oczekującej akcji do potwierdzenia.")
 
-        pending = PendingConfirmation.from_dict(pending_dict)
+        try:
+            pending = PendingConfirmation.from_dict(pending_dict)
+        except Exception:
+            await self.memory_service.clear_pending_confirmation(self.context_key)
+            return ConfirmActionToolResult(
+                error="Nie udało się odczytać oczekującej akcji. Utwórz ją ponownie."
+            )
 
         if pending.cel_expression == "" and pending.action == "create_rule":
             return ConfirmActionToolResult(error="Brak oczekującej reguły do potwierdzenia.")
@@ -459,7 +465,14 @@ class RulesToolbox:
         if pending_dict is None:
             return CancelActionToolResult(error="Brak oczekującej akcji do anulowania.")
 
-        pending = PendingConfirmation.from_dict(pending_dict)
+        try:
+            pending = PendingConfirmation.from_dict(pending_dict)
+        except Exception:
+            await self.memory_service.clear_pending_confirmation(self.context_key)
+            return CancelActionToolResult(
+                answer="Nieprawidłowa oczekująca akcja została usunięta."
+            )
+
         action = pending.action
 
         await self.memory_service.clear_pending_confirmation(self.context_key)

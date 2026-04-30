@@ -173,10 +173,12 @@ class _BaseImgwWarningsProvider:
         settings: ImgwSettings,
         base_url: str | None = None,
         provider_name: str = "imgw",
+        httpx_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url or settings.warnings_base_url
         self._timeout_seconds = settings.timeout_seconds
         self._provider_name = provider_name
+        self._client = httpx_client
 
     async def _request_with_retry(self) -> list[dict[str, object]]:
         last_error: Exception | None = None
@@ -197,8 +199,11 @@ class _BaseImgwWarningsProvider:
     async def _make_request(self) -> list[dict[str, object]]:
         timeout = httpx.Timeout(self._timeout_seconds)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(self._base_url)
+            if self._client is not None:
+                response = await self._client.get(self._base_url)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(self._base_url)
         except httpx.TimeoutException:
             raise WeatherProviderTimeoutError(self._provider_name) from None
         except httpx.ConnectError:
@@ -232,11 +237,14 @@ class _BaseImgwWarningsProvider:
 
 
 class ImgwMeteoWarningsProvider(_BaseImgwWarningsProvider, WarningProvider):
-    def __init__(self, settings: ImgwSettings) -> None:
+    def __init__(
+        self, settings: ImgwSettings, httpx_client: httpx.AsyncClient | None = None
+    ) -> None:
         super().__init__(
             settings=settings,
             base_url=settings.warnings_base_url,
             provider_name=_METEO_PROVIDER_NAME,
+            httpx_client=httpx_client,
         )
 
     async def get_warnings(
@@ -251,11 +259,14 @@ class ImgwMeteoWarningsProvider(_BaseImgwWarningsProvider, WarningProvider):
 class ImgwHydroWarningsProvider(_BaseImgwWarningsProvider, WarningProvider):
     _HYDRO_BASE_URL = "https://danepubliczne.imgw.pl/api/data/warningshydro"
 
-    def __init__(self, settings: ImgwSettings) -> None:
+    def __init__(
+        self, settings: ImgwSettings, httpx_client: httpx.AsyncClient | None = None
+    ) -> None:
         super().__init__(
             settings=settings,
             base_url=self._HYDRO_BASE_URL,
             provider_name=_HYDRO_PROVIDER_NAME,
+            httpx_client=httpx_client,
         )
 
     async def get_warnings(

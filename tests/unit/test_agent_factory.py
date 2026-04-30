@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from weather_agent.agent_factory import _load_weather_agent_prompt, build_context_suffix
+import pytest
+
+from weather_agent.agent_factory import (
+    _load_agents_md,
+    _load_weather_agent_prompt,
+    build_context_suffix,
+)
 
 
 def test_weather_agent_prompt_is_loaded_from_runtime_prompt_file() -> None:
@@ -56,3 +62,58 @@ class TestBuildContextSuffix:
         )
         assert "OSTATNIA PROGNOZA: Gdańsk" in result
         assert "OCZEKUJĄCA AKCJA" in result
+
+
+class TestLoadAgentsMd:
+    def test_loads_from_repo_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Loads AGENTS.md content regardless of current working directory."""
+        import os
+
+        monkeypatch.setattr("weather_agent.agent_factory._AGENTS_MD", None)
+
+        original_cwd = os.getcwd()
+        try:
+            os.chdir("/tmp")
+            content = _load_agents_md()
+            assert content is not None
+            assert len(content) > 0
+        finally:
+            os.chdir(original_cwd)
+
+    def test_caches_content(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Second call returns cached content without reading the file again."""
+        import pathlib
+
+        monkeypatch.setattr("weather_agent.agent_factory._AGENTS_MD", None)
+
+        original_read = pathlib.Path.read_text
+        call_count = 0
+
+        def counting_read(path: pathlib.Path, **kwargs: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return original_read(path, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "read_text", counting_read)
+
+        result1 = _load_agents_md()
+        result2 = _load_agents_md()
+
+        assert result1 == result2
+        assert call_count == 1
+
+    def test_missing_file_raises_file_not_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Raises FileNotFoundError when AGENTS.md does not exist."""
+        from pathlib import Path
+
+        monkeypatch.setattr("weather_agent.agent_factory._AGENTS_MD", None)
+
+        def raise_not_found(*args: object, **kwargs: object) -> str:
+            raise FileNotFoundError("No such file")
+
+        monkeypatch.setattr(Path, "read_text", raise_not_found)
+
+        with pytest.raises(FileNotFoundError):
+            _load_agents_md()

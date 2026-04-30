@@ -769,28 +769,28 @@ class TestRuleEvaluationWorker:
         call_count = 0
         original_evaluate = worker._evaluate_single_rule
 
-        async def failing_then_ok(rule, dry_run):
+        async def ok_then_failing(rule, dry_run):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
+            if call_count == 2:
                 raise ValueError("ephemeral failure")
             return await original_evaluate(rule, dry_run)
 
         await session.commit()
 
-        worker._evaluate_single_rule = failing_then_ok
+        worker._evaluate_single_rule = ok_then_failing
         results = await worker.evaluate_rules()
 
         assert len(results) == 2
-        assert results[0].evaluated is False
-        assert results[0].error == "ephemeral failure"
-        assert results[1].evaluated is True
+        assert results[0].evaluated is True
+        assert results[1].evaluated is False
+        assert results[1].error == "ephemeral failure"
 
         stmt = select(RuleEvaluationRun)
         db_result = await session.execute(stmt)
         eval_runs = db_result.scalars().all()
         assert len(eval_runs) == 1
-        assert eval_runs[0].rule_id == 2
+        assert eval_runs[0].rule_id == 1
 
     async def test_rule_evaluation_failure_rolls_back_session(
         self,

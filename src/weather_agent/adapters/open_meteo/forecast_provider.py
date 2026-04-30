@@ -43,7 +43,11 @@ _FIELD_TO_NORMALIZED: dict[str, str] = {
 
 
 class OpenMeteoDwdIconProvider:
-    def __init__(self, settings: object = None) -> None:
+    def __init__(
+        self,
+        settings: object = None,
+        httpx_client: httpx.AsyncClient | None = None,
+    ) -> None:
         if settings is None:
             from weather_agent.settings import OpenMeteoSettings
 
@@ -53,6 +57,7 @@ class OpenMeteoDwdIconProvider:
         )
         self._model: str = getattr(settings, "model", _DWD_ICON_MODEL)
         self._timeout_seconds: int = getattr(settings, "timeout_seconds", 15)
+        self._client = httpx_client
 
     async def get_forecast(
         self,
@@ -96,8 +101,11 @@ class OpenMeteoDwdIconProvider:
     async def _make_request(self, params: dict[str, str | int | float]) -> dict[str, object]:
         timeout = httpx.Timeout(self._timeout_seconds)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(self._base_url, params=params)
+            if self._client is not None:
+                response = await self._client.get(self._base_url, params=params)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(self._base_url, params=params)
         except httpx.TimeoutException:
             raise WeatherProviderTimeoutError(_PROVIDER_NAME) from None
         except httpx.ConnectError:

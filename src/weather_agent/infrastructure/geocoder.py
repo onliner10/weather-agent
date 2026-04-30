@@ -24,10 +24,12 @@ class Geocoder:
         base_url: str = "https://geocoding-api.open-meteo.com/v1/search",
         timeout_seconds: float = 10.0,
         model_factory: ModelFactory | None = None,
+        httpx_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url
         self._timeout = timeout_seconds
         self._model_factory = model_factory
+        self._client = httpx_client
 
     async def geocode(self, name: str) -> LocationRef | None:
         start = time.perf_counter()
@@ -87,26 +89,33 @@ class Geocoder:
 
     async def _try_geocode(self, name: str) -> LocationRef | None:
         normalized = normalize_polish(name)
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            try:
-                r = await client.get(
+        try:
+            if self._client is not None:
+                r = await self._client.get(
                     self._base_url,
                     params={"name": normalized, "count": 1, "language": "pl"},
                 )
                 r.raise_for_status()
-            except httpx.TimeoutException:
-                logger.warning(
-                    "geocoding_timeout",
-                    query_name=name,
-                )
-                return None
-            except httpx.HTTPStatusError:
-                logger.warning(
-                    "geocoding_http_error",
-                    query_name=name,
-                    http_status=r.status_code,
-                )
-                return None
+            else:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    r = await client.get(
+                        self._base_url,
+                        params={"name": normalized, "count": 1, "language": "pl"},
+                    )
+                    r.raise_for_status()
+        except httpx.TimeoutException:
+            logger.warning(
+                "geocoding_timeout",
+                query_name=name,
+            )
+            return None
+        except httpx.HTTPStatusError:
+            logger.warning(
+                "geocoding_http_error",
+                query_name=name,
+                http_status=r.status_code,
+            )
+            return None
 
         data = r.json()
         results = data.get("results")

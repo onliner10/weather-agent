@@ -94,6 +94,7 @@ class RuleEvaluationWorker:
                     RULES_EVALUATED_TOTAL.labels(
                         outcome="success" if result.evaluated else "error"
                     ).inc()
+                    await self._session.commit()
                 except Exception as exc:
                     RULE_EVALUATION_FAILURES_TOTAL.inc()
                     RULES_EVALUATED_TOTAL.labels(outcome="failure").inc()

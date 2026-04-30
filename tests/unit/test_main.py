@@ -181,11 +181,16 @@ class TestCmdBot:
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations") as mock_migrate,
-            patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+            patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
             patch("weather_agent.adapters.telegram.handler.make_message_handler"),
-            patch("asyncio.to_thread"),
         ):
-            cmd_bot(MagicMock())
+            mock_bot = MagicMock()
+            mock_bot.start = AsyncMock(side_effect=RuntimeError())
+            mock_bot.stop = AsyncMock()
+            mock_bot_cls.return_value = mock_bot
+
+            with pytest.raises(RuntimeError):
+                cmd_bot(MagicMock())
             mock_migrate.assert_called_once()
 
     def test_cmd_bot_creates_and_runs_telegram_bot(self) -> None:
@@ -199,14 +204,17 @@ class TestCmdBot:
             patch("weather_agent.cmd.bot.run_migrations"),
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
             patch("weather_agent.adapters.telegram.handler.make_message_handler"),
-            patch("asyncio.to_thread") as mock_to_thread,
         ):
             mock_bot = MagicMock()
+            mock_bot.start = AsyncMock(side_effect=RuntimeError())
+            mock_bot.stop = AsyncMock()
             mock_bot_cls.return_value = mock_bot
 
-            cmd_bot(MagicMock())
+            with pytest.raises(RuntimeError):
+                cmd_bot(MagicMock())
             mock_bot.setup.assert_called_once()
-            mock_to_thread.assert_called_once_with(mock_bot.run)
+            mock_bot.start.assert_called_once()
+            mock_bot.stop.assert_called_once()
 
     def test_cmd_bot_migration_failure_is_warned(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
@@ -222,12 +230,14 @@ class TestCmdBot:
             ),
             patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
             patch("weather_agent.adapters.telegram.handler.make_message_handler"),
-            patch("asyncio.to_thread"),
         ):
             mock_bot = MagicMock()
+            mock_bot.start = AsyncMock(side_effect=RuntimeError())
+            mock_bot.stop = AsyncMock()
             mock_bot_cls.return_value = mock_bot
 
-            cmd_bot(MagicMock())
+            with pytest.raises(RuntimeError):
+                cmd_bot(MagicMock())
             mock_bot.setup.assert_called_once()
 
     def test_cmd_bot_starts_observability_server_when_enabled(self) -> None:
@@ -241,12 +251,17 @@ class TestCmdBot:
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations"),
-            patch("weather_agent.adapters.telegram.bot.TelegramBot"),
+            patch("weather_agent.adapters.telegram.bot.TelegramBot") as mock_bot_cls,
             patch("weather_agent.adapters.telegram.handler.make_message_handler"),
             patch("weather_agent.cmd.bot.start_observability_server") as mock_start_server,
-            patch("asyncio.to_thread"),
         ):
-            cmd_bot(MagicMock())
+            mock_bot = MagicMock()
+            mock_bot.start = AsyncMock(side_effect=RuntimeError())
+            mock_bot.stop = AsyncMock()
+            mock_bot_cls.return_value = mock_bot
+
+            with pytest.raises(RuntimeError):
+                cmd_bot(MagicMock())
             mock_start_server.assert_called_once()
             call_kwargs = mock_start_server.call_args.kwargs
             assert call_kwargs["port"] == 9999
