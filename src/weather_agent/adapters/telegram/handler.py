@@ -126,64 +126,117 @@ async def make_message_handler(container: AppContainer) -> Any:
 
                 model = container.model_factory.create_chat_model()
 
-                agent = create_weather_agent(
-                    model=model,
-                    tools=all_tools,
-                    system_prompt_suffix=context_suffix,
+                _DIRECT_CONFIRMATIONS: frozenset[str] = frozenset(
+                    {
+                        "tak",
+                        "Tak",
+                        "TAK",
+                        "ok",
+                        "OK",
+                        "Ok",
+                        "potwierdzam",
+                        "Potwierdzam",
+                        "yes",
+                        "Yes",
+                        "YES",
+                    }
+                )
+                _DIRECT_CANCELLATIONS: frozenset[str] = frozenset(
+                    {
+                        "nie",
+                        "Nie",
+                        "NIE",
+                        "anuluj",
+                        "Anuluj",
+                        "no",
+                        "No",
+                        "NO",
+                    }
                 )
 
-                messages: list[BaseMessage] = []
-                conversation_turns = await memory_service.load_turns(context_key)
-                if conversation_turns:
-                    for turn in conversation_turns:
-                        role = turn.get("role")
-                        content = turn.get("text") or turn.get("answer_summary")
-                        if content and role == "user":
-                            messages.append(HumanMessage(content=content))
-                        elif content and role == "bot":
-                            messages.append(AIMessage(content=content))
+                direct_answer: str | None = None
+                trimmed = text.strip()
+                if trimmed in _DIRECT_CONFIRMATIONS or trimmed in _DIRECT_CANCELLATIONS:
+                    pending_dict = await memory_service.get_pending_confirmation(context_key)
+                    if pending_dict is not None:
+                        if trimmed in _DIRECT_CONFIRMATIONS:
+                            direct_answer = (await rules_toolbox.confirm_pending_action()).answer
+                        else:
+                            direct_answer = (await rules_toolbox.cancel_pending_action()).answer
+                        if not direct_answer:
+                            direct_answer = (
+                                "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
+                            )
 
-                messages.append(HumanMessage(content=text))
+                if direct_answer is not None:
+                    answer = direct_answer
+                    await _save_turn(memory_service, context_key, text, answer)
+                    await session.commit()
+                else:
+                    agent = create_weather_agent(
+                        model=model,
+                        tools=all_tools,
+                        system_prompt_suffix=context_suffix,
+                    )
 
-                graph_config = build_graph_config(
-                    {"authorized_user_id": user_id, "chat_id": chat_id, "context_key": context_key},
-                )
-                if container.model_factory is not None:
-                    graph_config["metadata"]["model_provider"] = container.model_factory.provider
-                    graph_config["metadata"]["model_name"] = container.model_factory.model_name
+                    messages: list[BaseMessage] = []
+                    conversation_turns = await memory_service.load_turns(context_key)
+                    if conversation_turns:
+                        for turn in conversation_turns:
+                            role = turn.get("role")
+                            content = turn.get("text") or turn.get("answer_summary")
+                            if content and role == "user":
+                                messages.append(HumanMessage(content=content))
+                            elif content and role == "bot":
+                                messages.append(AIMessage(content=content))
 
-                CONVERSATION_TURNS_TOTAL.inc()
-                turn_start = time.perf_counter()
-                try:
-                    result = await agent.ainvoke(
-                        {"messages": messages},
-                        config={
-                            "configurable": {"thread_id": context_key},
-                            **graph_config,
+                    messages.append(HumanMessage(content=text))
+
+                    graph_config = build_graph_config(
+                        {
+                            "authorized_user_id": user_id,
+                            "chat_id": chat_id,
+                            "context_key": context_key,
                         },
                     )
-                    final = result["messages"][-1]
-                    answer = final.content if hasattr(final, "content") else str(final)
-                    if not answer:
-                        answer = "Przepraszam, nie udało się przetworzyć zapytania."
-                except Exception as exc:
-                    CONVERSATION_FAILURES_TOTAL.inc()
-                    logger.exception(
-                        "agent_invocation_failed",
-                        error_class=type(exc).__name__,
-                        outcome="failure",
-                    )
-                    answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
-                finally:
-                    CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+                    if container.model_factory is not None:
+                        graph_config["metadata"]["model_provider"] = (
+                            container.model_factory.provider
+                        )
+                        graph_config["metadata"]["model_name"] = container.model_factory.model_name
 
-                await _save_turn(
-                    memory_service,
-                    context_key,
-                    text,
-                    answer,
-                )
-                await session.commit()
+                    CONVERSATION_TURNS_TOTAL.inc()
+                    turn_start = time.perf_counter()
+                    try:
+                        result = await agent.ainvoke(
+                            {"messages": messages},
+                            config={
+                                "configurable": {"thread_id": context_key},
+                                **graph_config,
+                            },
+                        )
+                        final = result["messages"][-1]
+                        answer = final.content if hasattr(final, "content") else str(final)
+                        if not answer:
+                            answer = "Przepraszam, nie udało się przetworzyć zapytania."
+                    except Exception as exc:
+                        CONVERSATION_FAILURES_TOTAL.inc()
+                        logger.exception(
+                            "agent_invocation_failed",
+                            error_class=type(exc).__name__,
+                            outcome="failure",
+                        )
+                        answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
+                    finally:
+                        CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+
+                    await _save_turn(
+                        memory_service,
+                        context_key,
+                        text,
+                        answer,
+                    )
+                    await session.commit()
 
             reply_start = time.perf_counter()
             try:

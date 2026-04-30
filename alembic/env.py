@@ -58,8 +58,26 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     import asyncio
+    import threading
 
-    asyncio.run(run_async_migrations())
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(run_async_migrations())
+    else:
+        exc_info: list[Exception | None] = [None]
+
+        def _run_in_thread() -> None:
+            try:
+                asyncio.run(run_async_migrations())
+            except Exception as exc:
+                exc_info[0] = exc
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        thread.join()
+        if exc_info[0] is not None:
+            raise exc_info[0]
 
 
 if context.is_offline_mode():

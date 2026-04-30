@@ -925,3 +925,90 @@ class TestRuleEvaluationWorker:
         assert len(data["previous_points"]) == 3
         assert data["previous_points"][0]["wind_gusts_10m_ms"] == 10.0
         assert data["points"][0]["wind_gusts_10m_ms"] == 20.0
+
+    async def test_forecast_fetcher_populates_data_when_db_is_empty(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        """Regression test for weather-agent-blw: worker evaluates scheduled rules
+        on an empty DB when a forecast fetcher is provided."""
+
+        await _create_user(session)
+        await _create_location(session)
+        await _create_rule(rule_service)
+
+        fetcher = _FakeForecastFetcher(session, forecast_repo)
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+            forecast_fetcher=fetcher,
+        )
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.evaluated is True
+        assert r.result is True
+        assert r.notification_candidate is True
+        assert r.error is None
+        assert r.evaluation_detail is not None
+        assert r.evaluation_detail["point_count"] > 0
+        assert r.evaluation_detail["snapshot_id"] is not None
+
+    async def test_forecast_fetcher_called_before_evaluation(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        await _create_rule(rule_service)
+
+        fetcher_calls: list[int] = []
+
+        class CountingFetcher:
+            async def fetch_fresh_forecast(self, location_id: int) -> int | None:
+                fetcher_calls.append(location_id)
+                return None
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+            forecast_fetcher=CountingFetcher(),
+        )
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        assert results[0].evaluated is True
+        assert results[0].notification_candidate is True
+        assert len(fetcher_calls) == 1
+        assert fetcher_calls[0] == 1
+
+
+class _FakeForecastFetcher:
+    def __init__(self, session: AsyncSession, forecast_repo: ForecastRepository) -> None:
+        self._session = session
+        self._repo = forecast_repo
+
+    async def fetch_fresh_forecast(self, location_id: int) -> int | None:
+        return await _seed_forecast_data(
+            self._session,
+            location_id=location_id if location_id else 1,
+            wind_gusts_base=14.0,
+            num_points=3,
+        )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from langsmith import trace
@@ -37,6 +37,12 @@ from weather_agent.observability.metrics import (
 )
 from weather_agent.settings import SchedulerSettings
 
+if TYPE_CHECKING:
+    from weather_agent.domain.notifications.deduplication import (
+        NotificationDeduplicator,
+    )
+    from weather_agent.domain.notifications.events import NotificationEventService
+
 logger = get_logger(__name__)
 
 
@@ -59,6 +65,11 @@ class ForecastFetcher(Protocol):
     async def fetch_fresh_forecast(self, location_id: int) -> int | None: ...
 
 
+@runtime_checkable
+class NotificationSender(Protocol):
+    async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool: ...
+
+
 class RuleEvaluationWorker:
     def __init__(
         self,
@@ -68,6 +79,9 @@ class RuleEvaluationWorker:
         rule_service: NotificationRuleService,
         settings: SchedulerSettings,
         forecast_fetcher: ForecastFetcher | None = None,
+        notification_sender: NotificationSender | None = None,
+        event_service: NotificationEventService | None = None,
+        deduplicator: NotificationDeduplicator | None = None,
     ) -> None:
         self._session = session
         self._forecast_repo = forecast_repo
@@ -75,6 +89,9 @@ class RuleEvaluationWorker:
         self._rule_service = rule_service
         self._settings = settings
         self._forecast_fetcher = forecast_fetcher
+        self._notification_sender = notification_sender
+        self._event_service = event_service
+        self._deduplicator = deduplicator
 
     async def evaluate_rules(self, dry_run: bool = False) -> list[EvaluationResult]:
         all_rules = await self._rule_service.list_all_enabled_rules()
@@ -116,6 +133,12 @@ class RuleEvaluationWorker:
 
             if not dry_run:
                 for rule, result in zip(rules, results, strict=True):
+                    if result.notification_candidate:
+                        if (
+                            self._notification_sender is not None
+                            and self._event_service is not None
+                        ):
+                            await self._deliver_notification(rule, result)
                     if (
                         result.notification_candidate
                         and rule.schedule is not None
@@ -395,6 +418,70 @@ class RuleEvaluationWorker:
         await self._session.refresh(orm)
         return orm
 
+    async def _deliver_notification(
+        self,
+        rule: NotificationRule,
+        result: EvaluationResult,
+    ) -> None:
+        from weather_agent.domain.notifications.deduplication import NotificationCandidate
+
+        assert self._event_service is not None
+        assert self._notification_sender is not None
+
+        detail = result.evaluation_detail or {}
+
+        window_start: datetime | None = None
+        window_end: datetime | None = None
+        ws_raw = detail.get("forecast_window_start")
+        we_raw = detail.get("forecast_window_end")
+        if isinstance(ws_raw, str):
+            try:
+                window_start = datetime.fromisoformat(ws_raw)
+            except (ValueError, TypeError):
+                pass
+        if isinstance(we_raw, str):
+            try:
+                window_end = datetime.fromisoformat(we_raw)
+            except (ValueError, TypeError):
+                pass
+
+        candidate = NotificationCandidate(
+            rule_id=rule.id,
+            location_id=rule.location_id,
+            expression=rule.expression,
+            forecast_window_start=window_start,
+            forecast_window_end=window_end,
+            payload=detail,
+            dry_run=result.dry_run,
+        )
+
+        suppressed = False
+        suppress_reason: str | None = None
+        if self._deduplicator is not None:
+            suppressed, suppress_reason = await self._deduplicator.should_suppress(rule, candidate)
+
+        event = await self._event_service.create_event(
+            rule=rule,
+            evaluation=result,
+            dedupe_key=None,
+            payload=detail,
+        )
+
+        if suppressed:
+            await self._event_service.mark_suppressed(event.id, suppress_reason or "suppressed")
+            return
+
+        message_text = _build_forecast_message(rule, detail)
+        sent = await self._notification_sender.send(
+            chat_id=rule.telegram_chat_id,
+            thread_id=rule.telegram_message_thread_id,
+            text=message_text,
+        )
+        if sent:
+            await self._event_service.mark_sent(event.id, message_text=message_text)
+        else:
+            await self._event_service.mark_suppressed(event.id, "telegram_send_failed")
+
     async def run_once(self) -> None:
         await self.evaluate_rules()
 
@@ -423,3 +510,66 @@ class RuleEvaluationWorker:
                         outcome="failure",
                     )
             await asyncio.sleep(interval_seconds)
+
+
+_METRIC_LABELS: dict[str, str] = {
+    "temperature_2m_c": "Temperatura",
+    "apparent_temperature_c": "Temperatura odczuwalna",
+    "precipitation_mm": "Opady",
+    "precipitation_probability_pct": "Prawd. opadów",
+    "rain_mm": "Deszcz",
+    "snowfall_cm": "Śnieg",
+    "cloud_cover_pct": "Zachmurzenie",
+    "wind_speed_10m_ms": "Wiatr",
+    "wind_gusts_10m_ms": "Porywy wiatru",
+    "wind_direction_10m_deg": "Kierunek wiatru",
+    "pressure_msl_hpa": "Ciśnienie",
+    "relative_humidity_2m_pct": "Wilgotność",
+}
+
+_UNIT_SUFFIXES: dict[str, str] = {
+    "temperature_2m_c": "°C",
+    "apparent_temperature_c": "°C",
+    "precipitation_mm": " mm",
+    "precipitation_probability_pct": "%",
+    "rain_mm": " mm",
+    "snowfall_cm": " cm",
+    "cloud_cover_pct": "%",
+    "wind_speed_10m_ms": " m/s",
+    "wind_gusts_10m_ms": " m/s",
+    "wind_direction_10m_deg": "°",
+    "pressure_msl_hpa": " hPa",
+    "relative_humidity_2m_pct": "%",
+}
+
+
+def _build_forecast_message(
+    rule: NotificationRule,
+    evaluation_detail: dict[str, Any],
+) -> str:
+    lines: list[str] = []
+
+    if rule.description:
+        lines.append(f"{rule.description}")
+
+    key_metrics = evaluation_detail.get("key_metrics")
+    if isinstance(key_metrics, dict) and key_metrics:
+        for metric, value in key_metrics.items():
+            if isinstance(metric, str) and value is not None:
+                label = _METRIC_LABELS.get(metric, metric)
+                suffix = _UNIT_SUFFIXES.get(metric, "")
+                try:
+                    formatted = f"{float(value):.1f}{suffix}" if suffix else str(value)
+                except (ValueError, TypeError):
+                    formatted = str(value)
+                lines.append(f"{label}: {formatted}")
+
+    window_start = evaluation_detail.get("forecast_window_start")
+    window_end = evaluation_detail.get("forecast_window_end")
+    if window_start and window_end:
+        lines.append(f"Okres: {window_start}  {window_end}")
+
+    if not lines:
+        lines.append("Prognoza niedostepna.")
+
+    return "\n".join(lines)

@@ -41,9 +41,18 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                     error_message=str(exc),
                 )
 
+            from weather_agent.domain.notifications.deduplication import (
+                NotificationDeduplicator,
+            )
+            from weather_agent.domain.notifications.events import (
+                NotificationEventService,
+            )
             from weather_agent.domain.rules.service import NotificationRuleService
             from weather_agent.infrastructure.repositories.forecast_repository import (
                 ForecastRepository,
+            )
+            from weather_agent.infrastructure.worker.forecast_fetcher import (
+                WorkerForecastFetcher,
             )
             from weather_agent.infrastructure.worker.rule_evaluator import (
                 RuleEvaluationWorker,
@@ -61,12 +70,38 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                     )
                     forecast_repo = ForecastRepository(session=session)
 
+                    forecast_fetcher = WorkerForecastFetcher(
+                        session=session,
+                        forecast_provider=app.forecast_provider,
+                        forecast_repo=forecast_repo,
+                    )
+
+                    from weather_agent.adapters.telegram.http_sender import (
+                        TelegramHttpNotificationSender,
+                    )
+                    from weather_agent.observability.logging import get_audit_logger
+
+                    audit_logger = get_audit_logger(session)
+                    event_service = NotificationEventService(
+                        session=session,
+                        audit_logger=audit_logger,
+                    )
+                    deduplicator = NotificationDeduplicator(session=session)
+                    notification_sender = TelegramHttpNotificationSender(
+                        bot_token=app.settings.telegram.bot_token,
+                        httpx_client=app.httpx_client,
+                    )
+
                     worker = RuleEvaluationWorker(
                         session=session,
                         forecast_repo=forecast_repo,
                         cel_evaluator=app.cel_evaluator,
                         rule_service=rule_service,
                         settings=app.settings.scheduler,
+                        forecast_fetcher=forecast_fetcher,
+                        notification_sender=notification_sender,
+                        event_service=event_service,
+                        deduplicator=deduplicator,
                     )
 
                 with bound_worker_context():
