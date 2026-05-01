@@ -87,6 +87,7 @@ Use `returns` when it makes failure, absence, dependency access, async work, or 
 
 - Follow existing repository patterns before introducing new abstractions.
 - Prefer simple functions over classes unless state, polymorphism, or a stable interface justifies a class.
+- Prefer list comprehensions over manual append loops when they remain readable.
 - Prefer `pathlib.Path` for filesystem paths in application code.
 - Use descriptive names and keep functions small enough to understand locally.
 - Add comments only for non-obvious reasoning or constraints.

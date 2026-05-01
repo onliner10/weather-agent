@@ -19,7 +19,7 @@ from weather_agent.llm.model_factory import ModelFactory
 from weather_agent.observability.langsmith_tracing import configure_tracing
 from weather_agent.settings import LangSmithSettings, ModelSettings
 
-DATASET_NAME = "weather-agent-weather-functional-v1"
+DATASET_NAME = "weather-agent-weather-functional-v2"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

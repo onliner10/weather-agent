@@ -1,4 +1,4 @@
-"""Create the weather-agent-weather-functional-v1 LangSmith dataset.
+"""Create the weather-agent-weather-functional-v2 LangSmith dataset.
 
 Usage:
     uv run python scripts/eval/create_weather_grounding_dataset.py
@@ -10,73 +10,13 @@ import sys
 
 from langsmith import Client
 
-DATASET_NAME = "weather-agent-weather-functional-v1"
+from weather_agent.eval.dataset_gen import generate_cases
 
-_CASES: list[dict[str, object]] = [
-    {
-        "id": "grounding-001",
-        "question": "Podaj aktualną wartość temperatury w Chwarznie.",
-        "frozen_facts": {
-            "location": "Chwarzno",
-            "period": "teraz",
-            "temperature_c": 12.0,
-        },
-        "requested_attributes": ["temperature_c"],
-    },
-    {
-        "id": "grounding-002",
-        "question": "Podaj aktualną prędkość wiatru nad Jeziorakiem.",
-        "frozen_facts": {
-            "location": "Jeziorak",
-            "period": "teraz",
-            "wind_speed_ms": 8.5,
-        },
-        "requested_attributes": ["wind_speed_ms"],
-    },
-    {
-        "id": "grounding-003",
-        "question": "Podaj aktualną wartość wilgotności w Gdyni.",
-        "frozen_facts": {
-            "location": "Gdynia",
-            "period": "teraz",
-            "humidity_pct": 82.0,
-        },
-        "requested_attributes": ["humidity_pct"],
-    },
-    {
-        "id": "grounding-004",
-        "question": "Podaj aktualną sumę opadów w Warszawie.",
-        "frozen_facts": {
-            "location": "Warszawa",
-            "period": "teraz",
-            "precipitation_mm": 3.0,
-        },
-        "requested_attributes": ["precipitation_mm"],
-    },
-    {
-        "id": "grounding-005",
-        "question": "Podaj aktualną wartość ciśnienia w Chwarznie.",
-        "frozen_facts": {
-            "location": "Chwarzno",
-            "period": "teraz",
-            "pressure_hpa": 1012.0,
-        },
-        "requested_attributes": ["pressure_hpa"],
-    },
-    {
-        "id": "grounding-006",
-        "question": "Podaj aktualny kierunek wiatru w Chwarznie.",
-        "frozen_facts": {
-            "location": "Chwarzno",
-            "period": "teraz",
-            "wind_direction_deg": 270.0,
-        },
-        "requested_attributes": ["wind_direction_deg"],
-    },
-]
+DATASET_NAME = "weather-agent-weather-functional-v2"
 
 
 def main() -> None:
+    cases = generate_cases()
     client = Client()
     existing = None
     try:
@@ -96,7 +36,9 @@ def main() -> None:
         dataset_name=DATASET_NAME,
         description=(
             "Weather functional correctness benchmark. The real DeepAgent uses "
-            "fixture-backed tools and must answer with required weather facts."
+            "fixture-backed tools and must answer with required weather facts. "
+            "Covers current conditions and forecast periods with explicit hours. "
+            "Forecast fixtures include 24-hour hourly data with distinct values."
         ),
     )
     examples = [
@@ -105,6 +47,8 @@ def main() -> None:
                 "id": case["id"],
                 "question": case["question"],
                 "frozen_facts": case["frozen_facts"],
+                "hourly_values": case.get("hourly_values"),
+                "target_hour": case.get("target_hour"),
             },
             "outputs": {
                 "expected_facts": case["frozen_facts"],
@@ -112,7 +56,7 @@ def main() -> None:
                 "requested_attributes": case["requested_attributes"],
             },
         }
-        for case in _CASES
+        for case in cases
     ]
     client.create_examples(dataset_id=dataset.id, examples=examples)
     print(f"Created dataset '{DATASET_NAME}' with {len(examples)} examples (id={dataset.id})")
