@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from weather_agent.agent_factory import create_weather_agent
+from weather_agent.agent_factory import build_current_time_prompt_suffix, create_weather_agent
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
     ForecastPoint,
@@ -48,6 +47,15 @@ def _normalize_hourly_values(raw: object) -> dict[int, dict[str, float]] | None:
     return normalized
 
 
+def _parse_datetime(raw: object) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
 class _FixtureGeocoder:
     def __init__(self, facts: WeatherFacts) -> None:
         self._facts = facts
@@ -68,9 +76,11 @@ class _FixtureForecastProvider(ForecastProvider):
         self,
         facts: WeatherFacts,
         hourly_values: dict[int, dict[str, float]] | None = None,
+        expected_target_time: datetime | None = None,
     ) -> None:
         self._facts = facts
         self._hourly_values = hourly_values
+        self._expected_target_time = expected_target_time
 
     def _point(
         self,
@@ -106,6 +116,27 @@ class _FixtureForecastProvider(ForecastProvider):
         del variables, resolution
 
         fetched_at = datetime.now(UTC)
+        expected_target_time = self._expected_target_time
+        if (
+            self._hourly_values is not None
+            and expected_target_time is not None
+            and not (time_range.start <= expected_target_time <= time_range.end)
+        ):
+            return ForecastResult(
+                provider=self.provider,
+                model="eval-fixture",
+                location=location,
+                fetched_at=fetched_at,
+                points=[],
+                raw_payload={
+                    "source": "eval-fixture",
+                    "facts": self._facts.model_dump(),
+                    "expected_target_time": expected_target_time.isoformat(),
+                    "requested_start": time_range.start.isoformat(),
+                    "requested_end": time_range.end.isoformat(),
+                    "date_match": False,
+                },
+            )
         fallback_values = {
             "temperature_c": self._facts.temperature_c,
             "precipitation_mm": self._facts.precipitation_mm,
@@ -114,12 +145,11 @@ class _FixtureForecastProvider(ForecastProvider):
             "pressure_hpa": self._facts.pressure_hpa,
             "humidity_pct": self._facts.humidity_pct,
         }
+        target_day = expected_target_time or time_range.start
         points = (
             [
                 self._point(
-                    target_time=time_range.start.replace(
-                        hour=hour, minute=0, second=0, microsecond=0
-                    ),
+                    target_time=target_day.replace(hour=hour, minute=0, second=0, microsecond=0),
                     fetched_at=fetched_at,
                     location=location,
                     values=values,
@@ -192,9 +222,10 @@ class _FixtureObservationProvider(ObservationProvider):
 def _build_fixture_weather_tools(
     facts: WeatherFacts,
     hourly_values: dict[int, dict[str, float]] | None = None,
+    expected_target_time: datetime | None = None,
 ) -> list[Any]:
     toolbox = WeatherToolbox(
-        forecast_provider=_FixtureForecastProvider(facts, hourly_values),
+        forecast_provider=_FixtureForecastProvider(facts, hourly_values, expected_target_time),
         observation_provider=_FixtureObservationProvider(facts),
         geocoder=cast(Any, _FixtureGeocoder(facts)),
         location_service=None,
@@ -206,27 +237,64 @@ def _build_fixture_weather_tools(
 def build_weather_answer_target(
     model: BaseChatModel,
 ) -> Callable[[dict[str, object]], dict[str, Any]]:
+    return build_weather_answer_target_from_factory(lambda: model)
+
+
+def build_weather_answer_target_from_factory(
+    model_factory: Callable[[], BaseChatModel],
+) -> Callable[[dict[str, object]], dict[str, Any]]:
     def weather_answer_target(inputs: dict[str, object]) -> dict[str, Any]:
         example_id = str(inputs["id"])
         question = str(inputs["question"])
         facts = WeatherFacts.model_validate(inputs["frozen_facts"])
         hourly_values = _normalize_hourly_values(inputs.get("hourly_values"))
+        expected_target_time = _parse_datetime(inputs.get("expected_target_time"))
+        current_time = _parse_datetime(inputs.get("current_time"))
         logger.debug("weather_grounding_eval_run", id=example_id, question=question[:80])
         agent = create_weather_agent(
-            model=model,
-            tools=_build_fixture_weather_tools(facts, hourly_values),
+            model=model_factory(),
+            tools=_build_fixture_weather_tools(facts, hourly_values, expected_target_time),
+            system_prompt_suffix=build_current_time_prompt_suffix(current_time),
         )
 
-        async def _run_agent() -> dict[str, Any]:
-            return cast(
-                dict[str, Any],
-                await agent.ainvoke(
-                    {"messages": [HumanMessage(content=question)]},
-                    config={"configurable": {"thread_id": example_id}},
-                ),
-            )
+        result = cast(
+            dict[str, Any],
+            agent.invoke(
+                {"messages": [HumanMessage(content=question)]},
+                config={"configurable": {"thread_id": example_id}},
+            ),
+        )
+        final = result["messages"][-1]
+        answer = final.content if hasattr(final, "content") else str(final)
+        return WeatherAnswerOutput(example_id=example_id, answer=str(answer)).model_dump()
 
-        result = asyncio.run(_run_agent())
+    return weather_answer_target
+
+
+def build_weather_answer_async_target_from_factory(
+    model_factory: Callable[[], BaseChatModel],
+) -> Callable[[dict[str, object]], Awaitable[dict[str, Any]]]:
+    async def weather_answer_target(inputs: dict[str, object]) -> dict[str, Any]:
+        example_id = str(inputs["id"])
+        question = str(inputs["question"])
+        facts = WeatherFacts.model_validate(inputs["frozen_facts"])
+        hourly_values = _normalize_hourly_values(inputs.get("hourly_values"))
+        expected_target_time = _parse_datetime(inputs.get("expected_target_time"))
+        current_time = _parse_datetime(inputs.get("current_time"))
+        logger.debug("weather_grounding_eval_run", id=example_id, question=question[:80])
+        agent = create_weather_agent(
+            model=model_factory(),
+            tools=_build_fixture_weather_tools(facts, hourly_values, expected_target_time),
+            system_prompt_suffix=build_current_time_prompt_suffix(current_time),
+        )
+
+        result = cast(
+            dict[str, Any],
+            await agent.ainvoke(
+                {"messages": [HumanMessage(content=question)]},
+                config={"configurable": {"thread_id": example_id}},
+            ),
+        )
         final = result["messages"][-1]
         answer = final.content if hasattr(final, "content") else str(final)
         return WeatherAnswerOutput(example_id=example_id, answer=str(answer)).model_dump()

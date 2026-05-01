@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from typing import Literal, NotRequired, TypedDict
+from zoneinfo import ZoneInfo
 
 from weather_agent.eval.schemas import WeatherAttribute
 
@@ -12,8 +14,7 @@ PeriodLabel = Literal[
     "za 2 dni",
     "3 maja",
     "w weekend",
-    "w majówkę",
-    "w święta",
+    "w Święto Pracy",
     "za tydzień",
 ]
 
@@ -21,10 +22,12 @@ PeriodLabel = Literal[
 class GeneratedCase(TypedDict):
     id: str
     question: str
+    current_time: str
     frozen_facts: dict[str, object]
     requested_attributes: list[WeatherAttribute]
     hourly_values: NotRequired[dict[int, dict[WeatherAttribute, float]]]
     target_hour: NotRequired[int]
+    expected_target_time: NotRequired[str]
     note: NotRequired[str]
 
 
@@ -43,11 +46,12 @@ PERIODS: list[PeriodLabel] = [
     "za 2 dni",
     "3 maja",
     "w weekend",
-    "w majówkę",
-    "w święta",
+    "w Święto Pracy",
     "za tydzień",
 ]
 FORECAST_HOURS: list[int] = [9, 13, 18]
+EVAL_TIMEZONE = ZoneInfo("Europe/Warsaw")
+EVAL_CURRENT_TIME = datetime(2026, 5, 1, 12, 0, tzinfo=EVAL_TIMEZONE)
 
 _LOCATION_PREP: dict[LocationLabel, str] = {"Warszawa": "w Warszawie"}
 _CURRENT_FRAGMENTS: dict[WeatherAttribute, str] = {
@@ -72,9 +76,17 @@ _PERIOD_SUFFIX: dict[PeriodLabel, str] = {
     "za 2 dni": " za 2 dni",
     "3 maja": " 3 maja",
     "w weekend": " w weekend",
-    "w majówkę": " w majówkę",
-    "w święta": " w święta",
+    "w Święto Pracy": " w Święto Pracy",
     "za tydzień": " za tydzień",
+}
+_PERIOD_TARGET_DAYS: dict[PeriodLabel, tuple[int, int, int]] = {
+    "teraz": (2026, 5, 1),
+    "jutro": (2026, 5, 2),
+    "za 2 dni": (2026, 5, 3),
+    "3 maja": (2026, 5, 3),
+    "w weekend": (2026, 5, 2),
+    "w Święto Pracy": (2026, 5, 1),
+    "za tydzień": (2026, 5, 8),
 }
 
 
@@ -118,6 +130,11 @@ def _forecast_hour(attribute: WeatherAttribute, period: PeriodLabel) -> int:
     return FORECAST_HOURS[(period_idx + attr_idx) % len(FORECAST_HOURS)]
 
 
+def expected_target_time(period: PeriodLabel, hour: int) -> datetime:
+    year, month, day = _PERIOD_TARGET_DAYS[period]
+    return datetime(year, month, day, hour, 0, tzinfo=EVAL_TIMEZONE)
+
+
 def _case(
     idx: int,
     attribute: WeatherAttribute,
@@ -135,6 +152,7 @@ def _case(
     case: GeneratedCase = {
         "id": f"grounding-{idx:03d}",
         "question": build_question(attribute, period, location, hour),
+        "current_time": EVAL_CURRENT_TIME.isoformat(),
         "frozen_facts": {
             "location": location,
             "period": period,
@@ -145,11 +163,7 @@ def _case(
     if hourly_values is not None and hour is not None:
         case["hourly_values"] = hourly_values
         case["target_hour"] = hour
-    if period == "w święta":
-        case["note"] = (
-            "Święta is ambiguous (Easter or Christmas); "
-            "agent must disambiguate from current date context."
-        )
+        case["expected_target_time"] = expected_target_time(period, hour).isoformat()
     return case
 
 

@@ -1,4 +1,4 @@
-"""Create the weather-agent-weather-functional-v2 LangSmith dataset.
+"""Create the weather-agent-weather-functional-v5 LangSmith dataset.
 
 Usage:
     uv run python scripts/eval/create_weather_grounding_dataset.py
@@ -12,7 +12,7 @@ from langsmith import Client
 
 from weather_agent.eval.dataset_gen import generate_cases
 
-DATASET_NAME = "weather-agent-weather-functional-v2"
+DATASET_NAME = "weather-agent-weather-functional-v5"
 
 
 def main() -> None:
@@ -46,9 +46,11 @@ def main() -> None:
             "inputs": {
                 "id": case["id"],
                 "question": case["question"],
+                "current_time": case["current_time"],
                 "frozen_facts": case["frozen_facts"],
                 "hourly_values": case.get("hourly_values"),
                 "target_hour": case.get("target_hour"),
+                "expected_target_time": case.get("expected_target_time"),
             },
             "outputs": {
                 "expected_facts": case["frozen_facts"],

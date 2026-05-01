@@ -52,5 +52,5 @@ class WeatherGroundingExample(BaseModel):
 class WeatherAnswerOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    example_id: str
     answer: str
+    example_id: str

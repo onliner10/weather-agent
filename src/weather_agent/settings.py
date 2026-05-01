@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -46,11 +46,13 @@ class ModelSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: str = "openai"
-    model_name: str = "gpt-4.1-mini"
+    provider: str = "openrouter"
+    model_name: str = "qwen/qwen3.5-flash-02-23"
     temperature: float = 0.2
     api_key: SecretStr | None = None
     base_url: str | None = None
+    routing_sort: Literal["price", "latency", "throughput"] | None = None
+    require_supported_parameters: bool = True
 
 
 class OpenMeteoSettings(BaseModel):

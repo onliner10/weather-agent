@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from weather_agent.agent_factory import create_weather_agent
+from weather_agent.agent_factory import build_current_time_prompt_suffix, create_weather_agent
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.app_container import AppContainer
@@ -30,8 +28,6 @@ from weather_agent.observability.metrics import (
     REPLY_SEND_TOTAL,
 )
 from weather_agent.observability.tracing import build_graph_config
-
-_WARSAW_TZ = ZoneInfo("Europe/Warsaw")
 
 logger = get_logger(__name__)
 
@@ -118,11 +114,7 @@ async def make_message_handler(container: AppContainer) -> Any:
                     weather_toolbox.to_langchain_tools() + rules_toolbox.to_langchain_tools()
                 )
 
-                now = datetime.now(_WARSAW_TZ)
-                context_suffix = (
-                    f"Bieżąca data i godzina w strefie Europe/Warsaw: "
-                    f"{now.strftime('%Y-%m-%d %H:%M')}."
-                )
+                context_suffix = build_current_time_prompt_suffix()
 
                 model = container.model_factory.create_chat_model()
 

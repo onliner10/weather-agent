@@ -109,11 +109,13 @@ See `.env.example` for the full list. Key variables:
 | `POSTGRES_USER` | Yes for Compose | `weather_agent` | Compose Postgres user |
 | `POSTGRES_PASSWORD` | Yes for Compose | — | Compose Postgres password; keep only in local `.env` |
 | `WEATHER_AGENT_DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `WEATHER_AGENT_MODEL__PROVIDER` | No | `openai` | LLM provider: openai, anthropic, deepseek, glm |
-| `WEATHER_AGENT_MODEL__MODEL_NAME` | No | `gpt-5-mini` | Model name for selected provider |
+| `WEATHER_AGENT_MODEL__PROVIDER` | No | `openrouter` | LLM provider: openai, anthropic, deepseek, glm, openrouter |
+| `WEATHER_AGENT_MODEL__MODEL_NAME` | No | `qwen/qwen3.5-flash-02-23` | Model name for selected provider |
 | `WEATHER_AGENT_MODEL__TEMPERATURE` | No | `0.2` | Model temperature |
 | `WEATHER_AGENT_MODEL__API_KEY` | No | — | API key for the selected LLM provider |
-| `WEATHER_AGENT_MODEL__BASE_URL` | No | — | Custom base URL (for DeepSeek, GLM, proxies) |
+| `WEATHER_AGENT_MODEL__BASE_URL` | No | — | Custom base URL (for OpenRouter, DeepSeek, GLM, proxies) |
+| `WEATHER_AGENT_MODEL__ROUTING_SORT` | No | — | Routing preference for routing providers: price, latency, throughput |
+| `WEATHER_AGENT_MODEL__REQUIRE_SUPPORTED_PARAMETERS` | No | `true` | Require routed providers to support requested parameters |
 | `WEATHER_AGENT_OPEN_METEO__BASE_URL` | No | `https://api.open-meteo.com/v1/forecast` | Open-Meteo forecast API |
 | `WEATHER_AGENT_LANGSMITH__ENABLED` | No | `false` | Enable LangSmith tracing |
 
@@ -254,4 +256,20 @@ uv run pytest -m smoke
 
 # Evaluate intent and CEL generation
 uv run pytest tests/eval/
+```
+
+### Model benchmark experiments
+
+Model candidate sweeps are configured in `scripts/eval/model_benchmark_candidates.json`.
+Each candidate is run as a LangSmith experiment so the primary comparison UI is
+LangSmith's dataset experiment and comparison views. The script also writes a
+local JSON summary with experiment IDs and URLs under `reports/eval/`.
+
+```bash
+LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
+  uv run python scripts/eval/benchmark_models.py
+
+# Include dev-only free models from the config
+LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
+  uv run python scripts/eval/benchmark_models.py --include-free
 ```

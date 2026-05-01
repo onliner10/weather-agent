@@ -28,9 +28,22 @@ def test_settings_apply_model_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     settings = AppSettings()
 
-    assert settings.model.provider == "openai"
-    assert settings.model.model_name == "gpt-4.1-mini"
+    assert settings.model.provider == "openrouter"
+    assert settings.model.model_name == "qwen/qwen3.5-flash-02-23"
+    assert settings.model.routing_sort is None
+    assert settings.model.require_supported_parameters is True
     assert settings.telegram.bot_token == SecretStr("telegram-token")
+
+
+def test_settings_allow_model_routing_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_base_env(monkeypatch)
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__ROUTING_SORT", "latency")
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__REQUIRE_SUPPORTED_PARAMETERS", "false")
+
+    settings = AppSettings()
+
+    assert settings.model.routing_sort == "latency"
+    assert settings.model.require_supported_parameters is False
 
 
 def test_settings_allow_unit_overrides(monkeypatch: pytest.MonkeyPatch) -> None:

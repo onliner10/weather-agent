@@ -1,0 +1,91 @@
+{
+  "dataset_name": "weather-agent-weather-functional-v5",
+  "application_tag": "weather-agent-dev",
+  "experiment_prefix": "weather-functional",
+  "repeats": 3,
+  "max_concurrency": 4,
+  "latency_gate_enabled": true,
+  "latency_gate_example_count": 6,
+  "latency_gate_threshold_seconds": 10.0,
+  "full_eval_example_timeout_seconds": 30.0,
+  "output_dir": "reports/eval",
+  "candidates": [
+    {
+      "provider": "openrouter",
+      "model_name": "ibm-granite/granite-4.1-8b",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Cheapest paid tool+structured candidate found."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "openai/gpt-oss-20b",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Cheap 20B-class candidate."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "mistralai/mistral-nemo",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Cheap multilingual baseline."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "qwen/qwen3.5-flash-02-23",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Cheap Qwen flash candidate."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "openai/gpt-oss-120b",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Larger cheap accuracy baseline."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "deepseek/deepseek-v4-flash",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Fast/cheap efficiency baseline."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "google/gemini-2.5-flash-lite",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Latency/reliability baseline."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "openai/gpt-4.1-nano",
+      "production_eligible": true,
+      "routing_sorts": ["price", "latency"],
+      "notes": "Known cheap OpenAI baseline."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "openrouter/owl-alpha",
+      "production_eligible": false,
+      "routing_sorts": [null],
+      "notes": "Free non-expiring dev candidate."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "qwen/qwen3-next-80b-a3b-instruct:free",
+      "production_eligible": false,
+      "routing_sorts": [null],
+      "notes": "Free non-expiring dev candidate."
+    },
+    {
+      "provider": "openrouter",
+      "model_name": "nvidia/nemotron-3-super-120b-a12b:free",
+      "production_eligible": false,
+      "routing_sorts": [null],
+      "notes": "Free non-expiring dev candidate."
+    }
+  ]
+}

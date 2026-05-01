@@ -21,12 +21,14 @@ class TestModelProvider:
         assert ModelProvider.anthropic == "anthropic"
         assert ModelProvider.deepseek == "deepseek"
         assert ModelProvider.glm == "glm"
+        assert ModelProvider.openrouter == "openrouter"
 
     def test_provider_from_string(self) -> None:
         assert ModelProvider("openai") is ModelProvider.openai
         assert ModelProvider("anthropic") is ModelProvider.anthropic
         assert ModelProvider("deepseek") is ModelProvider.deepseek
         assert ModelProvider("glm") is ModelProvider.glm
+        assert ModelProvider("openrouter") is ModelProvider.openrouter
 
     def test_invalid_provider_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -34,13 +36,13 @@ class TestModelProvider:
 
 
 class TestModelFactoryDefaults:
-    def test_default_provider_is_openai(self) -> None:
+    def test_default_provider_is_openrouter(self) -> None:
         factory = ModelFactory()
-        assert factory._provider is ModelProvider.openai
+        assert factory._provider is ModelProvider.openrouter
 
     def test_default_model_name(self) -> None:
         factory = ModelFactory()
-        assert factory._settings.model_name == "gpt-4.1-mini"
+        assert factory._settings.model_name == "qwen/qwen3.5-flash-02-23"
 
     def test_default_temperature(self) -> None:
         factory = ModelFactory()
@@ -116,6 +118,17 @@ class TestCreateChatModel:
         assert model.model_name == "glm-4-flash"
         assert "bigmodel" in model.openai_api_base
 
+    def test_openrouter_creates_chat_openai_with_openrouter_base_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        settings = _make_settings(provider="openrouter", model_name="openai/gpt-4.1-nano")
+        factory = ModelFactory(settings=settings)
+        model = factory.create_chat_model()
+        assert isinstance(model, ChatOpenAI)
+        assert model.model_name == "openai/gpt-4.1-nano"
+        assert model.openai_api_base == "https://openrouter.ai/api/v1"
+
 
 class TestCreateChatModelCustomBaseUrl:
     def test_openai_custom_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,6 +178,78 @@ class TestCreateChatModelCustomBaseUrl:
         model = factory.create_chat_model()
         assert isinstance(model, ChatAnthropic)
         assert model.anthropic_api_url == "https://my-anthropic-proxy.example.com"
+
+    def test_openrouter_custom_base_url_overrides_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        settings = _make_settings(
+            provider="openrouter",
+            model_name="openai/gpt-4.1-nano",
+            base_url="https://my-openrouter-proxy.example.com/v1",
+        )
+        factory = ModelFactory(settings=settings)
+        model = factory.create_chat_model()
+        assert isinstance(model, ChatOpenAI)
+        assert model.openai_api_base == "https://my-openrouter-proxy.example.com/v1"
+
+
+class TestRoutingConfiguration:
+    def test_openrouter_maps_routing_config_to_extra_body(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        settings = _make_settings(
+            provider="openrouter",
+            model_name="openai/gpt-4.1-nano",
+            routing_sort="latency",
+            require_supported_parameters=True,
+        )
+        factory = ModelFactory(settings=settings)
+        model = factory.create_chat_model()
+        assert isinstance(model, ChatOpenAI)
+        assert model.extra_body == {
+            "provider": {
+                "require_parameters": True,
+                "sort": "latency",
+            }
+        }
+
+    def test_openrouter_can_disable_required_supported_parameters(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        settings = _make_settings(
+            provider="openrouter",
+            model_name="openai/gpt-4.1-nano",
+            require_supported_parameters=False,
+        )
+        factory = ModelFactory(settings=settings)
+        model = factory.create_chat_model()
+        assert isinstance(model, ChatOpenAI)
+        assert model.extra_body == {
+            "provider": {
+                "require_parameters": False,
+            }
+        }
+
+    def test_routing_sort_on_direct_provider_raises(self) -> None:
+        settings = _make_settings(
+            provider="openai",
+            model_name="gpt-4.1-nano",
+            routing_sort="price",
+        )
+        with pytest.raises(ValueError, match="routing_sort is only supported"):
+            ModelFactory(settings=settings)
+
+    def test_disabling_required_parameters_on_direct_provider_raises(self) -> None:
+        settings = _make_settings(
+            provider="openai",
+            model_name="gpt-4.1-nano",
+            require_supported_parameters=False,
+        )
+        with pytest.raises(ValueError, match="require_supported_parameters"):
+            ModelFactory(settings=settings)
 
 
 class TestApiKeyHandling:
