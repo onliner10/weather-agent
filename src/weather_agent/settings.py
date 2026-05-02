@@ -69,6 +69,21 @@ class OpenMeteoSettings(BaseModel):
     timeout_seconds: int = 15
 
 
+class GeocodingSettings(BaseModel):
+    """LocationIQ geocoding configuration for user-provided places."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["locationiq"] = "locationiq"
+    base_url: str = "https://eu1.locationiq.com/v1"
+    api_key: SecretStr | None = None
+    countrycodes: str = "pl"
+    language: str = "pl"
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    result_limit: int = Field(default=5, ge=1, le=20)
+    use_autocomplete_fallback: bool = True
+
+
 class ImgwSettings(BaseModel):
     """IMGW source configuration for observations and warnings."""
 
@@ -156,6 +171,7 @@ class AppSettings(BaseSettings):
     langsmith: LangSmithSettings = LangSmithSettings()
     model: ModelSettings = ModelSettings()
     open_meteo: OpenMeteoSettings = OpenMeteoSettings()
+    geocoding: GeocodingSettings = GeocodingSettings()
     imgw: ImgwSettings = ImgwSettings()
     units: GlobalUnitsSettings = GlobalUnitsSettings()
     scheduler: SchedulerSettings = SchedulerSettings()

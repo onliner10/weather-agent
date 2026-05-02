@@ -117,6 +117,8 @@ See `.env.example` for the full list. Key variables:
 | `WEATHER_AGENT_MODEL__ROUTING_SORT` | No | — | Routing preference for routing providers: price, latency, throughput |
 | `WEATHER_AGENT_MODEL__REQUIRE_SUPPORTED_PARAMETERS` | No | `true` | Require routed providers to support requested parameters |
 | `WEATHER_AGENT_OPEN_METEO__BASE_URL` | No | `https://api.open-meteo.com/v1/forecast` | Open-Meteo forecast API |
+| `WEATHER_AGENT_GEOCODING__API_KEY` | Yes for natural-language location lookup | — | LocationIQ API key for resolving districts, neighbourhoods, addresses, and POIs |
+| `WEATHER_AGENT_GEOCODING__BASE_URL` | No | `https://eu1.locationiq.com/v1` | LocationIQ geocoding API base URL |
 | `WEATHER_AGENT_LANGSMITH__ENABLED` | No | `false` | Enable LangSmith tracing |
 
 ## LangSmith tracing

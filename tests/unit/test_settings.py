@@ -36,6 +36,13 @@ def test_settings_apply_model_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.model.fallback_provider is None
     assert settings.model.fallback_model_name is None
     assert settings.telegram.bot_token == SecretStr("telegram-token")
+    assert settings.geocoding.provider == "locationiq"
+    assert settings.geocoding.base_url == "https://eu1.locationiq.com/v1"
+    assert settings.geocoding.api_key is None
+    assert settings.geocoding.countrycodes == "pl"
+    assert settings.geocoding.language == "pl"
+    assert settings.geocoding.timeout_seconds == 10.0
+    assert settings.geocoding.result_limit == 5
 
 
 def test_settings_allow_model_routing_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,6 +54,27 @@ def test_settings_allow_model_routing_overrides(monkeypatch: pytest.MonkeyPatch)
 
     assert settings.model.routing_sort == "latency"
     assert settings.model.require_supported_parameters is False
+
+
+def test_settings_allow_geocoding_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_base_env(monkeypatch)
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__API_KEY", "locationiq-token")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__BASE_URL", "https://api.locationiq.com/v1")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__COUNTRYCODES", "pl,de")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__LANGUAGE", "en")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__RESULT_LIMIT", "8")
+    monkeypatch.setenv("WEATHER_AGENT_GEOCODING__USE_AUTOCOMPLETE_FALLBACK", "false")
+
+    settings = AppSettings()
+
+    assert settings.geocoding.api_key == SecretStr("locationiq-token")
+    assert settings.geocoding.base_url == "https://api.locationiq.com/v1"
+    assert settings.geocoding.countrycodes == "pl,de"
+    assert settings.geocoding.language == "en"
+    assert settings.geocoding.timeout_seconds == 7.5
+    assert settings.geocoding.result_limit == 8
+    assert settings.geocoding.use_autocomplete_fallback is False
 
 
 def test_settings_allow_unit_overrides(monkeypatch: pytest.MonkeyPatch) -> None:

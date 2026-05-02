@@ -102,6 +102,7 @@ class AppContainer:
         )
         self.model_factory = ModelFactory(settings=self.settings.model)
         self.geocoder = Geocoder(
+            settings=self.settings.geocoding,
             model_factory=self.model_factory,
             httpx_client=self.httpx_client,
         )

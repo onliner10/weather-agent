@@ -67,5 +67,8 @@ class BotServices:
         self.forecast_provider = OpenMeteoDwdIconProvider(settings=self.settings.open_meteo)
         self.observation_provider = ImgwSynopProvider(settings=self.settings.imgw)
         self.model_factory = ModelFactory(settings=self.settings.model)
-        self.geocoder = Geocoder(model_factory=self.model_factory)
+        self.geocoder = Geocoder(
+            settings=self.settings.geocoding,
+            model_factory=self.model_factory,
+        )
         logger.info("Application services initialized")
