@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 
 from weather_agent.domain.weather import ForecastResolution, ForecastResult, LocationRef, TimeRange
 from weather_agent.eval import targets
@@ -22,6 +22,12 @@ from weather_agent.eval.dataset_gen import (
     generate_cases,
 )
 from weather_agent.eval.evaluators import weather_functional_correctness
+from weather_agent.eval.judges import (
+    WEATHER_GROUNDEDNESS_JUDGE_PROMPT_VERSION,
+    _build_groundedness_judge_messages,
+    _parse_groundedness_judge_result,
+    build_weather_groundedness_judge,
+)
 from weather_agent.eval.schemas import WeatherFacts
 from weather_agent.eval.targets import (
     _build_fixture_weather_tools,
@@ -31,6 +37,16 @@ from weather_agent.eval.targets import (
     build_weather_answer_target,
     build_weather_answer_target_from_factory,
 )
+
+
+class _FakeJudgeModel:
+    def __init__(self, response: str) -> None:
+        self._response = response
+        self.messages: object | None = None
+
+    async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
+        self.messages = messages
+        return AIMessage(content=self._response)
 
 
 def _facts(**overrides: object) -> dict[str, object]:
@@ -174,6 +190,114 @@ class TestWeatherFunctionalCorrectness:
 
         assert result["score"] == 0.0
         assert "unknown_requested_attribute:unsupported_metric" in str(result["comment"])
+
+
+class TestWeatherGroundednessJudge:
+    def test_prompt_includes_forecast_timing_context(self) -> None:
+        messages = _build_groundedness_judge_messages(
+            answer="W Warszawie 3 maja 2026 o 13:00 będzie 12°C.",
+            question="Podaj wartość temperatury 3 maja o 13:00 w Warszawie.",
+            facts=WeatherFacts(location="Warszawa", period="3 maja", temperature_c=12.0),
+            current_time="2026-05-01T20:34:00+02:00",
+            expected_target_time="2026-05-03T13:00:00+02:00",
+            target_hour=13,
+            required_location=True,
+            requested_attributes=["temperature_c"],
+        )
+
+        prompt_text = "\n".join(str(message.content) for message in messages)
+
+        assert WEATHER_GROUNDEDNESS_JUDGE_PROMPT_VERSION == "weather_groundedness_judge_v2"
+        assert "Eval timing context JSON" in prompt_text
+        assert '"current_time": "2026-05-01T20:34:00+02:00"' in prompt_text
+        assert '"expected_target_time": "2026-05-03T13:00:00+02:00"' in prompt_text
+        assert '"target_hour": 13' in prompt_text
+        assert (
+            "Dates, times, weekdays, and Polish restatements of time are supported" in prompt_text
+        )
+
+    def test_prompt_handles_current_conditions_without_target_time(self) -> None:
+        messages = _build_groundedness_judge_messages(
+            answer="W Warszawie teraz temperatura wynosi 12°C.",
+            question="Podaj aktualną wartość temperatury w Warszawie.",
+            facts=WeatherFacts(location="Warszawa", period="teraz", temperature_c=12.0),
+            current_time="2026-05-01T20:34:00+02:00",
+            expected_target_time=None,
+            target_hour=None,
+            required_location=True,
+            requested_attributes=["temperature_c"],
+        )
+
+        prompt_text = "\n".join(str(message.content) for message in messages)
+
+        assert '"current_time": "2026-05-01T20:34:00+02:00"' in prompt_text
+        assert '"expected_target_time": null' in prompt_text
+        assert '"target_hour": null' in prompt_text
+
+    def test_parse_plain_json_result(self) -> None:
+        result = _parse_groundedness_judge_result('{"score": 1.0, "reason": "ok"}')
+
+        assert result.score == 1.0
+        assert result.reason == "ok"
+
+    def test_parse_fenced_json_result(self) -> None:
+        result = _parse_groundedness_judge_result(
+            '```json\n{"score": 0.5, "reason": "minor unsupported claim"}\n```'
+        )
+
+        assert result.score == 0.5
+        assert result.reason == "minor unsupported claim"
+
+    @pytest.mark.asyncio
+    async def test_judge_returns_separate_feedback_key(self) -> None:
+        model = _FakeJudgeModel('{"score": 1.0, "reason": "fully grounded"}')
+        evaluator = build_weather_groundedness_judge(lambda: model)
+
+        result = await evaluator(
+            {
+                "question": "Jaka jest temperatura w Chwarznie?",
+                "current_time": "2026-05-01T20:34:00+02:00",
+                "expected_target_time": None,
+                "target_hour": None,
+            },
+            {"answer": "W Chwarznie temperatura wynosi 12°C."},
+            {
+                "expected_facts": _facts(),
+                "required_location": True,
+                "requested_attributes": ["temperature_c"],
+            },
+        )
+
+        assert result["key"] == "weather_answer_groundedness_judge"
+        assert result["score"] == 1.0
+        assert result["comment"] == "fully grounded"
+        assert result["metadata"] == {
+            "judge_prompt_version": WEATHER_GROUNDEDNESS_JUDGE_PROMPT_VERSION
+        }
+
+    @pytest.mark.asyncio
+    async def test_judge_parse_error_fails_closed(self) -> None:
+        model = _FakeJudgeModel("not json")
+        evaluator = build_weather_groundedness_judge(lambda: model)
+
+        result = await evaluator(
+            {
+                "question": "Jaka jest temperatura w Chwarznie?",
+                "current_time": "2026-05-01T20:34:00+02:00",
+                "expected_target_time": None,
+                "target_hour": None,
+            },
+            {"answer": "W Chwarznie temperatura wynosi 12°C."},
+            {
+                "expected_facts": _facts(),
+                "required_location": True,
+                "requested_attributes": ["temperature_c"],
+            },
+        )
+
+        assert result["key"] == "weather_answer_groundedness_judge"
+        assert result["score"] == 0.0
+        assert str(result["comment"]).startswith("judge_parse_error:")
 
 
 class TestBuildWeatherAnswerTarget:

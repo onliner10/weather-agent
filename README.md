@@ -153,16 +153,14 @@ If you set any of these manually before the app starts, they take precedence. Wh
 A typical conversational turn produces this hierarchy in LangSmith:
 
 ```
-telegram-turn:<context_key>:<intent>         ← top-level, run_type="chain"
-├── load_thread_context                       ← chain
-├── classify_intent                           ← chain
-├── handle_<intent>                           ← chain
-│   ├── resolve_location_node                 ← implicit via subtraces
-│   ├── propose_cel_rule_llm                  ← llm (rule flow only)
-│   └── weather_agent_node                    ← chain, calls tool functions
-│       ├── get_forecast / get_observations   ← @traceable(run_type="tool")
-│       └── resolve_location                  ← @traceable(run_type="tool")
-└── save_thread_context                       ← chain
+telegram-turn:<context_key>                  ← top-level, run_type="chain"
+├── load_conversation_history                 ← DB-backed context
+├── direct_confirmation_or_cancel             ← deterministic, when pending
+├── agent_runtime                             ← LangChain tool-calling runtime
+│   ├── get_forecast / get_observations       ← @traceable(run_type="tool")
+│   ├── location tools                        ← @traceable(run_type="tool")
+│   └── rule proposal/schedule tools          ← @traceable(run_type="tool")
+└── persist_conversation_turn                 ← DB-backed memory source of truth
 ```
 
 Worker cycles create a separate trace tree:
@@ -188,7 +186,7 @@ send_notification                     ← chain (from sender.py)
 - **`reply_anchor`** — the replied-to message content is not included.
 - **`forecast_result` / `observation_result`** — raw forecast/observation payloads are excluded; only resolved summaries (location name, time explanation) are included.
 - **`pending_confirmation`** — pending rule confirmation data is not traced.
-- **`cel_expression` / `cel_validation_result`** — raw CEL expressions from state are excluded.
+- **`rule_expression` / validation result** — raw rule expressions from state are excluded.
 - **Secrets** — `api_key` values are never written to trace metadata. Only environment variables are set for the LangSmith client.
 
 ### Troubleshooting
@@ -212,14 +210,14 @@ Add locations using the `/dodaj_lok` command or through conversation:
 
 ## Rule examples
 
-Rules are created through natural Polish conversation with the bot. The LLM proposes a CEL expression, which you confirm before activation.
+Rules are created through natural Polish conversation with the bot. The LLM proposes a rule expression, which you confirm before activation.
 
-| User request | Proposed CEL expression |
+| User request | Proposed rule expression |
 |---|---|
 | Weekend summary | (on-demand, no rule needed) |
-| Rain alert | `duration_where(precipitation_mm > 0.2, next_hours(12)) >= minutes(60)` |
-| Wind gust alert | `max("wind_gusts_10m_ms", weekend()) >= 12` |
-| Forecast deterioration | `forecast_delta("apparent_temperature_c", tomorrow(), previous_snapshot()) <= -7` |
+| Rain alert | `duration_minutes(points_between(next_hours(12)).filter(p, p.precipitation_mm > 0.2)) >= minutes(60)` |
+| Wind gust alert | `max_metric("wind_gusts_10m_ms", weekend()) >= 12` |
+| Forecast deterioration | `forecast_delta_metric("apparent_temperature_c", tomorrow(), previous_snapshot()) <= -7` |
 
 ## Docker Compose deployment
 
@@ -249,6 +247,12 @@ cat backup.sql | docker compose exec -T postgres-timescaledb psql -U weather_age
 
 ## Testing
 
+CI treats deterministic functional evals as a hard gate. Pull requests and
+production deploys run `uv run pytest tests/eval tests/unit/eval`; failures
+block the change exactly like unit test failures. Model-backed and AI-judge
+evals are a separate pre-production quality signal in LangSmith until their
+thresholds and flake rate are calibrated enough to block deploys.
+
 ```bash
 # Unit and integration tests (excludes real API calls)
 uv run pytest
@@ -256,19 +260,18 @@ uv run pytest
 # Smoke tests (call real external APIs, skipped by default)
 uv run pytest -m smoke
 
-# Evaluate intent and CEL generation
-uv run pytest tests/eval/
+# Deterministic functional evals (hard CI gate)
+uv run pytest tests/eval tests/unit/eval
 
-# Create and run notification rule proposal fidelity eval
-uv run python scripts/eval/create_notification_rule_dataset.py
+# Sync LangSmith datasets and run all model-quality evals
 LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
-  uv run python scripts/eval/run_notification_rule_eval.py
-
-# Create and run location management eval
-uv run python scripts/eval/create_location_management_dataset.py
-LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
-  uv run python scripts/eval/run_location_management_eval.py
+  uv run python scripts/eval/run_model_quality_evals.py
 ```
+
+The GitHub Actions model-quality workflow uses `LANGSMITH_API_KEY` and
+`WEATHER_AGENT_MODEL__API_KEY` secrets. Set the optional `LANGSMITH_PROJECT`
+repository variable to send those experiments to a non-production project such
+as `weather-agent-preprod`.
 
 ### Model benchmark experiments
 

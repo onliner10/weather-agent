@@ -7,10 +7,10 @@ from sqlalchemy import event
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import (
-    CELValidationError,
     RuleCreate,
+    RuleExpressionValidationError,
     RuleNotFoundError,
     RuleUpdate,
 )
@@ -48,13 +48,15 @@ async def session():
 
 
 @pytest.fixture()
-def cel_evaluator() -> CELEvaluator:
-    return CELEvaluator()
+def rule_expression_evaluator() -> RuleExpressionEvaluator:
+    return RuleExpressionEvaluator()
 
 
 @pytest.fixture()
-def service(session: AsyncSession, cel_evaluator: CELEvaluator) -> NotificationRuleService:
-    return NotificationRuleService(session, cel_evaluator)
+def service(
+    session: AsyncSession, rule_expression_evaluator: RuleExpressionEvaluator
+) -> NotificationRuleService:
+    return NotificationRuleService(session, rule_expression_evaluator)
 
 
 async def _create_user(session: AsyncSession, user_id: int = 1) -> None:
@@ -95,7 +97,7 @@ async def _create_rule_raw(
         telegram_message_thread_id=None,
         location_id=1,
         expression_language="cel",
-        expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+        expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         enabled=True,
         dry_run=False,
         cooldown_minutes=60,
@@ -136,7 +138,7 @@ class TestCreateRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         assert rule.id > 0
@@ -144,7 +146,7 @@ class TestCreateRule:
         assert rule.user_id == 1
         assert rule.telegram_chat_id == 12345
         assert rule.location_id == 1
-        assert rule.expression == 'max("wind_gusts_10m_ms", weekend()) >= 12'
+        assert rule.expression == 'max_metric("wind_gusts_10m_ms", weekend()) >= 12'
         assert rule.expression_language == "cel"
         assert rule.enabled is True
         assert rule.dry_run is False
@@ -159,7 +161,7 @@ class TestCreateRule:
             telegram_chat_id=12345,
             telegram_message_thread_id=42,
             location_id=1,
-            expression='avg("wind_speed_10m_ms", next_hours(24)) >= 7',
+            expression='avg_metric("wind_speed_10m_ms", next_hours(24)) >= 7',
             schedule="0 8 * * *",
             lead_time_minutes=30,
             cooldown_minutes=120,
@@ -172,7 +174,7 @@ class TestCreateRule:
         assert rule.cooldown_minutes == 120
         assert rule.description == "Wind alert"
 
-    async def test_create_validates_cel(
+    async def test_create_validates_rule_expression(
         self, service: NotificationRuleService, session: AsyncSession
     ) -> None:
         await _create_user(session)
@@ -182,7 +184,7 @@ class TestCreateRule:
             location_id=1,
             expression="invalid_function_xyz(123)",
         )
-        with pytest.raises(CELValidationError):
+        with pytest.raises(RuleExpressionValidationError):
             await service.create_rule(1, data)
 
     async def test_create_validates_empty_expression(
@@ -195,7 +197,7 @@ class TestCreateRule:
             location_id=1,
             expression="",
         )
-        with pytest.raises(CELValidationError):
+        with pytest.raises(RuleExpressionValidationError):
             await service.create_rule(1, data)
 
 
@@ -215,12 +217,12 @@ class TestListRules:
         data1 = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         data2 = RuleCreate(
             telegram_chat_id=67890,
             location_id=1,
-            expression='avg("wind_speed_10m_ms", next_hours(24)) >= 7',
+            expression='avg_metric("wind_speed_10m_ms", next_hours(24)) >= 7',
         )
         await service.create_rule(1, data1)
         await service.create_rule(1, data2)
@@ -235,7 +237,7 @@ class TestListRules:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         await service.disable_rule(rule.id)
@@ -250,7 +252,7 @@ class TestListRules:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         await service.disable_rule(rule.id)
@@ -265,7 +267,7 @@ class TestGetRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         created = await service.create_rule(1, data)
         fetched = await service.get_rule(rule_id=created.id)
@@ -281,7 +283,7 @@ class TestGetRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         created = await service.create_rule(1, data)
         fetched = await service.get_rule(short_id=created.short_id)
@@ -296,7 +298,7 @@ class TestGetRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         created = await service.create_rule(1, data)
         fetched = await service.get_rule(short_id=f"#{created.short_id}")
@@ -338,15 +340,15 @@ class TestUpdateRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         updated = await service.update_rule(
-            rule.id, RuleUpdate(expression='avg("temperature_2m_c", tomorrow()) <= 0')
+            rule.id, RuleUpdate(expression='avg_metric("temperature_2m_c", tomorrow()) <= 0')
         )
-        assert updated.expression == 'avg("temperature_2m_c", tomorrow()) <= 0'
+        assert updated.expression == 'avg_metric("temperature_2m_c", tomorrow()) <= 0'
 
-    async def test_update_validates_cel(
+    async def test_update_validates_rule_expression(
         self, service: NotificationRuleService, session: AsyncSession
     ) -> None:
         await _create_user(session)
@@ -354,13 +356,13 @@ class TestUpdateRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
-        with pytest.raises(CELValidationError):
+        with pytest.raises(RuleExpressionValidationError):
             await service.update_rule(rule.id, RuleUpdate(expression="bad_fn(123)"))
 
-    async def test_update_no_cel_validation_when_expression_unchanged(
+    async def test_update_no_rule_expression_validation_when_expression_unchanged(
         self, service: NotificationRuleService, session: AsyncSession
     ) -> None:
         await _create_user(session)
@@ -368,7 +370,7 @@ class TestUpdateRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
             description="original",
         )
         rule = await service.create_rule(1, data)
@@ -390,7 +392,7 @@ class TestUpdateRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         updated = await service.update_rule(rule.id, RuleUpdate(cooldown_minutes=30))
@@ -406,7 +408,7 @@ class TestEnableDisable:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         assert rule.enabled is True
@@ -421,7 +423,7 @@ class TestEnableDisable:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         await service.disable_rule(rule.id)
@@ -450,7 +452,7 @@ class TestDeleteRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         result = await service.delete_rule(rule.id)
@@ -492,7 +494,7 @@ class TestSnoozeRule:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         until = datetime.now(UTC) + timedelta(hours=2)
@@ -516,7 +518,7 @@ class TestSetDryRun:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         )
         rule = await service.create_rule(1, data)
         assert rule.dry_run is False
@@ -531,7 +533,7 @@ class TestSetDryRun:
         data = RuleCreate(
             telegram_chat_id=12345,
             location_id=1,
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
             dry_run=True,
         )
         rule = await service.create_rule(1, data)

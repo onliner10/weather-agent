@@ -35,7 +35,7 @@ def main() -> None:
     dataset = client.create_dataset(
         dataset_name=DATASET_NAME,
         description=(
-            "Weather functional correctness benchmark. The real DeepAgent uses "
+            "Weather functional correctness benchmark. The real agent runtime uses "
             "fixture-backed tools and must answer with required weather facts. "
             "Covers current conditions and forecast periods with explicit hours. "
             "Forecast fixtures include 24-hour hourly data with distinct values."

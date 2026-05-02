@@ -1,6 +1,10 @@
 name: Deploy
 
 on:
+  pull_request:
+    branches:
+      - main
+      - master
   push:
     branches:
       - main
@@ -45,9 +49,35 @@ jobs:
       - name: Run mypy
         run: uv run mypy
 
+  functional-evals:
+    name: Functional evals
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run deterministic functional evals
+        run: uv run pytest tests/eval tests/unit/eval
+
   deploy:
     name: Build and deploy
-    needs: quality
+    needs:
+      - quality
+      - functional-evals
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

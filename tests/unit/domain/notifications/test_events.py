@@ -60,7 +60,7 @@ def _make_rule(
     user_id: int = 1,
     location_id: int = 1,
     cooldown_minutes: int = 60,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
 ) -> NotificationRule:
     return NotificationRule(
         id=id,
@@ -86,7 +86,7 @@ def _make_rule(
 def _make_evaluation_result(
     rule_id: int = 1,
     rule_short_id: str = "R7K2",
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
     notification_candidate: bool = True,
     evaluation_detail: dict | None = None,
 ) -> EvaluationResult:
@@ -149,7 +149,7 @@ async def _create_rule_orm(session: AsyncSession, rule_id: int = 1, short_id: st
         telegram_message_thread_id=None,
         location_id=1,
         expression_language="cel",
-        expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+        expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         enabled=True,
         dry_run=False,
         cooldown_minutes=60,
@@ -325,7 +325,7 @@ class TestCreateEvent:
         evaluation = EvaluationResult(
             rule_id=1,
             rule_short_id="R7K2",
-            expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+            expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
             evaluated=True,
             result=True,
             error=None,

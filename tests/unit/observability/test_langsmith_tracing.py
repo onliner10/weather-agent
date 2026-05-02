@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.weather import LocationRef
@@ -257,8 +257,8 @@ async def _worker_session() -> AsyncSession:
 
 
 @pytest.fixture()
-def _cel_evaluator() -> CELEvaluator:
-    return CELEvaluator()
+def _rule_expression_evaluator() -> RuleExpressionEvaluator:
+    return RuleExpressionEvaluator()
 
 
 @pytest.fixture()
@@ -268,9 +268,9 @@ def _scheduler_settings() -> SchedulerSettings:
 
 @pytest.fixture()
 def _rule_service(
-    _worker_session: AsyncSession, _cel_evaluator: CELEvaluator
+    _worker_session: AsyncSession, _rule_expression_evaluator: RuleExpressionEvaluator
 ) -> NotificationRuleService:
-    return NotificationRuleService(_worker_session, _cel_evaluator)
+    return NotificationRuleService(_worker_session, _rule_expression_evaluator)
 
 
 @pytest.fixture()
@@ -309,7 +309,7 @@ async def _worker_create_rule(
     rule_service: NotificationRuleService,
     user_id: int = 1,
     location_id: int = 1,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
     dry_run: bool = False,
     enabled: bool = True,
 ) -> Any:
@@ -373,7 +373,7 @@ class TestWorkerTraceEmission:
         _worker_session: AsyncSession,
         _forecast_repo: ForecastRepository,
         _rule_service: NotificationRuleService,
-        _cel_evaluator: CELEvaluator,
+        _rule_expression_evaluator: RuleExpressionEvaluator,
         _scheduler_settings: SchedulerSettings,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -391,7 +391,7 @@ class TestWorkerTraceEmission:
         worker = RuleEvaluationWorker(
             session=_worker_session,
             forecast_repo=_forecast_repo,
-            cel_evaluator=_cel_evaluator,
+            rule_expression_evaluator=_rule_expression_evaluator,
             rule_service=_rule_service,
             settings=_scheduler_settings,
         )
@@ -433,7 +433,7 @@ class TestWorkerTraceEmission:
         _worker_session: AsyncSession,
         _forecast_repo: ForecastRepository,
         _rule_service: NotificationRuleService,
-        _cel_evaluator: CELEvaluator,
+        _rule_expression_evaluator: RuleExpressionEvaluator,
         _scheduler_settings: SchedulerSettings,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -451,7 +451,7 @@ class TestWorkerTraceEmission:
         worker = RuleEvaluationWorker(
             session=_worker_session,
             forecast_repo=_forecast_repo,
-            cel_evaluator=_cel_evaluator,
+            rule_expression_evaluator=_rule_expression_evaluator,
             rule_service=_rule_service,
             settings=_scheduler_settings,
         )
@@ -497,7 +497,7 @@ class TestTracingUtilities:
             "resolved_time_range": tr,
             "forecast_result": {"raw_payload": {"large": "data"}},  # type: ignore[dict-item]
             "pending_confirmation": {"action": "activate_rule"},
-            "cel_expression": "temp > 30",
+            "rule_expression": "temp > 30",
         }
 
         metadata = build_telegram_turn_metadata(state)
@@ -523,8 +523,8 @@ class TestTracingUtilities:
         assert "forecast_result" not in metadata
         assert "observation_result" not in metadata
         assert "pending_confirmation" not in metadata
-        assert "cel_expression" not in metadata
-        assert "cel_validation_result" not in metadata
+        assert "rule_expression" not in metadata
+        assert "rule_expression_validation_result" not in metadata
 
     def test_build_telegram_turn_tags(self) -> None:
         state: dict[str, Any] = {

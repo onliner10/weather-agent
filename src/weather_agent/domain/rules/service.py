@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import (
-    CELValidationError,
     NotificationRule,
     RuleCreate,
+    RuleExpressionValidationError,
     RuleNotFoundError,
     RuleUpdate,
     ShortIdCollisionError,
@@ -43,9 +43,11 @@ def _orm_to_domain(orm: NotificationRuleORM) -> NotificationRule:
 
 
 class NotificationRuleService:
-    def __init__(self, session: AsyncSession, cel_evaluator: CELEvaluator) -> None:
+    def __init__(
+        self, session: AsyncSession, rule_expression_evaluator: RuleExpressionEvaluator
+    ) -> None:
         self._session = session
-        self._cel = cel_evaluator
+        self._rule_expression = rule_expression_evaluator
 
     async def _generate_unique_short_id(self) -> str:
         for _ in range(_MAX_COLLISION_RETRIES):
@@ -58,9 +60,11 @@ class NotificationRuleService:
         raise ShortIdCollisionError("")
 
     def _validate_expression(self, expression: str) -> None:
-        validation = self._cel.validate(expression)
+        validation = self._rule_expression.validate(expression)
         if not validation.valid:
-            raise CELValidationError(expression, validation.error or "Invalid CEL expression")
+            raise RuleExpressionValidationError(
+                expression, validation.error or "Invalid rule expression"
+            )
 
     async def create_rule(self, user_id: int, data: RuleCreate) -> NotificationRule:
         self._validate_expression(data.expression)

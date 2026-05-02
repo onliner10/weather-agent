@@ -36,7 +36,7 @@ def main() -> None:
     dataset = client.create_dataset(
         dataset_name=DATASET_NAME,
         description=(
-            "Location management benchmark. The real DeepAgent uses fixture-backed "
+            "Location management benchmark. The real agent runtime uses fixture-backed "
             "location and rule tools and must add, edit, remove, and use default "
             "locations without inventing a location."
         ),

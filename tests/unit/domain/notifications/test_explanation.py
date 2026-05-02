@@ -73,7 +73,7 @@ async def _setup_base_data(session: AsyncSession) -> None:
         telegram_message_thread_id=None,
         location_id=1,
         expression_language="cel",
-        expression='max("wind_gusts_10m_ms", weekend()) >= 12',
+        expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12',
         enabled=True,
         dry_run=False,
         cooldown_minutes=60,
@@ -135,7 +135,7 @@ async def _create_eval_run(
         "snapshot_id": snapshot_id,
         "point_count": 48,
         "evaluated_metrics": ["wind_gusts_10m_ms"],
-        "evaluated_functions": ["max", "weekend"],
+        "evaluated_functions": ["max_metric", "weekend"],
         "expression_result": True,
         "expression_error": None,
         "forecast_window_start": "2025-06-07T00:00:00+02:00",
@@ -219,7 +219,7 @@ class TestExplainNotification:
         service = ExplanationService(session)
         explanation = await service.explain_notification("E9M4")
 
-        assert 'max("wind_gusts_10m_ms", weekend()) >= 12' in explanation
+        assert 'max_metric("wind_gusts_10m_ms", weekend()) >= 12' in explanation
 
     async def test_explanation_suppressed_event(self, session: AsyncSession) -> None:
         await _setup_base_data(session)
@@ -267,7 +267,7 @@ class TestExplainNotification:
             "snapshot_id": 42,
             "point_count": 48,
             "evaluated_metrics": ["temperature_2m_c", "wind_gusts_10m_ms"],
-            "evaluated_functions": ["max", "weekend"],
+            "evaluated_functions": ["max_metric", "weekend"],
             "expression_result": True,
             "expression_error": None,
             "forecast_window_start": "2025-06-07T00:00:00+02:00",

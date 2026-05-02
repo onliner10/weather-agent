@@ -22,10 +22,10 @@ A normalized current or recent weather measurement, typically from IMGW synoptic
 A normalized IMGW weather warning tied to a place and validity window.
 
 ## Rule
-A persisted notification definition containing scope, lifecycle state, validated CEL expression, and delivery controls such as cooldown or snooze.
+A persisted notification definition containing scope, lifecycle state, validated wyrażenie reguły expression, and delivery controls such as cooldown or snooze.
 
 ## Rule expression
-A CEL expression proposed by the LLM or a deterministic edit flow, then validated against the project's metric and function allowlists before activation.
+A wyrażenie reguły expression proposed by the LLM or a deterministic edit flow, then validated against the project's metric and function allowlists before activation.
 
 ## Rule ID
 A short stable identifier such as `#R...` shown to users when referring to an existing notification rule.

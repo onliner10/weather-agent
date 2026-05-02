@@ -11,5 +11,5 @@ Use Telegram as the only interaction channel for the MVP, with a private supergr
 ## Consequences
 
 - The initial UX is optimized for chat-driven weather questions and notifications instead of a web UI.
-- Thread scoping becomes a first-class contract for persistence and LangGraph state.
+- Thread scoping becomes a first-class contract for persistence and explicit conversation history.
 - Future channels must adapt to the same domain contracts rather than reshaping them.

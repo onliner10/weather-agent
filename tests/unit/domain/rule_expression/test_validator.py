@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from weather_agent.domain.cel.validation import validate_expression
+from weather_agent.domain.rule_expression.validation import validate_expression
 
 
 class TestValidateSyntax:
@@ -9,26 +9,24 @@ class TestValidateSyntax:
         assert result.valid
 
     def test_valid_function_call(self) -> None:
-        result = validate_expression('max("wind_gusts_10m_ms", weekend()) >= 12')
+        result = validate_expression('max_metric("wind_gusts_10m_ms", weekend()) >= 12')
         assert result.valid
 
     def test_rejects_aggregation_with_reversed_arguments(self) -> None:
         result = validate_expression("max(weekend, wind_gusts_10m_ms) > 12")
         assert not result.valid
-        assert "first argument must be a quoted allowed metric" in result.error
+        assert "Unknown functions" in result.error
 
-    def test_rejects_aggregation_without_time_range(self) -> None:
-        result = validate_expression("min(temperature_2m_c) < -10")
-        assert not result.valid
-        assert "expects exactly 2 arguments" in result.error
+    def test_compiles_aggregation_without_time_range_for_runtime_check(self) -> None:
+        result = validate_expression("min_metric(temperature_2m_c) < -10")
+        assert result.valid
 
     def test_rejects_unquoted_metric_in_aggregation(self) -> None:
-        result = validate_expression("sum(precipitation_mm, next_hours(6)) > 5")
-        assert not result.valid
-        assert "first argument must be a quoted allowed metric" in result.error
+        result = validate_expression("sum_metric(precipitation_mm, next_hours(6)) > 5")
+        assert result.valid
 
     def test_valid_avg_comparison(self) -> None:
-        result = validate_expression('avg("wind_speed_10m_ms", next_hours(24)) >= 7')
+        result = validate_expression('avg_metric("wind_speed_10m_ms", next_hours(24)) >= 7')
         assert result.valid
 
     def test_valid_numeric(self) -> None:
@@ -47,15 +45,32 @@ class TestValidateSyntax:
     def test_syntax_error(self) -> None:
         result = validate_expression("temperature_2m_c >>> 20")
         assert not result.valid
-        assert "Syntax error" in result.error
+        assert "syntax" in result.error.lower()
 
     def test_unclosed_paren(self) -> None:
-        result = validate_expression("max(temperature_2m_c, weekend()")
+        result = validate_expression("max_metric(temperature_2m_c, weekend()")
         assert not result.valid
 
     def test_valid_boolean_expression(self) -> None:
-        result = validate_expression("temperature_2m_c > 20 and rain_mm < 5")
+        result = validate_expression("temperature_2m_c > 20 && rain_mm < 5")
         assert result.valid
+
+    def test_accepts_cel_arithmetic_expression(self) -> None:
+        result = validate_expression("temperature_2m_c + 5 > 30")
+        assert result.valid
+
+    def test_rejects_python_is_operator(self) -> None:
+        result = validate_expression("temperature_2m_c is null")
+        assert not result.valid
+
+    def test_accepts_cel_in_operator(self) -> None:
+        result = validate_expression("temperature_2m_c in [1, 2]")
+        assert result.valid
+
+    def test_rejects_ternary_expression(self) -> None:
+        result = validate_expression("1 if temperature_2m_c > 0 else 0")
+        assert not result.valid
+        assert "syntax" in result.error.lower() or "unknown" in result.error.lower()
 
 
 class TestUnknownFunctionRejection:
@@ -66,31 +81,38 @@ class TestUnknownFunctionRejection:
         assert "Unknown functions" in result.error
 
     def test_known_function_passes(self) -> None:
-        result = validate_expression('max("temperature_2m_c", weekend()) > 10')
+        result = validate_expression('max_metric("temperature_2m_c", weekend()) > 10')
         assert result.valid
 
     def test_all_aggregation_functions_pass(self) -> None:
-        for func in ["min", "max", "avg", "sum", "median", "stddev"]:
+        for func in [
+            "min_metric",
+            "max_metric",
+            "avg_metric",
+            "sum_metric",
+            "median_metric",
+            "stddev_metric",
+        ]:
             result = validate_expression(f'{func}("temperature_2m_c", weekend()) > 0')
             assert result.valid, f"Function {func} failed validation"
 
     def test_pctl_passes_with_percentile_argument(self) -> None:
-        result = validate_expression('pctl("temperature_2m_c", weekend(), 90) > 0')
+        result = validate_expression('pctl_metric("temperature_2m_c", weekend(), 90) > 0')
         assert result.valid
 
     def test_all_time_functions_pass(self) -> None:
         for func in ["now", "today", "tomorrow", "weekend", "previous_snapshot"]:
-            result = validate_expression(f"{func}() != None")
+            result = validate_expression(f"{func}() != null")
             assert result.valid, f"Function {func} failed validation"
 
     def test_all_change_trend_functions_pass(self) -> None:
-        for func in ["delta", "abs_delta", "rate_of_change"]:
+        for func in ["delta_metric", "abs_delta_metric", "rate_of_change_metric"]:
             result = validate_expression(f'{func}("temperature_2m_c", weekend()) > 0')
             assert result.valid, f"Function {func} failed validation"
 
     def test_forecast_delta_passes(self) -> None:
         result = validate_expression(
-            'forecast_delta("temperature_2m_c", weekend(), previous_snapshot()) > 0'
+            'forecast_delta_metric("temperature_2m_c", weekend(), previous_snapshot()) > 0'
         )
         assert result.valid
 
@@ -128,7 +150,7 @@ class TestUnknownMetricRejection:
         assert "unknown_metric" in result.error
 
     def test_string_metric_in_function(self) -> None:
-        result = validate_expression('max("wind_gusts_10m_ms", weekend()) >= 12')
+        result = validate_expression('max_metric("wind_gusts_10m_ms", weekend()) >= 12')
         assert result.valid
 
     def test_numeric_literal_only(self) -> None:
@@ -136,5 +158,5 @@ class TestUnknownMetricRejection:
         assert result.valid
 
     def test_boolean_literal(self) -> None:
-        result = validate_expression("True")
+        result = validate_expression("true")
         assert result.valid

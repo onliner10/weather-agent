@@ -31,13 +31,13 @@ Use these instructions as operational rules for this repository. Keep changes sm
 - Do not treat `AGENTS.md` as product data, runtime configuration, model context, or application prompt text. If runtime prompt content is needed, use files under `src/weather_agent/llm/prompts/` or explicit configuration.
 - Keep deterministic business logic independent from Telegram, databases, HTTP APIs, schedulers, LangChain, and LLM providers.
 - Treat LLM outputs as untrusted input. Parse and validate them into typed domain values before use.
-- Keep runtime rule evaluation deterministic. LLMs may propose CEL rules, but they must not execute or decide rule results.
+- Keep runtime rule evaluation deterministic. LLMs may propose rule expressions, but they must not execute or decide rule results.
 
 ## Implementation Pitfalls
 
 These rules address common mistakes in this repository. Apply them before choosing an implementation.
 
-- Async SQLAlchemy sessions are not concurrency-safe. If parallel LangGraph/DeepAgents tool calls can touch the same `AsyncSession`, protect all session-using tools with one shared lock or give each tool call its own session. Separate locks per toolbox do not protect a shared session.
+- Async SQLAlchemy sessions are not concurrency-safe. If parallel tool calls can touch the same `AsyncSession`, protect all session-using tools with one shared lock or give each tool call its own session. Separate locks per toolbox do not protect a shared session.
 - Prefer short session/transaction boundaries at the adapter or service boundary. Do not keep a failed `AsyncSession` alive without `rollback()`, and do not let a rollback for one item discard earlier successful writes that the code reports as successful.
 - If code flushes database changes and later code must make those changes durable, explicitly commit at the correct boundary. For example, disabling fired `once:` rules must be committed, not only flushed.
 - Do not run async applications in worker threads to paper over lifecycle issues. Keep Telegram/PTB, HTTP clients, SQLAlchemy async engines, and other async resources on one event loop; use async `start()`/`stop()` APIs when available.
@@ -70,18 +70,12 @@ Don't:
 - Parse and validate external input once at the boundary, then operate on trusted typed values.
 - Keep `mypy` clean under the repository's strict configuration. Suppress type errors only narrowly and at the boundary that requires it.
 
-## Error Handling And `returns`
+## Error Handling
 
-Use `returns` when it makes failure, absence, dependency access, async work, or IO explicit and type-checked. Keep usage simple and readable.
-
-- Expected failure: use `Result[T, DomainError]` with domain-specific error types.
-- Optional value flowing through transformations: use `Maybe[T]`.
-- Sync IO that can fail: use `IOResult[T, Error]`.
-- Async IO that can fail: use `FutureResult[T, Error]`.
-- Injected read-only dependencies across several functions: use `RequiresContext` or `RequiresContextResult` with a small `Protocol`.
-- Pure code that cannot fail: use a plain typed return value, not a container.
-- Do not call `.unwrap()`, `.failure()`, or `unsafe_perform_io` in domain or application decision code. Unwrap only in tests, outer adapters, or tiny integration glue.
-- When introducing `returns` imports in production code, ensure the dependency and `returns.contrib.mypy.returns_plugin` configuration are present in the same change.
+- Use precise exceptions or explicit typed result values for expected failures.
+- Prefer small domain-specific error types over stringly typed failure handling.
+- Keep pure code on plain typed return values when it cannot fail.
+- Do not introduce effect/container libraries unless the dependency and mypy configuration are added in the same focused change and the readability tradeoff is clearly worth it.
 
 ## Python Style
 
@@ -98,7 +92,7 @@ Use `returns` when it makes failure, absence, dependency access, async work, or 
 ## Current Library Documentation
 
 - Use Context7 before relying on remembered APIs for third-party Python libraries, frameworks, SDKs, CLIs, or cloud services.
-- This is especially important for LangChain, Pydantic, SQLAlchemy, FastAPI, Celery, pytest, Ruff, Mypy, Telegram libraries, and `returns`.
+- This is especially important for LangChain, Pydantic, SQLAlchemy, FastAPI, Celery, pytest, Ruff, Mypy, and Telegram libraries.
 - Start by resolving the exact library name, then query the concrete API, configuration, setup, migration, or debugging question.
 - If Context7 cannot identify the library or answer the question, try one alternate package name or a more specific query, then state uncertainty and fall back to local code, installed package metadata, or official docs.
 - Do not use Context7 for this repository's own code, pure Python language features, business logic, architecture decisions, or deterministic domain rules unless a third-party API is directly involved.

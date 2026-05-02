@@ -56,9 +56,9 @@ Required behavior:
 - Ambiguous time range should use a documented default or ask a clarification question.
 - Forecast answers should not invent values absent from tool output.
 - Off-topic questions should be refused briefly and redirected to weather capabilities.
-- Rule requests should produce valid, allowlisted CEL or ask for missing details.
+- Rule requests should produce valid, allowlisted wyrażenie reguły or ask for missing details.
 - Provider failures should produce a Polish user-facing apology with no fake forecast.
-- The bot should never expose raw traces, secrets, prompts, internal CEL validation details, or stack traces.
+- The bot should never expose raw traces, secrets, prompts, internal wyrażenie reguły validation details, or stack traces.
 
 Reference release rule:
 
@@ -78,7 +78,7 @@ Recommended dataset names:
 | `weather-agent-weather-grounding-v1` | Weather answers against frozen tool outputs |
 | `weather-agent-location-time-v1` | Location and time-range extraction |
 | `weather-agent-domain-boundary-v1` | Off-topic, mixed-topic, and adversarial prompts |
-| `weather-agent-rule-cel-v1` | Rule creation and CEL generation |
+| `weather-agent-rule-rule_expression-v1` | Rule creation and wyrażenie reguły generation |
 | `weather-agent-failure-recovery-v1` | Provider/model/tool failures |
 | `weather-agent-production-regressions-v1` | Real failures promoted from production traces |
 
@@ -173,7 +173,7 @@ Required deterministic evaluators:
 | Weather fact correctness | Extracted answer facts match frozen snapshot | `weather_fact_correct` |
 | No unsupported claims | Response does not mention facts absent from snapshot | `no_unsupported_claims` |
 | Refusal correctness | Off-topic examples are refused and weather examples are not | `refusal_correct` |
-| CEL validity | Generated CEL parses and uses allowlisted metrics/functions | `cel_valid` |
+| wyrażenie reguły validity | Generated wyrażenie reguły parses and uses allowlisted metrics/functions | `rule_expression_valid` |
 | Provider failure behavior | Failure examples avoid fake forecasts and apologize in Polish | `failure_recovery_correct` |
 
 These evaluators should return booleans or numeric scores and short explanations. Explanations matter because LangSmith should help diagnose failures quickly.
@@ -225,14 +225,26 @@ Target calibration expectations:
 ## Step 8: Define CI Quality Gates
 
 CI should be stable, deterministic, and strict on critical behavior.
+The first hard gate is the offline functional eval suite:
+
+```bash
+uv run pytest tests/eval tests/unit/eval
+```
+
+This suite runs on pull requests and before production deploys. It must stay
+deterministic, offline, and fast enough to behave like unit tests. Model-backed
+LangSmith experiments and AI-judge checks are a soft pre-production signal for
+now: run them manually or on a schedule, compare the results in LangSmith, and
+promote them to blocking gates only after thresholds and flake rates are
+calibrated.
 
 Recommended CI levels:
 
 | Level | Command | When it runs | Purpose |
 | --- | --- | --- | --- |
-| Smoke | `--suite smoke` | every PR | Fast critical examples |
-| CI | `--suite ci` | every PR touching prompts, tools, LLM flow, or rules | Main blocking gate |
-| Full | `--suite full` | nightly or before release | Larger benchmark and pairwise comparisons |
+| Functional | `uv run pytest tests/eval tests/unit/eval` | every PR and before deploy | Main blocking deterministic gate |
+| Model quality | `uv run python scripts/eval/run_model_quality_evals.py` | manual or nightly | LangSmith comparison and pre-production review |
+| Full | pairwise/model sweeps | before release | Larger benchmark and pairwise comparisons |
 
 Recommended initial thresholds:
 
@@ -244,7 +256,7 @@ Recommended initial thresholds:
 | Intent correctness | 100% | >= 98% | >= 98% |
 | Location correctness | 100% | >= 95% | >= 95% |
 | Time-range correctness | 100% | >= 95% | >= 95% |
-| CEL validity | 100% | >= 98% | >= 98% |
+| wyrażenie reguły validity | 100% | >= 98% | >= 98% |
 | Provider failure recovery | 100% | 100% | 100% |
 | AI-judge groundedness | >= 95% | >= 95% | >= 95% |
 | p95 turn latency on frozen eval | report only | no > 20% regression | no > 20% regression |
@@ -360,7 +372,7 @@ Suggested failure labels:
 - `bad_refusal`
 - `missed_clarification`
 - `provider_failure_bad_response`
-- `cel_invalid`
+- `rule_expression_invalid`
 - `polish_style_issue`
 - `latency_issue`
 
@@ -374,8 +386,8 @@ Recommended flow:
 
 1. Run local unit tests: `uv run pytest`.
 2. Run static checks: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`.
-3. Run eval smoke suite.
-4. Run eval CI suite.
+3. Run deterministic functional evals: `uv run pytest tests/eval tests/unit/eval`.
+4. Run the LangSmith model-quality workflow and review experiment results.
 5. Run pairwise comparison against the current baseline for changed prompts/models.
 6. Deploy to staging with LangSmith project `weather-agent-staging`.
 7. Run a short manual Telegram script against staging.

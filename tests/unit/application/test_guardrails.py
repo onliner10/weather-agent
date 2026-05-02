@@ -1,4 +1,4 @@
-"""Architecture and determinism guardrails for the DeepAgents refactor.
+"""Architecture and determinism guardrails for the runtime refactor.
 
 These tests codify project-wide invariants so they are enforced by ``pytest``
 and cannot regress silently:
@@ -7,7 +7,7 @@ and cannot regress silently:
 2.  Domain-layer modules never import infrastructure, adapters, llm, or
     deepagents — they must remain pure business logic.
 3.  Application-layer modules never import adapters/telegram directly.
-4.  Runtime CEL/rule evaluation paths never call the LLM or model agent.
+4.  Runtime rule expression/rule evaluation paths never call the LLM or model agent.
 """
 
 from __future__ import annotations
@@ -20,8 +20,10 @@ SRC = Path(__file__).resolve().parents[3] / "src" / "weather_agent"
 
 # Files that are deliberately longer than 300 lines, with a reason for each.
 _LINE_COUNT_EXCEPTIONS: dict[str, str] = {
-    "domain/cel/evaluator.py": "Complex CEL evaluation with multiple visitor types",
-    "domain/cel/validation.py": "CEL syntax validation and error recovery",
+    "domain/rule_expression/evaluator.py": (
+        "Complex rule expression evaluation with multiple visitor types"
+    ),
+    "domain/rule_expression/validation.py": "rule expression syntax validation and error recovery",
     "domain/notifications/events.py": "Notification event lifecycle management",
     "domain/locations.py": "Location CRUD with search, alias matching, defaults",
     "infrastructure/worker/rule_evaluator.py": "Rule evaluation worker with scheduling",
@@ -32,7 +34,9 @@ _LINE_COUNT_EXCEPTIONS: dict[str, str] = {
     "eval/targets.py": "Weather grounding eval fixture target with sync and async entrypoints",
     "eval/location_management_targets.py": "Location management eval target orchestration",
     "llm/tools/weather_tools.py": "Weather toolbox with forecast/observations/location",
-    "llm/tools/rules_tools.py": "Rules toolbox with notification rule CRUD and CEL validation",
+    "llm/tools/rules_tools.py": (
+        "Rules toolbox with notification rule CRUD and rule expression validation"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -123,7 +127,7 @@ def test_application_does_not_import_telegram(pyfile: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Deterministic CEL/rule runtime — never calls LLM or model agent
+# 4. Deterministic rule expression/rule runtime — never calls LLM or model agent
 # ---------------------------------------------------------------------------
 
 
@@ -133,13 +137,13 @@ def _all_py_files_under(*parts: str) -> list[Path]:
 
 @pytest.mark.parametrize(
     "pyfile",
-    [p for p in _all_py_files() if "rule" in str(p).lower() or "cel" in str(p).lower()],
+    [p for p in _all_py_files() if "rule" in str(p).lower() or "rule_expression" in str(p).lower()],
     ids=lambda p: str(p.relative_to(SRC)),
 )
 def test_rule_runtime_does_not_call_llm(pyfile: Path) -> None:
     """Runtime rule/evaluation files must not import llm or deepagents.
 
-    LLM may *propose* CEL expressions, but the validation, persistence, and
+    LLM may *propose* rule expression expressions, but the validation, persistence, and
     evaluation paths must remain purely deterministic.
     """
     rel = str(pyfile.relative_to(SRC))
@@ -163,7 +167,6 @@ _INFRASTRUCTURE_BOUNDARY_EXCEPTIONS: frozenset[str] = frozenset(
     {
         "infrastructure/app_container.py",
         "infrastructure/memory/thread_memory.py",
-        "infrastructure/services.py",
     }
 )
 

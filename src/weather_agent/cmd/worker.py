@@ -63,7 +63,7 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                 ):
                     rule_service = NotificationRuleService(
                         session=session,
-                        cel_evaluator=app.cel_evaluator,
+                        rule_expression_evaluator=app.rule_expression_evaluator,
                     )
                     forecast_repo = ForecastRepository(session=session)
 
@@ -92,7 +92,7 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                     worker = RuleEvaluationWorker(
                         session=session,
                         forecast_repo=forecast_repo,
-                        cel_evaluator=app.cel_evaluator,
+                        rule_expression_evaluator=app.rule_expression_evaluator,
                         rule_service=rule_service,
                         settings=app.settings.scheduler,
                         forecast_fetcher=forecast_fetcher,

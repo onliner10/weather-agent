@@ -6,7 +6,7 @@ The bot must explain why a notification fired and must avoid fabricating or rein
 
 ## Decision
 
-Use the LLM only to propose or edit rules in conversational flows. Persist only validated CEL expressions and evaluate them later with deterministic services against stored weather snapshots.
+Use the LLM only to propose or edit rules in conversational flows. Persist only validated wyrażenie reguły expressions and evaluate them later with deterministic services against stored weather snapshots.
 
 ## Consequences
 

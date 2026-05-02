@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 from langchain_core.messages import BaseMessage
+from langchain_core.runnables import RunnableConfig
 
 from weather_agent.agent_factory import create_weather_agent
 from weather_agent.llm.model_factory import ModelFactory
@@ -49,7 +50,7 @@ async def _invoke_agent(
     model: Any,
     tools: list[Any],
     messages: Sequence[BaseMessage],
-    config: dict[str, Any],
+    config: RunnableConfig,
     system_prompt_suffix: str,
     timeout_seconds: float,
 ) -> str:
@@ -69,7 +70,7 @@ async def _invoke_fallback(
     model_factory: ModelFactory,
     tools: list[Any],
     messages: Sequence[BaseMessage],
-    config: dict[str, Any],
+    config: RunnableConfig,
     system_prompt_suffix: str,
     timeout_seconds: float,
     logger: Logger,
@@ -101,7 +102,7 @@ async def invoke_agent_with_timeout(
     model_factory: ModelFactory,
     tools: list[Any],
     messages: Sequence[BaseMessage],
-    config: dict[str, Any],
+    config: RunnableConfig,
     system_prompt_suffix: str,
     timeout_seconds: float,
     logger: Logger,

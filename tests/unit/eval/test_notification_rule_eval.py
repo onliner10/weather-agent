@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.eval import notification_rule_proposal_targets
 from weather_agent.eval.notification_rule_dataset import (
@@ -52,7 +52,7 @@ def _output(
 
 def _proposal_call(
     *,
-    cel: str,
+    rule_expression: str,
     location: str,
     pending: bool | None = True,
     error: str | None = None,
@@ -60,7 +60,7 @@ def _proposal_call(
     return RuleToolCallRecord(
         name="propose_notification_rule",
         args={
-            "cel_expression": cel,
+            "rule_expression": rule_expression,
             "explanation": "Powiadomienie testowe",
             "location_name": location,
             "edit_short_id": "",
@@ -72,7 +72,7 @@ def _proposal_call(
 
 def _schedule_call(
     *,
-    cel: str,
+    rule_expression: str,
     location: str,
     schedule_type: str,
     schedule_expression: str,
@@ -86,7 +86,7 @@ def _schedule_call(
             "schedule_expression": schedule_expression,
             "explanation": "Powiadomienie testowe",
             "location_name": location,
-            "cel_expression": cel,
+            "rule_expression": rule_expression,
         },
         result_pending=pending,
         result_error=error,
@@ -104,11 +104,11 @@ class TestNotificationRuleDataset:
         assert len({case.id for case in cases}) == len(cases)
         assert all("pogorszenie" not in case.question.casefold() for case in cases)
 
-    def test_expected_cel_and_schedules_are_valid(self) -> None:
-        evaluator = CELEvaluator()
+    def test_expected_rule_expression_and_schedules_are_valid(self) -> None:
+        evaluator = RuleExpressionEvaluator()
 
         for case in generate_notification_rule_cases():
-            validation = evaluator.validate(case.expected.expected_cel)
+            validation = evaluator.validate(case.expected.expected_rule_expression)
             assert validation.valid, case.id
             if case.expected.expected_schedule_type is not None:
                 parsed = parse_schedule(
@@ -124,14 +124,14 @@ class TestNotificationRuleEvaluator:
             expected = case.expected
             call = (
                 _schedule_call(
-                    cel=expected.expected_cel,
+                    rule_expression=expected.expected_rule_expression,
                     location=expected.expected_location,
                     schedule_type=str(expected.expected_schedule_type),
                     schedule_expression=str(expected.expected_schedule_expression),
                 )
                 if expected.expected_tool == "schedule_notification"
                 else _proposal_call(
-                    cel=expected.expected_cel,
+                    rule_expression=expected.expected_rule_expression,
                     location=expected.expected_location,
                 )
             )
@@ -146,24 +146,28 @@ class TestNotificationRuleEvaluator:
 
             assert result["score"] == 1.0, (case.id, result["comment"])
 
-    def test_exact_expected_cel_passes(self) -> None:
+    def test_exact_expected_rule_expression_passes(self) -> None:
         expected = _case_expected("rule-proposal-001")
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-001",
-                call=_proposal_call(cel=expected.expected_cel, location="Warszawa"),
+                call=_proposal_call(
+                    rule_expression=expected.expected_rule_expression, location="Warszawa"
+                ),
             ),
             _reference("rule-proposal-001"),
         )
 
         assert result["score"] == 1.0
 
-    def test_semantically_equivalent_cel_passes_without_exact_string_match(self) -> None:
+    def test_semantically_equivalent_rule_expression_passes_without_exact_string_match(
+        self,
+    ) -> None:
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-001",
                 call=_proposal_call(
-                    cel="max('wind_gusts_10m_ms', weekend()) > 12",
+                    rule_expression="max_metric('wind_gusts_10m_ms', weekend()) > 12",
                     location="warszawa",
                 ),
             ),
@@ -177,7 +181,7 @@ class TestNotificationRuleEvaluator:
             _output(
                 case_id="rule-proposal-001",
                 call=_proposal_call(
-                    cel='max("wind_speed_10m_ms", weekend()) > 12',
+                    rule_expression='max_metric("wind_speed_10m_ms", weekend()) > 12',
                     location="Warszawa",
                 ),
             ),
@@ -192,7 +196,7 @@ class TestNotificationRuleEvaluator:
             _output(
                 case_id="rule-proposal-001",
                 call=_proposal_call(
-                    cel='max("wind_gusts_10m_ms", weekend()) > 13',
+                    rule_expression='max_metric("wind_gusts_10m_ms", weekend()) > 13',
                     location="Warszawa",
                 ),
             ),
@@ -200,14 +204,14 @@ class TestNotificationRuleEvaluator:
         )
 
         assert result["score"] == 0.0
-        assert "cel_profile_mismatch:true_case" in str(result["comment"])
+        assert "rule_expression_profile_mismatch:true_case" in str(result["comment"])
 
     def test_wrong_aggregation_fails(self) -> None:
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-005",
                 call=_proposal_call(
-                    cel='max("precipitation_mm", next_hours(hours(6))) > 5',
+                    rule_expression='max_metric("precipitation_mm", next_hours(hours(6))) > 5',
                     location="Chwarzno",
                 ),
             ),
@@ -222,7 +226,7 @@ class TestNotificationRuleEvaluator:
             _output(
                 case_id="rule-proposal-007",
                 call=_schedule_call(
-                    cel='max("wind_speed_10m_ms", today()) > 10',
+                    rule_expression='max_metric("wind_speed_10m_ms", today()) > 10',
                     location="Gdynia",
                     schedule_type="once",
                     schedule_expression="2026-05-02T08:00:00+02:00",
@@ -234,24 +238,26 @@ class TestNotificationRuleEvaluator:
         assert result["score"] == 0.0
         assert "outside_time_guard" in str(result["comment"])
 
-    def test_invalid_cel_fails(self) -> None:
+    def test_invalid_rule_expression_fails(self) -> None:
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-001",
-                call=_proposal_call(cel="not valid cel", location="Warszawa"),
+                call=_proposal_call(
+                    rule_expression="not valid rule expression", location="Warszawa"
+                ),
             ),
             _reference("rule-proposal-001"),
         )
 
         assert result["score"] == 0.0
-        assert "invalid_cel" in str(result["comment"])
+        assert "invalid_rule_expression" in str(result["comment"])
 
-    def test_non_boolean_cel_fails(self) -> None:
+    def test_non_boolean_rule_expression_fails(self) -> None:
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-006",
                 call=_schedule_call(
-                    cel="1",
+                    rule_expression="1",
                     location="Warszawa",
                     schedule_type="cron",
                     schedule_expression="0 7 * * *",
@@ -261,14 +267,16 @@ class TestNotificationRuleEvaluator:
         )
 
         assert result["score"] == 0.0
-        assert "cel_profile_error:true_case" in str(result["comment"])
+        assert "rule_expression_profile_error:true_case" in str(result["comment"])
 
     def test_forbidden_confirmation_call_fails(self) -> None:
         expected = _case_expected("rule-proposal-001")
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-001",
-                call=_proposal_call(cel=expected.expected_cel, location="Warszawa"),
+                call=_proposal_call(
+                    rule_expression=expected.expected_rule_expression, location="Warszawa"
+                ),
                 extra_calls=[
                     RuleToolCallRecord(
                         name="confirm_pending_action",
@@ -289,7 +297,7 @@ class TestNotificationRuleEvaluator:
             _output(
                 case_id="rule-proposal-006",
                 call=_schedule_call(
-                    cel=expected.expected_cel,
+                    rule_expression=expected.expected_rule_expression,
                     location="Kraków",
                     schedule_type="once",
                     schedule_expression="2026-05-02T07:00:00+02:00",
@@ -308,7 +316,9 @@ class TestNotificationRuleEvaluator:
         result = notification_rule_proposal_fidelity(
             _output(
                 case_id="rule-proposal-001",
-                call=_proposal_call(cel=expected.expected_cel, location="Warszawa"),
+                call=_proposal_call(
+                    rule_expression=expected.expected_rule_expression, location="Warszawa"
+                ),
                 answer="Gotowe.",
             ),
             _reference("rule-proposal-001"),
@@ -337,7 +347,7 @@ class TestNotificationRuleTarget:
                 assert isinstance(tools, list)
                 propose = next(tool for tool in tools if tool.name == "propose_notification_rule")
                 await propose.coroutine(
-                    cel_expression='max("wind_gusts_10m_ms", weekend()) > 12.0',
+                    rule_expression='max_metric("wind_gusts_10m_ms", weekend()) > 12.0',
                     explanation="Silne porywy wiatru",
                     location_name="Warszawa",
                 )
@@ -388,7 +398,7 @@ class TestNotificationRuleTarget:
         by_name = {tool.name: tool for tool in tools}
         assert {
             "list_notification_rules",
-            "get_cel_capabilities",
+            "get_rule_expression_capabilities",
             "propose_notification_rule",
             "confirm_pending_action",
             "cancel_pending_action",

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import NotificationRule
 from weather_agent.domain.rules.schedule import is_rule_due, last_cron_slot
 from weather_agent.domain.rules.service import NotificationRuleService
@@ -76,7 +76,7 @@ class RuleEvaluationWorker:
         self,
         session: AsyncSession,
         forecast_repo: ForecastRepository,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         rule_service: NotificationRuleService,
         settings: SchedulerSettings,
         forecast_fetcher: ForecastFetcher | None = None,
@@ -87,7 +87,7 @@ class RuleEvaluationWorker:
     ) -> None:
         self._session = session
         self._forecast_repo = forecast_repo
-        self._cel = cel_evaluator
+        self._rule_expression = rule_expression_evaluator
         self._rule_service = rule_service
         self._settings = settings
         self._forecast_fetcher = forecast_fetcher
@@ -270,19 +270,22 @@ class RuleEvaluationWorker:
                 dry_run=dry_run,
             )
 
-        cel_result = self._cel.evaluate(rule.expression, data)
+        rule_expression_result = self._rule_expression.evaluate(rule.expression, data)
 
-        evaluated = cel_result.error is None
+        evaluated = rule_expression_result.error is None
         result_value: bool | None = None
         error: str | None = None
 
-        if cel_result.error is not None:
-            error = cel_result.error
-        elif isinstance(cel_result.result, bool):
-            result_value = cel_result.result
+        if rule_expression_result.error is not None:
+            error = rule_expression_result.error
+        elif isinstance(rule_expression_result.result, bool):
+            result_value = rule_expression_result.result
         else:
-            result_type = type(cel_result.result).__name__
-            error = f"Expression did not return boolean, got {result_type}: {cel_result.result}"
+            result_type = type(rule_expression_result.result).__name__
+            error = (
+                "Expression did not return boolean, "
+                f"got {result_type}: {rule_expression_result.result}"
+            )
             evaluated = False
 
         notification_candidate = evaluated and result_value is True
@@ -293,10 +296,10 @@ class RuleEvaluationWorker:
             "location_id": rule.location_id,
             "snapshot_id": data.get("snapshot_id"),
             "point_count": len(data.get("points", [])),
-            "evaluated_metrics": cel_result.evaluated_metrics,
-            "evaluated_functions": cel_result.evaluated_functions,
-            "expression_result": cel_result.result,
-            "expression_error": cel_result.error,
+            "evaluated_metrics": rule_expression_result.evaluated_metrics,
+            "evaluated_functions": rule_expression_result.evaluated_functions,
+            "expression_result": rule_expression_result.result,
+            "expression_error": rule_expression_result.error,
         }
 
         if notification_candidate:
@@ -305,7 +308,7 @@ class RuleEvaluationWorker:
             evaluation_detail["forecast_window_start"] = str(first_point.get("target_time", ""))
             evaluation_detail["forecast_window_end"] = str(last_point.get("target_time", ""))
             key_metrics: dict[str, float | str | None] = {}
-            for metric in cel_result.evaluated_metrics:
+            for metric in rule_expression_result.evaluated_metrics:
                 key_metrics[metric] = first_point.get(metric)
             evaluation_detail["key_metrics"] = key_metrics
 

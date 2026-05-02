@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import time as _time
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -10,9 +9,9 @@ from langsmith import traceable
 from pydantic import BaseModel, Field
 
 from weather_agent.application.conversation_models import PendingConfirmation
-from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
-from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.locations import LocationCreate, LocationService
+from weather_agent.domain.rule_expression.allowlist import get_allowlist_for_prompt
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.domain.rules.service import NotificationRuleService
@@ -20,10 +19,7 @@ from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
 from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.infrastructure.memory.thread_memory import ThreadMemoryService
 from weather_agent.observability.logging import get_logger
-from weather_agent.observability.metrics import (
-    TOOL_CALL_DURATION_SECONDS,
-    TOOL_CALLS_TOTAL,
-)
+from weather_agent.observability.metrics import observe_tool_call
 
 logger = get_logger(__name__)
 
@@ -35,15 +31,15 @@ class ListNotificationRulesArgs(BaseModel):
     )
 
 
-class GetCELCapabilitiesArgs(BaseModel):
+class GetRuleExpressionCapabilitiesArgs(BaseModel):
     pass
 
 
 class ProposeNotificationRuleArgs(BaseModel):
-    cel_expression: str = Field(
+    rule_expression: str = Field(
         description=(
-            "Wyrażenie CEL definiujące warunek reguły powiadomienia. "
-            "Używaj tylko dozwolonych funkcji i metryk (sprawdź get_cel_capabilities)."
+            "Wyrażenie reguły definiujące warunek reguły powiadomienia. "
+            "Używaj tylko dozwolonych funkcji i metryk (sprawdź get_rule_expression_capabilities)."
         ),
     )
     explanation: str = Field(
@@ -68,39 +64,7 @@ class CancelPendingActionArgs(BaseModel):
     pass
 
 
-class ListRulesToolResult(BaseModel):
-    rules: list[dict[str, Any]] | None = None
-    count: int = 0
-    error: str | None = None
-
-
-class CELCapabilitiesToolResult(BaseModel):
-    functions: dict[str, list[str]] | None = None
-    metrics: list[str] | None = None
-    signatures: dict[str, str] | None = None
-    rules: list[str] | None = None
-    examples: list[str] | None = None
-    error: str | None = None
-
-
-class ProposeRuleToolResult(BaseModel):
-    proposal: str | None = None
-    cel_expression: str | None = None
-    explanation: str | None = None
-    validated: bool = False
-    pending: bool = False
-    error: str | None = None
-
-
-class ConfirmActionToolResult(BaseModel):
-    answer: str | None = None
-    short_id: str | None = None
-    error: str | None = None
-
-
-class CancelActionToolResult(BaseModel):
-    answer: str | None = None
-    error: str | None = None
+ToolResult = dict[str, Any]
 
 
 class ScheduleNotificationArgs(BaseModel):
@@ -123,18 +87,12 @@ class ScheduleNotificationArgs(BaseModel):
             "Nazwa lokalizacji (np. 'Warszawa', 'dom'). Pusta = domyślna lokalizacja użytkownika."
         ),
     )
-    cel_expression: str = Field(
-        default="True",
+    rule_expression: str = Field(
+        default="true",
         description=(
-            "Opcjonalne wyrażenie CEL warunku. Domyślnie 'True' (natychmiastowe przypomnienie)."
+            "Opcjonalne wyrażenie CEL warunku. Domyślnie 'true' (natychmiastowe przypomnienie)."
         ),
     )
-
-
-class ScheduleRuleToolResult(BaseModel):
-    proposal: str | None = None
-    pending: bool = False
-    error: str | None = None
 
 
 class RulesToolbox:
@@ -142,7 +100,7 @@ class RulesToolbox:
         self,
         rule_service: NotificationRuleService,
         location_service: LocationService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         geocoder: Geocoder,
         memory_service: ThreadMemoryService,
         context_key: str,
@@ -153,7 +111,7 @@ class RulesToolbox:
     ) -> None:
         self.rule_service = rule_service
         self.location_service = location_service
-        self.cel_evaluator = cel_evaluator
+        self.rule_expression_evaluator = rule_expression_evaluator
         self.geocoder = geocoder
         self.memory_service = memory_service
         self.context_key = context_key
@@ -204,104 +162,87 @@ class RulesToolbox:
     async def list_notification_rules(
         self,
         include_disabled: bool = False,
-    ) -> ListRulesToolResult:
+    ) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="list_notification_rules").inc()
-            start = _time.perf_counter()
-            try:
-                rules = await self.rule_service.list_rules(
-                    self.user_id,
-                    include_disabled=include_disabled,
-                )
-                rules_data: list[dict[str, Any]] = []
-                for r in rules:
-                    rules_data.append(
-                        {
-                            "short_id": f"#{r.short_id}",
-                            "expression": r.expression,
-                            "description": r.description or "",
-                            "enabled": r.enabled,
-                            "location_id": r.location_id,
-                        }
+            with observe_tool_call("list_notification_rules"):
+                try:
+                    rules = await self.rule_service.list_rules(
+                        self.user_id,
+                        include_disabled=include_disabled,
                     )
-                return ListRulesToolResult(rules=rules_data, count=len(rules_data))
-            except Exception as exc:
-                logger.exception("list_notification_rules_failed", user_id=self.user_id)
-                return ListRulesToolResult(error=f"Błąd podczas pobierania reguł: {exc}")
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="list_notification_rules").observe(
-                    _time.perf_counter() - start,
-                )
+                    rules_data: list[dict[str, Any]] = []
+                    for r in rules:
+                        rules_data.append(
+                            {
+                                "short_id": f"#{r.short_id}",
+                                "expression": r.expression,
+                                "description": r.description or "",
+                                "enabled": r.enabled,
+                                "location_id": r.location_id,
+                            }
+                        )
+                    return {"rules": rules_data, "count": len(rules_data)}
+                except Exception as exc:
+                    logger.exception("list_notification_rules_failed", user_id=self.user_id)
+                    return {"error": f"Błąd podczas pobierania reguł: {exc}"}
 
     @traceable(run_type="tool")
-    async def get_cel_capabilities(self) -> CELCapabilitiesToolResult:
+    async def get_rule_expression_capabilities(self) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="get_cel_capabilities").inc()
-            start = _time.perf_counter()
-            try:
+            with observe_tool_call("get_rule_expression_capabilities"):
                 allowlist = get_allowlist_for_prompt()
                 functions: dict[str, list[str]] = allowlist["functions"]  # type: ignore[assignment]
                 metrics: list[str] = allowlist["metrics"]  # type: ignore[assignment]
                 signatures: dict[str, str] = allowlist["signatures"]  # type: ignore[assignment]
                 rules: list[str] = allowlist["rules"]  # type: ignore[assignment]
                 examples: list[str] = allowlist["examples"]  # type: ignore[assignment]
-                return CELCapabilitiesToolResult(
-                    functions=functions,
-                    metrics=metrics,
-                    signatures=signatures,
-                    rules=rules,
-                    examples=examples,
-                )
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="get_cel_capabilities").observe(
-                    _time.perf_counter() - start,
-                )
+                return {
+                    "functions": functions,
+                    "metrics": metrics,
+                    "signatures": signatures,
+                    "rules": rules,
+                    "examples": examples,
+                }
 
     @traceable(run_type="tool")
     async def propose_notification_rule(
         self,
-        cel_expression: str,
+        rule_expression: str,
         explanation: str,
         location_name: str = "",
         edit_short_id: str = "",
-    ) -> ProposeRuleToolResult:
+    ) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="propose_notification_rule").inc()
-            start = _time.perf_counter()
-            try:
+            with observe_tool_call("propose_notification_rule"):
                 return await self._execute_propose(
-                    cel_expression,
+                    rule_expression,
                     explanation,
                     location_name,
                     edit_short_id,
                 )
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="propose_notification_rule").observe(
-                    _time.perf_counter() - start,
-                )
 
     async def _execute_propose(
         self,
-        cel_expression: str,
+        rule_expression: str,
         explanation: str,
         location_name: str,
         edit_short_id: str,
-    ) -> ProposeRuleToolResult:
-        validation = self.cel_evaluator.validate(cel_expression)
+    ) -> ToolResult:
+        validation = self.rule_expression_evaluator.validate(rule_expression)
         if not validation.valid:
-            return ProposeRuleToolResult(
-                error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
-                cel_expression=cel_expression,
-                explanation=explanation,
-            )
+            return {
+                "error": f"Nieprawidłowe wyrażenie reguły: {validation.error}",
+                "rule_expression": rule_expression,
+                "explanation": explanation,
+            }
 
         location_id = await self._resolve_location_id(location_name)
         if location_id is None and location_name.strip():
-            return ProposeRuleToolResult(
-                error=f"Nie znaleziono lokalizacji: {location_name}",
-                cel_expression=cel_expression,
-                explanation=explanation,
-            )
+            return {
+                "error": f"Nie znaleziono lokalizacji: {location_name}",
+                "rule_expression": rule_expression,
+                "explanation": explanation,
+            }
 
         if edit_short_id:
             edit_short_id = strip_hash_prefix(edit_short_id.upper().replace("#", ""))
@@ -312,7 +253,7 @@ class RulesToolbox:
 
         pending = PendingConfirmation(
             action=action,
-            cel_expression=validation.expression,
+            rule_expression=validation.expression,
             explanation=explanation,
             validated=True,
             location_id=location_id,
@@ -332,46 +273,38 @@ class RulesToolbox:
             header += f" #{edit_short_id}"
         proposal_text = (
             f"{header}:\n\n"
-            f"\U0001f4dd Wyrażenie CEL: `{validation.expression}`\n"
+            f"\U0001f4dd Wyrażenie reguły: `{validation.expression}`\n"
             f"\U0001f4d6 Opis: {explanation}\n\n"
             "Czy chcesz potwierdzić? (tak/nie)"
         )
 
-        return ProposeRuleToolResult(
-            proposal=proposal_text,
-            cel_expression=validation.expression,
-            explanation=explanation,
-            validated=True,
-            pending=True,
-        )
+        return {
+            "proposal": proposal_text,
+            "rule_expression": validation.expression,
+            "explanation": explanation,
+            "validated": True,
+            "pending": True,
+        }
 
     @traceable(run_type="tool")
-    async def confirm_pending_action(self) -> ConfirmActionToolResult:
+    async def confirm_pending_action(self) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="confirm_pending_action").inc()
-            start = _time.perf_counter()
-            try:
+            with observe_tool_call("confirm_pending_action"):
                 return await self._execute_confirm()
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="confirm_pending_action").observe(
-                    _time.perf_counter() - start,
-                )
 
-    async def _execute_confirm(self) -> ConfirmActionToolResult:
+    async def _execute_confirm(self) -> ToolResult:
         pending_dict = await self.memory_service.get_pending_confirmation(self.context_key)
         if pending_dict is None:
-            return ConfirmActionToolResult(error="Brak oczekującej akcji do potwierdzenia.")
+            return {"error": "Brak oczekującej akcji do potwierdzenia."}
 
         try:
             pending = PendingConfirmation.from_dict(pending_dict)
         except Exception:
             await self.memory_service.clear_pending_confirmation(self.context_key)
-            return ConfirmActionToolResult(
-                error="Nie udało się odczytać oczekującej akcji. Utwórz ją ponownie."
-            )
+            return {"error": "Nie udało się odczytać oczekującej akcji. Utwórz ją ponownie."}
 
-        if pending.cel_expression == "" and pending.action == "create_rule":
-            return ConfirmActionToolResult(error="Brak oczekującej reguły do potwierdzenia.")
+        if pending.rule_expression == "" and pending.action == "create_rule":
+            return {"error": "Brak oczekującej reguły do potwierdzenia."}
 
         location_id = pending.location_id
         if location_id is None:
@@ -383,9 +316,7 @@ class RulesToolbox:
                     pass
 
         if location_id is None:
-            return ConfirmActionToolResult(
-                error="Nie udało się rozpoznać lokalizacji dla reguły.",
-            )
+            return {"error": "Nie udało się rozpoznać lokalizacji dla reguły."}
 
         effective_chat_id = pending.chat_id if pending.chat_id is not None else self.chat_id
         effective_thread_id = (
@@ -393,7 +324,7 @@ class RulesToolbox:
             if pending.message_thread_id is not None
             else self.message_thread_id
         )
-        cel_expression = pending.cel_expression
+        rule_expression = pending.rule_expression
         explanation = pending.explanation
 
         try:
@@ -404,7 +335,7 @@ class RulesToolbox:
                         telegram_chat_id=effective_chat_id,
                         telegram_message_thread_id=effective_thread_id,
                         location_id=location_id,
-                        expression=cel_expression,
+                        expression=rule_expression,
                         schedule=pending.schedule,
                         lead_time_minutes=pending.lead_time_minutes,
                         description=explanation,
@@ -413,7 +344,7 @@ class RulesToolbox:
                 schedule_info = f"harmonogram: {pending.schedule}" if pending.schedule else ""
                 answer = (
                     f"Nowe zaplanowane powiadomienie #{rule.short_id} zostało zapisane.\n"
-                    f"\U0001f4dd CEL: `{rule.expression}`\n"
+                    f"\U0001f4dd wyrażenie reguły: `{rule.expression}`\n"
                     f"\U0001f4c5 {schedule_info}"
                 )
                 short_id = rule.short_id
@@ -423,18 +354,16 @@ class RulesToolbox:
                     short_id=pending.edit_short_id,
                 )
                 if existing is None:
-                    return ConfirmActionToolResult(
-                        error=f"Nie znaleziono reguły #{pending.edit_short_id}",
-                    )
+                    return {"error": f"Nie znaleziono reguły #{pending.edit_short_id}"}
                 from weather_agent.domain.rules.models import RuleUpdate
 
                 rule = await self.rule_service.update_rule(
                     existing.id,
-                    RuleUpdate(expression=cel_expression, description=explanation),
+                    RuleUpdate(expression=rule_expression, description=explanation),
                 )
                 answer = (
                     f"Reguła #{rule.short_id} została zaktualizowana.\n"
-                    f"\U0001f4dd CEL: `{rule.expression}`"
+                    f"\U0001f4dd wyrażenie reguły: `{rule.expression}`"
                 )
                 short_id = rule.short_id
             else:
@@ -444,55 +373,47 @@ class RulesToolbox:
                         telegram_chat_id=effective_chat_id,
                         telegram_message_thread_id=effective_thread_id,
                         location_id=location_id,
-                        expression=cel_expression,
+                        expression=rule_expression,
                         description=explanation,
                     ),
                 )
                 answer = (
                     f"Nowa reguła #{rule.short_id} została zapisana.\n"
-                    f"\U0001f4dd CEL: `{rule.expression}`"
+                    f"\U0001f4dd wyrażenie reguły: `{rule.expression}`"
                 )
                 short_id = rule.short_id
 
             await self.memory_service.clear_pending_confirmation(self.context_key)
-            return ConfirmActionToolResult(answer=answer, short_id=short_id)
+            return {"answer": answer, "short_id": short_id}
 
         except Exception as exc:
             logger.exception("confirm_pending_action_failed", user_id=self.user_id)
-            return ConfirmActionToolResult(error=f"Błąd podczas potwierdzania: {exc}")
+            return {"error": f"Błąd podczas potwierdzania: {exc}"}
 
     @traceable(run_type="tool")
-    async def cancel_pending_action(self) -> CancelActionToolResult:
+    async def cancel_pending_action(self) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="cancel_pending_action").inc()
-            start = _time.perf_counter()
-            try:
+            with observe_tool_call("cancel_pending_action"):
                 return await self._execute_cancel()
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="cancel_pending_action").observe(
-                    _time.perf_counter() - start,
-                )
 
-    async def _execute_cancel(self) -> CancelActionToolResult:
+    async def _execute_cancel(self) -> ToolResult:
         pending_dict = await self.memory_service.get_pending_confirmation(self.context_key)
         if pending_dict is None:
-            return CancelActionToolResult(error="Brak oczekującej akcji do anulowania.")
+            return {"error": "Brak oczekującej akcji do anulowania."}
 
         try:
             pending = PendingConfirmation.from_dict(pending_dict)
         except Exception:
             await self.memory_service.clear_pending_confirmation(self.context_key)
-            return CancelActionToolResult(answer="Nieprawidłowa oczekująca akcja została usunięta.")
+            return {"answer": "Nieprawidłowa oczekująca akcja została usunięta."}
 
         action = pending.action
 
         await self.memory_service.clear_pending_confirmation(self.context_key)
 
         if action == "edit_rule" and pending.edit_short_id:
-            return CancelActionToolResult(
-                answer=f"Edycja reguły #{pending.edit_short_id} została anulowana.",
-            )
-        return CancelActionToolResult(answer="Reguła została anulowana.")
+            return {"answer": f"Edycja reguły #{pending.edit_short_id} została anulowana."}
+        return {"answer": "Reguła została anulowana."}
 
     @traceable(run_type="tool")
     async def schedule_notification(
@@ -501,34 +422,26 @@ class RulesToolbox:
         schedule_expression: str,
         explanation: str,
         location_name: str = "",
-        cel_expression: str = "True",
-    ) -> ScheduleRuleToolResult:
+        rule_expression: str = "true",
+    ) -> ToolResult:
         async with self._lock:
-            TOOL_CALLS_TOTAL.labels(tool="schedule_notification").inc()
-            start = _time.perf_counter()
-            try:
-                validation = self.cel_evaluator.validate(cel_expression)
+            with observe_tool_call("schedule_notification"):
+                validation = self.rule_expression_evaluator.validate(rule_expression)
                 if not validation.valid:
-                    return ScheduleRuleToolResult(
-                        error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
-                    )
+                    return {"error": f"Nieprawidłowe wyrażenie reguły: {validation.error}"}
 
                 schedule_str = f"{schedule_type}:{schedule_expression}"
                 parsed = parse_schedule(schedule_str)
                 if not parsed.valid:
-                    return ScheduleRuleToolResult(
-                        error=f"Nieprawidłowy harmonogram: {parsed.error}",
-                    )
+                    return {"error": f"Nieprawidłowy harmonogram: {parsed.error}"}
 
                 location_id = await self._resolve_location_id(location_name)
                 if location_id is None and location_name.strip():
-                    return ScheduleRuleToolResult(
-                        error=f"Nie znaleziono lokalizacji: {location_name}",
-                    )
+                    return {"error": f"Nie znaleziono lokalizacji: {location_name}"}
 
                 pending = PendingConfirmation(
                     action="schedule_notification",
-                    cel_expression=validation.expression,
+                    rule_expression=validation.expression,
                     explanation=explanation,
                     validated=True,
                     location_id=location_id,
@@ -551,16 +464,12 @@ class RulesToolbox:
                 proposal_text = (
                     f"Propozycja zaplanowanego powiadomienia:\n\n"
                     f"\U0001f4c5 Harmonogram: {schedule_desc}\n"
-                    f"\U0001f4dd Wyrażenie CEL: `{validation.expression}`\n"
+                    f"\U0001f4dd Wyrażenie reguły: `{validation.expression}`\n"
                     f"\U0001f4d6 Opis: {explanation}\n\n"
                     "Czy chcesz potwierdzić? (tak/nie)"
                 )
 
-                return ScheduleRuleToolResult(proposal=proposal_text, pending=True)
-            finally:
-                TOOL_CALL_DURATION_SECONDS.labels(tool="schedule_notification").observe(
-                    _time.perf_counter() - start,
-                )
+                return {"proposal": proposal_text, "pending": True}
 
     def to_langchain_tools(self) -> list[StructuredTool]:
         return [
@@ -574,21 +483,22 @@ class RulesToolbox:
                 args_schema=ListNotificationRulesArgs,
             ),
             StructuredTool.from_function(
-                coroutine=self.get_cel_capabilities,
-                name="get_cel_capabilities",
+                coroutine=self.get_rule_expression_capabilities,
+                name="get_rule_expression_capabilities",
                 description=(
-                    "Pobierz listę dostępnych funkcji CEL i metryk pogodowych. "
-                    "Użyj przed tworzeniem wyrażenia CEL dla reguły powiadomienia."
+                    "Pobierz listę dostępnych funkcji wyrażenie reguły i metryk pogodowych. "
+                    "Użyj przed tworzeniem wyrażenia reguły dla reguły powiadomienia."
                 ),
-                args_schema=GetCELCapabilitiesArgs,
+                args_schema=GetRuleExpressionCapabilitiesArgs,
             ),
             StructuredTool.from_function(
                 coroutine=self.propose_notification_rule,
                 name="propose_notification_rule",
                 description=(
-                    "Zaproponuj regułę powiadomienia na podstawie wyrażenia CEL i opisu. "
-                    "Najpierw użyj get_cel_capabilities aby poznać dostępne funkcje i metryki. "
-                    "Narzędzie waliduje wyrażenie CEL deterministycznie i zapisuje propozycję "
+                    "Zaproponuj regułę powiadomienia na podstawie wyrażenia reguły i opisu. "
+                    "Najpierw użyj get_rule_expression_capabilities, aby poznać "
+                    "dostępne funkcje i metryki. "
+                    "Narzędzie waliduje wyrażenie reguły deterministycznie i zapisuje propozycję "
                     "do potwierdzenia przez użytkownika. NIE tworzy reguły natychmiast — "
                     "użytkownik musi potwierdzić za pomocą confirm_pending_action."
                 ),
@@ -618,10 +528,10 @@ class RulesToolbox:
                 coroutine=self.schedule_notification,
                 name="schedule_notification",
                 description=(
-                    "Zaplanuj powiadomienie z opcjonalnym warunkiem CEL. "
+                    "Zaplanuj powiadomienie z opcjonalnym warunkiem wyrażenie reguły. "
                     "Przyjmuje typ harmonogramu (once/cron), wyrażenie harmonogramu "
                     "(ISO datetime lub 5-polowe cron), opis, lokalizację "
-                    "i opcjonalne wyrażenie CEL. Waliduje harmonogram i CEL, "
+                    "i opcjonalne wyrażenie reguły. Waliduje harmonogram i wyrażenie reguły, "
                     "a następnie zapisuje propozycję do potwierdzenia przez użytkownika."
                 ),
                 args_schema=ScheduleNotificationArgs,

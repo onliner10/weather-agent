@@ -1,4 +1,4 @@
-# ADR 0004: CEL with allowlisted helpers for rule expressions
+# ADR 0004: CEL rule expressions with allowlisted weather helpers
 
 ## Context
 
@@ -6,7 +6,7 @@ Users need expressive weather notification logic, but evaluating arbitrary Pytho
 
 ## Decision
 
-Represent rule expressions in CEL and validate them against an explicit allowlist of helper functions and weather metrics before a rule can be activated.
+Represent rule expressions as CEL and validate them against an explicit allowlist of helper functions and weather metrics before a rule can be activated.
 
 ## Consequences
 

@@ -4,11 +4,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from weather_agent.eval.notification_rule_schemas import (
-    CELDiscriminatorProfile,
     ExpectedRuleProposal,
     ExpectedRuleTool,
     ExpectedScheduleType,
     NotificationRuleEvalCase,
+    RuleExpressionDiscriminatorProfile,
 )
 
 DATASET_NAME = "weather-agent-notification-rule-proposal-v1"
@@ -27,8 +27,8 @@ def _profile(
     name: str,
     expected_result: bool,
     *points: dict[str, object],
-) -> CELDiscriminatorProfile:
-    return CELDiscriminatorProfile(
+) -> RuleExpressionDiscriminatorProfile:
+    return RuleExpressionDiscriminatorProfile(
         name=name,
         points=list(points),
         expected_result=expected_result,
@@ -38,19 +38,19 @@ def _profile(
 def _expected(
     *,
     tool: ExpectedRuleTool,
-    cel: str,
+    rule_expression: str,
     location: str,
-    profiles: list[CELDiscriminatorProfile],
+    profiles: list[RuleExpressionDiscriminatorProfile],
     schedule_type: ExpectedScheduleType | None = None,
     schedule_expression: str | None = None,
 ) -> ExpectedRuleProposal:
     return ExpectedRuleProposal(
         expected_tool=tool,
-        expected_cel=cel,
+        expected_rule_expression=rule_expression,
         expected_location=location,
         expected_schedule_type=schedule_type,
         expected_schedule_expression=schedule_expression,
-        cel_discriminators=profiles,
+        rule_expression_discriminators=profiles,
     )
 
 
@@ -64,7 +64,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='max("wind_gusts_10m_ms", weekend()) > 12.0',
+                rule_expression='max_metric("wind_gusts_10m_ms", weekend()) > 12.0',
                 location="Warszawa",
                 profiles=[
                     _profile("true_case", True, _point(2, 10, wind_gusts_10m_ms=13.0)),
@@ -84,7 +84,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='min("temperature_2m_c", today()) < -10.0',
+                rule_expression='min_metric("temperature_2m_c", today()) < -10.0',
                 location="Kraków",
                 profiles=[
                     _profile("true_case", True, _point(1, 15, temperature_2m_c=-11.0)),
@@ -104,7 +104,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='min("pressure_msl_hpa", today()) < 1000.0',
+                rule_expression='min_metric("pressure_msl_hpa", today()) < 1000.0',
                 location="Gdańsk",
                 profiles=[
                     _profile("true_case", True, _point(1, 15, pressure_msl_hpa=999.0)),
@@ -124,7 +124,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='max("relative_humidity_2m_pct", today()) > 90.0',
+                rule_expression='max_metric("relative_humidity_2m_pct", today()) > 90.0',
                 location="Wrocław",
                 profiles=[
                     _profile("true_case", True, _point(1, 15, relative_humidity_2m_pct=91.0)),
@@ -150,7 +150,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='sum("precipitation_mm", next_hours(hours(6))) > 5.0',
+                rule_expression='sum_metric("precipitation_mm", next_hours(hours(6))) > 5.0',
                 location="Chwarzno",
                 profiles=[
                     _profile(
@@ -186,7 +186,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="schedule_notification",
-                cel="True",
+                rule_expression="true",
                 location="Warszawa",
                 schedule_type="cron",
                 schedule_expression="0 7 * * *",
@@ -199,7 +199,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="schedule_notification",
-                cel='max("wind_speed_10m_ms", tomorrow()) > 10.0',
+                rule_expression='max_metric("wind_speed_10m_ms", tomorrow()) > 10.0',
                 location="Gdynia",
                 schedule_type="once",
                 schedule_expression="2026-05-02T08:00:00+02:00",
@@ -224,7 +224,7 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             current_time=EVAL_CURRENT_TIME,
             expected=_expected(
                 tool="propose_notification_rule",
-                cel='min("temperature_2m_c", today()) < 0.0',
+                rule_expression='min_metric("temperature_2m_c", today()) < 0.0',
                 location="Poznań",
                 profiles=[
                     _profile("true_case", True, _point(1, 15, temperature_2m_c=-1.0)),

@@ -17,7 +17,7 @@ def _make_rule(
     short_id: str = "R7K2",
     telegram_chat_id: int = 100,
     telegram_message_thread_id: int | None = None,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
     description: str | None = None,
     dry_run: bool = False,
 ) -> NotificationRule:
@@ -81,10 +81,10 @@ class TestFormatNotificationMessage:
         assert "#E9M4" in msg
 
     def test_contains_expression(self) -> None:
-        rule = _make_rule(expression='max("wind_gusts_10m_ms", weekend()) >= 12')
+        rule = _make_rule(expression='max_metric("wind_gusts_10m_ms", weekend()) >= 12')
         event = _make_event()
         msg = format_notification_message(rule, event, "Porywy wiatru powyżej 12 m/s")
-        assert 'max("wind_gusts_10m_ms", weekend()) >= 12' in msg
+        assert 'max_metric("wind_gusts_10m_ms", weekend()) >= 12' in msg
 
     def test_contains_explanation(self) -> None:
         rule = _make_rule()

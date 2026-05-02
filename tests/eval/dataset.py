@@ -8,7 +8,7 @@ class EvalCase(BaseModel):
     category: str
     input_message: str
     expected_intent: str | None = None
-    expected_cel: str | None = None
+    expected_rule_expression: str | None = None
     expected_location: str | None = None
     expected_time_range: str | None = None
     expected_response_pattern: str | None = None
@@ -62,33 +62,35 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom mnie jeśli porywy wiatru w weekend będą powyżej 12 m/s",
         expected_intent="rule",
-        expected_cel='max("wind_gusts_10m_ms", weekend()) > 12.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='max_metric("wind_gusts_10m_ms", weekend()) > 12.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-007",
         category="rule_create",
         input_message="powiadom mnie w każdy piątek o 17 wyślij prognozę dla Chwarzna",
         expected_intent="rule",
-        expected_cel=None,
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
-        metadata={"note": "recurring schedule rule without standard CEL time helper"},
+        expected_rule_expression=None,
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
+        metadata={"note": "recurring schedule rule without standard wyrażenie reguły time helper"},
     ),
     EvalCase(
         id="eval-008",
         category="rule_create",
         input_message="powiadom jak będzie padać, napisz 15 minut wcześniej",
         expected_intent="rule",
-        expected_cel="any(precipitation_mm > 0.0, next_hours(minutes(15)))",
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression=(
+            "points_between(next_hours(minutes(15))).exists(p, p.precipitation_mm > 0.0)"
+        ),
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-009",
         category="rule_create",
         input_message="powiadom mnie o nagłym pogorszeniu pogody",
         expected_intent="rule",
-        expected_cel=None,
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression=None,
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
         metadata={"note": "ambiguous deterioration requires LLM interpretation"},
     ),
     EvalCase(
@@ -100,15 +102,15 @@ EVAL_CASES: list[EvalCase] = [
         ),
         expected_intent="rule",
         expected_location="Jeziorak",
-        expected_cel='avg("wind_speed_10m_ms", weekend()) > 7.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='avg_metric("wind_speed_10m_ms", weekend()) > 7.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-011",
         category="rule_edit",
         input_message="powiadom dodaj temperaturę do #R7K2",
         expected_intent="rule",
-        expected_response_pattern=r"CEL|wyrażeni|reguł|#R7K2",
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł|#R7K2",
     ),
     EvalCase(
         id="eval-012",
@@ -153,16 +155,16 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="powiadom jeśli temperatura spadnie poniżej -10 stopni",
         expected_intent="rule",
-        expected_cel='min("temperature_2m_c", today()) < -10.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='min_metric("temperature_2m_c", today()) < -10.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-018",
         category="rule_create",
         input_message="powiadom gdy opady przekroczą 5mm przez następne 6 godzin",
         expected_intent="rule",
-        expected_cel='sum("precipitation_mm", next_hours(hours(6))) > 5.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='sum_metric("precipitation_mm", next_hours(hours(6))) > 5.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-019",
@@ -200,16 +202,16 @@ EVAL_CASES: list[EvalCase] = [
         category="rule_create",
         input_message="niech powiadomi gdy ciśnienie spadnie poniżej 1000 hPa",
         expected_intent="rule",
-        expected_cel='min("pressure_msl_hpa", today()) < 1000.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='min_metric("pressure_msl_hpa", today()) < 1000.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-024",
         category="rule_create",
         input_message="powiadom gdy wilgotność przekroczy 90%",
         expected_intent="rule",
-        expected_cel='max("relative_humidity_2m_pct", today()) > 90.0',
-        expected_response_pattern=r"CEL|wyrażeni|reguł",
+        expected_rule_expression='max_metric("relative_humidity_2m_pct", today()) > 90.0',
+        expected_response_pattern=r"wyrażenie reguły|wyrażeni|reguł",
     ),
     EvalCase(
         id="eval-025",

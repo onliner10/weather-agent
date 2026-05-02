@@ -91,11 +91,11 @@ class RuleNotFoundError(Exception):
         super().__init__(msg)
 
 
-class CELValidationError(Exception):
+class RuleExpressionValidationError(Exception):
     def __init__(self, expression: str, error: str) -> None:
         self.expression = expression
         self.error = error
-        super().__init__(f"CEL validation error: {error}")
+        super().__init__(f"Rule expression validation error: {error}")
 
 
 class ShortIdCollisionError(Exception):

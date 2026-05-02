@@ -36,7 +36,7 @@ def main() -> None:
     dataset = client.create_dataset(
         dataset_name=DATASET_NAME,
         description=(
-            "Notification rule proposal fidelity benchmark. The real DeepAgent uses "
+            "Notification rule proposal fidelity benchmark. The real agent runtime uses "
             "fixture-backed rule tools and must propose safe pending notification rules "
             "or schedules without unauthorized confirmation."
         ),

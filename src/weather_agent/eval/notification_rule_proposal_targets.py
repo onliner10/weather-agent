@@ -9,26 +9,21 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 
 from weather_agent.agent_factory import build_current_time_prompt_suffix, create_weather_agent
-from weather_agent.domain.cel.allowlist import get_allowlist_for_prompt
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.allowlist import get_allowlist_for_prompt
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.eval.notification_rule_schemas import (
     RuleProposalEvalOutput,
     RuleToolCallRecord,
 )
 from weather_agent.llm.tools.rules_tools import (
-    CancelActionToolResult,
     CancelPendingActionArgs,
-    CELCapabilitiesToolResult,
-    ConfirmActionToolResult,
     ConfirmPendingActionArgs,
-    GetCELCapabilitiesArgs,
+    GetRuleExpressionCapabilitiesArgs,
     ListNotificationRulesArgs,
-    ListRulesToolResult,
     ProposeNotificationRuleArgs,
-    ProposeRuleToolResult,
     ScheduleNotificationArgs,
-    ScheduleRuleToolResult,
+    ToolResult,
 )
 from weather_agent.observability.logging import get_logger
 
@@ -38,7 +33,7 @@ logger = get_logger(__name__)
 class RecordingRulesToolbox:
     def __init__(self) -> None:
         self.tool_calls: list[RuleToolCallRecord] = []
-        self._cel_evaluator = CELEvaluator()
+        self._rule_expression_evaluator = RuleExpressionEvaluator()
 
     def _record(
         self,
@@ -59,105 +54,105 @@ class RecordingRulesToolbox:
         )
         return result
 
-    async def list_notification_rules(self, include_disabled: bool = False) -> ListRulesToolResult:
-        result = ListRulesToolResult(rules=[], count=0)
+    async def list_notification_rules(self, include_disabled: bool = False) -> ToolResult:
+        result: ToolResult = {"rules": [], "count": 0}
         return cast(
-            ListRulesToolResult,
+            ToolResult,
             self._record(
                 name="list_notification_rules",
                 args={"include_disabled": include_disabled},
                 result=result,
-                error=result.error,
+                error=cast(str | None, result.get("error")),
             ),
         )
 
-    async def get_cel_capabilities(self) -> CELCapabilitiesToolResult:
+    async def get_rule_expression_capabilities(self) -> ToolResult:
         allowlist = get_allowlist_for_prompt()
-        result = CELCapabilitiesToolResult(
-            functions=cast(dict[str, list[str]], allowlist["functions"]),
-            metrics=cast(list[str], allowlist["metrics"]),
-            signatures=cast(dict[str, str], allowlist["signatures"]),
-            rules=cast(list[str], allowlist["rules"]),
-            examples=cast(list[str], allowlist["examples"]),
-        )
+        result: ToolResult = {
+            "functions": cast(dict[str, list[str]], allowlist["functions"]),
+            "metrics": cast(list[str], allowlist["metrics"]),
+            "signatures": cast(dict[str, str], allowlist["signatures"]),
+            "rules": cast(list[str], allowlist["rules"]),
+            "examples": cast(list[str], allowlist["examples"]),
+        }
         return cast(
-            CELCapabilitiesToolResult,
+            ToolResult,
             self._record(
-                name="get_cel_capabilities",
+                name="get_rule_expression_capabilities",
                 args={},
                 result=result,
-                error=result.error,
+                error=cast(str | None, result.get("error")),
             ),
         )
 
     async def propose_notification_rule(
         self,
-        cel_expression: str,
+        rule_expression: str,
         explanation: str,
         location_name: str = "",
         edit_short_id: str = "",
-    ) -> ProposeRuleToolResult:
-        validation = self._cel_evaluator.validate(cel_expression)
+    ) -> ToolResult:
+        validation = self._rule_expression_evaluator.validate(rule_expression)
         if not validation.valid:
-            result = ProposeRuleToolResult(
-                cel_expression=cel_expression,
-                explanation=explanation,
-                error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
-            )
+            result: ToolResult = {
+                "rule_expression": rule_expression,
+                "explanation": explanation,
+                "error": f"Nieprawidłowe wyrażenie reguły: {validation.error}",
+            }
         else:
-            result = ProposeRuleToolResult(
-                proposal=(
+            result = {
+                "proposal": (
                     "Propozycja nowej reguły:\n\n"
-                    f"Wyrażenie CEL: `{validation.expression}`\n"
+                    f"Wyrażenie reguły: `{validation.expression}`\n"
                     f"Opis: {explanation}\n\n"
                     "Czy chcesz potwierdzić? (tak/nie)"
                 ),
-                cel_expression=validation.expression,
-                explanation=explanation,
-                validated=True,
-                pending=True,
-            )
+                "rule_expression": validation.expression,
+                "explanation": explanation,
+                "validated": True,
+                "pending": True,
+            }
         return cast(
-            ProposeRuleToolResult,
+            ToolResult,
             self._record(
                 name="propose_notification_rule",
                 args={
-                    "cel_expression": cel_expression,
+                    "rule_expression": rule_expression,
                     "explanation": explanation,
                     "location_name": location_name,
                     "edit_short_id": edit_short_id,
                 },
                 result=result,
-                pending=result.pending,
-                error=result.error,
+                pending=cast(bool | None, result.get("pending")),
+                error=cast(str | None, result.get("error")),
             ),
         )
 
-    async def confirm_pending_action(self) -> ConfirmActionToolResult:
-        result = ConfirmActionToolResult(
-            error="Eval fixture: confirm_pending_action is not allowed during proposal scoring."
-        )
+    async def confirm_pending_action(self) -> ToolResult:
+        result: ToolResult = {
+            "error": "Eval fixture: confirm_pending_action is not allowed during proposal scoring."
+        }
         return cast(
-            ConfirmActionToolResult,
+            ToolResult,
             self._record(
                 name="confirm_pending_action",
                 args={},
                 result=result,
-                error=result.error,
+                error=cast(str | None, result.get("error")),
             ),
         )
 
-    async def cancel_pending_action(self) -> CancelActionToolResult:
-        result = CancelActionToolResult(
-            error="Eval fixture: cancel_pending_action is not allowed during proposal scoring."
-        )
+    async def cancel_pending_action(self) -> ToolResult:
+        result: ToolResult = {
+            "error": "Eval fixture: cancel_pending_action is not allowed during proposal scoring."
+        }
         return cast(
-            CancelActionToolResult,
+            ToolResult,
             self._record(
                 name="cancel_pending_action",
                 args={},
                 result=result,
-                error=result.error,
+                error=cast(str | None, result.get("error")),
             ),
         )
 
@@ -167,31 +162,29 @@ class RecordingRulesToolbox:
         schedule_expression: str,
         explanation: str,
         location_name: str = "",
-        cel_expression: str = "True",
-    ) -> ScheduleRuleToolResult:
-        validation = self._cel_evaluator.validate(cel_expression)
+        rule_expression: str = "true",
+    ) -> ToolResult:
+        validation = self._rule_expression_evaluator.validate(rule_expression)
         if not validation.valid:
-            result = ScheduleRuleToolResult(
-                error=f"Nieprawidłowe wyrażenie CEL: {validation.error}",
-            )
+            result: ToolResult = {"error": f"Nieprawidłowe wyrażenie reguły: {validation.error}"}
         else:
             parsed = parse_schedule(f"{schedule_type}:{schedule_expression}")
             if not parsed.valid:
-                result = ScheduleRuleToolResult(error=f"Nieprawidłowy harmonogram: {parsed.error}")
+                result = {"error": f"Nieprawidłowy harmonogram: {parsed.error}"}
             else:
-                result = ScheduleRuleToolResult(
-                    proposal=(
+                result = {
+                    "proposal": (
                         "Propozycja zaplanowanego powiadomienia:\n\n"
                         f"Harmonogram: {schedule_type}:{schedule_expression}\n"
-                        f"Wyrażenie CEL: `{validation.expression}`\n"
+                        f"Wyrażenie reguły: `{validation.expression}`\n"
                         f"Opis: {explanation}\n\n"
                         "Czy chcesz potwierdzić? (tak/nie)"
                     ),
-                    pending=True,
-                )
+                    "pending": True,
+                }
 
         return cast(
-            ScheduleRuleToolResult,
+            ToolResult,
             self._record(
                 name="schedule_notification",
                 args={
@@ -199,11 +192,11 @@ class RecordingRulesToolbox:
                     "schedule_expression": schedule_expression,
                     "explanation": explanation,
                     "location_name": location_name,
-                    "cel_expression": cel_expression,
+                    "rule_expression": rule_expression,
                 },
                 result=result,
-                pending=result.pending,
-                error=result.error,
+                pending=cast(bool | None, result.get("pending")),
+                error=cast(str | None, result.get("error")),
             ),
         )
 
@@ -216,20 +209,20 @@ class RecordingRulesToolbox:
                 args_schema=ListNotificationRulesArgs,
             ),
             StructuredTool.from_function(
-                coroutine=self.get_cel_capabilities,
-                name="get_cel_capabilities",
+                coroutine=self.get_rule_expression_capabilities,
+                name="get_rule_expression_capabilities",
                 description=(
-                    "Pobierz listę dostępnych funkcji CEL i metryk pogodowych. "
-                    "Użyj przed tworzeniem wyrażenia CEL dla reguły powiadomienia."
+                    "Pobierz listę dostępnych funkcji wyrażenie reguły i metryk pogodowych. "
+                    "Użyj przed tworzeniem wyrażenia reguły dla reguły powiadomienia."
                 ),
-                args_schema=GetCELCapabilitiesArgs,
+                args_schema=GetRuleExpressionCapabilitiesArgs,
             ),
             StructuredTool.from_function(
                 coroutine=self.propose_notification_rule,
                 name="propose_notification_rule",
                 description=(
-                    "Zaproponuj regułę powiadomienia na podstawie wyrażenia CEL i opisu. "
-                    "Narzędzie waliduje wyrażenie CEL i zapisuje propozycję do potwierdzenia."
+                    "Zaproponuj regułę powiadomienia na podstawie wyrażenia reguły i opisu. "
+                    "Narzędzie waliduje wyrażenie reguły i zapisuje propozycję do potwierdzenia."
                 ),
                 args_schema=ProposeNotificationRuleArgs,
             ),
@@ -249,7 +242,7 @@ class RecordingRulesToolbox:
                 coroutine=self.schedule_notification,
                 name="schedule_notification",
                 description=(
-                    "Zaplanuj powiadomienie z opcjonalnym warunkiem CEL. "
+                    "Zaplanuj powiadomienie z opcjonalnym warunkiem wyrażenie reguły. "
                     "Waliduje harmonogram i zapisuje propozycję do potwierdzenia."
                 ),
                 args_schema=ScheduleNotificationArgs,

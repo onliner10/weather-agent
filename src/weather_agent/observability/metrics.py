@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, TypeVar, cast
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -58,6 +60,19 @@ TOOL_CALL_DURATION_SECONDS = Histogram(
     ["tool"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
+
+
+@contextmanager
+def observe_tool_call(tool_name: str) -> Iterator[None]:
+    """Record call count and elapsed time for one LangChain tool invocation."""
+    TOOL_CALLS_TOTAL.labels(tool=tool_name).inc()
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        TOOL_CALL_DURATION_SECONDS.labels(tool=tool_name).observe(time.perf_counter() - start)
+
+
 LLM_REQUESTS_TOTAL = Counter(
     "weather_agent_llm_requests_total",
     "Total number of LLM requests",
@@ -170,6 +185,11 @@ def _get_labeled_value(metric: Counter, **labels: str) -> float:
 
 def _count_histogram_observations(metric: Histogram, **labels: str) -> float:
     """Return the current observation count of a histogram."""
-    if labels:
-        return cast(float, metric.labels(**labels)._sum.get())
-    return cast(float, metric._sum.get())
+    histogram = metric.labels(**labels) if labels else metric
+    collected = next(iter(histogram.collect()), None)
+    if collected is None:
+        return 0.0
+    for sample in collected.samples:
+        if sample.name.endswith("_count"):
+            return float(sample.value)
+    return 0.0

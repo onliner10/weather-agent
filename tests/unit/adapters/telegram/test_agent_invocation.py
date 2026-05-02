@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from weather_agent.adapters.telegram import agent_invocation
+from weather_agent.application import agent_invocation
 
 
 class _FakeAgent:

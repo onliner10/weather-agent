@@ -19,6 +19,12 @@ from weather_agent.domain.weather import (
 )
 from weather_agent.infrastructure.db.base import AuthorizedUser, Base
 from weather_agent.llm.tools.weather_tools import WeatherToolbox
+from weather_agent.observability.metrics import (
+    TOOL_CALL_DURATION_SECONDS,
+    TOOL_CALLS_TOTAL,
+    _count_histogram_observations,
+    _get_labeled_value,
+)
 
 
 @pytest.fixture()
@@ -159,8 +165,8 @@ class TestWeatherToolboxLocations:
 
         result = await toolbox.get_forecast("", "2026-05-02", "2026-05-02", ["temperature_2m_c"])
 
-        assert result.error is None
-        assert result.location == "Chwarzno"
+        assert result.get("error") is None
+        assert result["location"] == "Chwarzno"
         assert forecast_provider.locations[0].name == "Chwarzno"
         assert geocoder.queries == []
 
@@ -174,7 +180,7 @@ class TestWeatherToolboxLocations:
 
         result = await toolbox.get_observations("")
 
-        assert result.error == "Nie mam zapisanej domyślnej lokalizacji. Podaj lokalizację."
+        assert result["error"] == "Nie mam zapisanej domyślnej lokalizacji. Podaj lokalizację."
         assert geocoder.queries == []
 
     async def test_edit_location_updates_aliases_by_existing_alias(
@@ -187,7 +193,7 @@ class TestWeatherToolboxLocations:
 
         result = await toolbox.edit_location("dom", aliases=["mieszkanie"])
 
-        assert result.error is None
+        assert result.get("error") is None
         updated = await service.get_location(loc_id)
         assert updated is not None
         assert updated.aliases == ["mieszkanie"]
@@ -202,8 +208,31 @@ class TestWeatherToolboxLocations:
 
         result = await toolbox.remove_location("praca")
 
-        assert result.error is None
+        assert result.get("error") is None
         fetched = await service.get_location(loc_id)
         assert fetched is not None
         assert fetched.enabled is False
         assert await service.list_locations(1) == []
+
+    async def test_tool_instrumentation_records_call_count_and_duration(
+        self, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        service = LocationService(session)
+        toolbox = _toolbox(service=service, geocoder=FakeGeocoder())
+        calls_before = _get_labeled_value(TOOL_CALLS_TOTAL, tool="get_observations")
+        durations_before = _count_histogram_observations(
+            TOOL_CALL_DURATION_SECONDS,
+            tool="get_observations",
+        )
+
+        await toolbox.get_observations("")
+
+        assert _get_labeled_value(TOOL_CALLS_TOTAL, tool="get_observations") == calls_before + 1
+        assert (
+            _count_histogram_observations(
+                TOOL_CALL_DURATION_SECONDS,
+                tool="get_observations",
+            )
+            == durations_before + 1
+        )

@@ -9,7 +9,7 @@ ExpectedRuleTool = Literal["propose_notification_rule", "schedule_notification"]
 ExpectedScheduleType = Literal["once", "cron"]
 
 
-class CELDiscriminatorProfile(BaseModel):
+class RuleExpressionDiscriminatorProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -21,11 +21,11 @@ class ExpectedRuleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_tool: ExpectedRuleTool
-    expected_cel: str
+    expected_rule_expression: str
     expected_location: str
     expected_schedule_type: ExpectedScheduleType | None = None
     expected_schedule_expression: str | None = None
-    cel_discriminators: list[CELDiscriminatorProfile]
+    rule_expression_discriminators: list[RuleExpressionDiscriminatorProfile]
 
 
 class NotificationRuleEvalCase(BaseModel):

@@ -136,27 +136,27 @@ class TestDatabaseUrlNormalization:
 
 class TestMissingConfiguration:
     def test_missing_env_vars_exits_with_error(self) -> None:
-        from weather_agent.infrastructure.services import BotServices as _BotServices
+        from weather_agent.infrastructure.app_container import AppContainer
 
         with patch(
             "weather_agent.settings.load_settings",
             side_effect=Exception("Validation error: database_url"),
         ):
             with pytest.raises(SystemExit) as exc_info:
-                _BotServices()
+                AppContainer()
             assert exc_info.value.code == 1
 
     def test_missing_settings_produces_clear_error_message(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from weather_agent.infrastructure.services import BotServices as _BotServices
+        from weather_agent.infrastructure.app_container import AppContainer
 
         with patch(
             "weather_agent.settings.load_settings",
             side_effect=Exception("field required"),
         ):
             with pytest.raises(SystemExit):
-                _BotServices()
+                AppContainer()
             captured = capsys.readouterr()
             assert "Error loading configuration" in captured.err
             assert "environment variables" in captured.err
@@ -294,7 +294,7 @@ class TestCmdWorker:
         container.settings.observability.enabled = False
         container.settings.health = MagicMock()
         container.settings.model = MagicMock()
-        container.cel_evaluator = MagicMock()
+        container.rule_expression_evaluator = MagicMock()
         container.session_factory = MagicMock()
         container.__aenter__.return_value = container
         container.__aexit__.return_value = None

@@ -53,7 +53,7 @@ def _make_rule(
     snooze_until: datetime | None = None,
     dry_run: bool = False,
     location_id: int = 1,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
 ) -> NotificationRule:
     return NotificationRule(
         id=id,
@@ -105,7 +105,7 @@ async def _create_rule_orm(
     location_id: int = 1,
     cooldown_minutes: int = 60,
     snooze_until: datetime | None = None,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
 ) -> NotificationRuleORM:
     orm = NotificationRuleORM(
         id=rule_id,

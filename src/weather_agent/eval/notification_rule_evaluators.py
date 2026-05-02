@@ -9,8 +9,8 @@ from typing import Any
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-import weather_agent.domain.cel.evaluator as cel_module
-from weather_agent.domain.cel.evaluator import CELEvaluator
+import weather_agent.domain.rule_expression.evaluator as rule_expression_module
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.eval.notification_rule_schemas import (
     ExpectedRuleProposal,
     RuleProposalEvalOutput,
@@ -53,7 +53,7 @@ def _parse_when(raw: str) -> datetime | None:
 
 
 @contextmanager
-def _frozen_cel_now(now: datetime) -> Iterator[None]:
+def _frozen_rule_expression_now(now: datetime) -> Iterator[None]:
     effective_now = now.astimezone(_WARSAW)
 
     class FrozenDateTime(datetime):
@@ -63,31 +63,33 @@ def _frozen_cel_now(now: datetime) -> Iterator[None]:
                 return effective_now.replace(tzinfo=None)
             return effective_now.astimezone(tz)
 
-    with patch.object(cel_module, "datetime", FrozenDateTime):
+    with patch.object(rule_expression_module, "datetime", FrozenDateTime):
         yield
 
 
-def _evaluate_cel(expression: str, points: list[dict[str, object]], now: datetime) -> bool | None:
-    with _frozen_cel_now(now):
-        result = CELEvaluator({"points": points}).evaluate(expression)
+def _evaluate_rule_expression(
+    expression: str, points: list[dict[str, object]], now: datetime
+) -> bool | None:
+    with _frozen_rule_expression_now(now):
+        result = RuleExpressionEvaluator({"points": points}).evaluate(expression)
     if not result.valid:
         return None
     return _result_bool(result.result)
 
 
-def _validate_cel(
+def _validate_rule_expression(
     *,
     candidate_expression: str,
     expected: ExpectedRuleProposal,
     now: datetime,
 ) -> list[str]:
     failures: list[str] = []
-    candidate_validation = CELEvaluator().validate(candidate_expression)
-    expected_validation = CELEvaluator().validate(expected.expected_cel)
+    candidate_validation = RuleExpressionEvaluator().validate(candidate_expression)
+    expected_validation = RuleExpressionEvaluator().validate(expected.expected_rule_expression)
     if not candidate_validation.valid:
-        return [f"invalid_cel:{candidate_validation.error}"]
+        return [f"invalid_rule_expression:{candidate_validation.error}"]
     if not expected_validation.valid:
-        return [f"invalid_reference_cel:{expected_validation.error}"]
+        return [f"invalid_reference_rule_expression:{expected_validation.error}"]
 
     candidate_metrics = set(candidate_validation.evaluated_metrics)
     expected_metrics = set(expected_validation.evaluated_metrics)
@@ -98,14 +100,14 @@ def _validate_cel(
             f"actual={','.join(sorted(candidate_metrics))}"
         )
 
-    for profile in expected.cel_discriminators:
-        actual = _evaluate_cel(candidate_expression, profile.points, now)
+    for profile in expected.rule_expression_discriminators:
+        actual = _evaluate_rule_expression(candidate_expression, profile.points, now)
         if actual is None:
-            failures.append(f"cel_profile_error:{profile.name}")
+            failures.append(f"rule_expression_profile_error:{profile.name}")
             continue
         if actual != profile.expected_result:
             failures.append(
-                f"cel_profile_mismatch:{profile.name}:"
+                f"rule_expression_profile_mismatch:{profile.name}:"
                 f"expected={profile.expected_result}:actual={actual}"
             )
 
@@ -175,10 +177,10 @@ def notification_rule_proposal_fidelity(
                 f"location_mismatch:expected={expected.expected_location}:actual={location_name}"
             )
 
-        candidate_cel = str(args.get("cel_expression", ""))
+        candidate_rule_expression = str(args.get("rule_expression", ""))
         failures.extend(
-            _validate_cel(
-                candidate_expression=candidate_cel,
+            _validate_rule_expression(
+                candidate_expression=candidate_rule_expression,
                 expected=expected,
                 now=now,
             )

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.db.base import (
@@ -51,8 +51,8 @@ async def session():
 
 
 @pytest.fixture()
-def cel_evaluator() -> CELEvaluator:
-    return CELEvaluator()
+def rule_expression_evaluator() -> RuleExpressionEvaluator:
+    return RuleExpressionEvaluator()
 
 
 @pytest.fixture()
@@ -61,8 +61,11 @@ def scheduler_settings() -> SchedulerSettings:
 
 
 @pytest.fixture()
-def rule_service(session: AsyncSession, cel_evaluator: CELEvaluator) -> NotificationRuleService:
-    return NotificationRuleService(session, cel_evaluator)
+def rule_service(
+    session: AsyncSession,
+    rule_expression_evaluator: RuleExpressionEvaluator,
+) -> NotificationRuleService:
+    return NotificationRuleService(session, rule_expression_evaluator)
 
 
 @pytest.fixture()
@@ -101,7 +104,7 @@ async def _create_rule(
     rule_service: NotificationRuleService,
     user_id: int = 1,
     location_id: int = 1,
-    expression: str = 'max("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
     schedule: str | None = None,
     enabled: bool = True,
 ) -> Any:
@@ -169,14 +172,14 @@ def _make_worker(
     session: AsyncSession,
     forecast_repo: ForecastRepository,
     rule_service: NotificationRuleService,
-    cel_evaluator: CELEvaluator,
+    rule_expression_evaluator: RuleExpressionEvaluator,
     settings: SchedulerSettings,
     forecast_fetcher: Any = None,
 ) -> RuleEvaluationWorker:
     return RuleEvaluationWorker(
         session=session,
         forecast_repo=forecast_repo,
-        cel_evaluator=cel_evaluator,
+        rule_expression_evaluator=rule_expression_evaluator,
         rule_service=rule_service,
         settings=settings,
         forecast_fetcher=forecast_fetcher,
@@ -189,7 +192,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -201,7 +204,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -214,7 +217,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -227,7 +230,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -239,7 +242,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -252,7 +255,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -271,7 +274,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -283,7 +286,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -296,7 +299,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -319,7 +322,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -331,7 +334,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -353,7 +356,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()
@@ -366,7 +369,7 @@ class TestScheduleGating:
         session: AsyncSession,
         forecast_repo: ForecastRepository,
         rule_service: NotificationRuleService,
-        cel_evaluator: CELEvaluator,
+        rule_expression_evaluator: RuleExpressionEvaluator,
         scheduler_settings: SchedulerSettings,
     ) -> None:
         await _create_user(session)
@@ -378,7 +381,7 @@ class TestScheduleGating:
             session,
             forecast_repo,
             rule_service,
-            cel_evaluator,
+            rule_expression_evaluator,
             scheduler_settings,
         )
         results = await worker.evaluate_rules()

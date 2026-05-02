@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from weather_agent.adapters.open_meteo.forecast_provider import (
         OpenMeteoDwdIconProvider,
     )
-    from weather_agent.domain.cel.evaluator import CELEvaluator
+    from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
     from weather_agent.infrastructure.geocoder import Geocoder
     from weather_agent.llm.model_factory import ModelFactory
     from weather_agent.settings import AppSettings
@@ -34,7 +34,7 @@ class AppContainer:
     engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
     httpx_client: httpx.AsyncClient
-    cel_evaluator: CELEvaluator
+    rule_expression_evaluator: RuleExpressionEvaluator
     forecast_provider: OpenMeteoDwdIconProvider
     observation_provider: ImgwSynopProvider
     model_factory: ModelFactory
@@ -87,11 +87,11 @@ class AppContainer:
         from weather_agent.adapters.open_meteo.forecast_provider import (
             OpenMeteoDwdIconProvider,
         )
-        from weather_agent.domain.cel.evaluator import CELEvaluator
+        from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
         from weather_agent.infrastructure.geocoder import Geocoder
         from weather_agent.llm.model_factory import ModelFactory
 
-        self.cel_evaluator = CELEvaluator()
+        self.rule_expression_evaluator = RuleExpressionEvaluator()
         self.forecast_provider = OpenMeteoDwdIconProvider(
             settings=self.settings.open_meteo,
             httpx_client=self.httpx_client,

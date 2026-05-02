@@ -5,14 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from weather_agent.domain.cel.evaluator import CELEvaluationResult
 from weather_agent.domain.locations import Location, LocationCreate
+from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluationResult
 from weather_agent.domain.rules.models import NotificationRule, RuleCreate
 from weather_agent.domain.weather import LocationRef
-from weather_agent.llm.tools.rules_tools import (
-    RulesToolbox,
-    ScheduleRuleToolResult,
-)
+from weather_agent.llm.tools.rules_tools import RulesToolbox
 
 
 @pytest.fixture()
@@ -36,9 +33,9 @@ def mock_location_service() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_cel_evaluator() -> MagicMock:
+def mock_rule_expression_evaluator() -> MagicMock:
     ev = MagicMock()
-    ev.validate.return_value = CELEvaluationResult(expression="True")
+    ev.validate.return_value = RuleExpressionEvaluationResult(expression="true")
     return ev
 
 
@@ -62,14 +59,14 @@ def mock_memory_service() -> MagicMock:
 def toolbox(
     mock_rule_service: MagicMock,
     mock_location_service: MagicMock,
-    mock_cel_evaluator: MagicMock,
+    mock_rule_expression_evaluator: MagicMock,
     mock_geocoder: MagicMock,
     mock_memory_service: MagicMock,
 ) -> RulesToolbox:
     return RulesToolbox(
         rule_service=mock_rule_service,
         location_service=mock_location_service,
-        cel_evaluator=mock_cel_evaluator,
+        rule_expression_evaluator=mock_rule_expression_evaluator,
         geocoder=mock_geocoder,
         memory_service=mock_memory_service,
         context_key="test:1",
@@ -97,19 +94,19 @@ class TestCELCapabilities:
         self,
         toolbox: RulesToolbox,
     ) -> None:
-        result = await toolbox.get_cel_capabilities()
+        result = await toolbox.get_rule_expression_capabilities()
 
-        assert result.signatures is not None
-        assert result.rules is not None
-        assert result.examples is not None
-        assert result.signatures["max"] == 'max("metric_name", time_range)'
-        assert 'max("wind_gusts_10m_ms", weekend()) > 12.0' in result.examples
+        assert result["signatures"] is not None
+        assert result["rules"] is not None
+        assert result["examples"] is not None
+        assert result["signatures"]["max_metric"] == 'max_metric("metric_name", time_range)'
+        assert 'max_metric("wind_gusts_10m_ms", weekend()) > 12.0' in result["examples"]
 
 
 class TestScheduleNotificationValidation:
     @pytest.mark.asyncio()
-    async def test_invalid_cel_expression_returns_error(self, toolbox: RulesToolbox) -> None:
-        toolbox.cel_evaluator.validate.return_value = CELEvaluationResult(
+    async def test_invalid_rule_expression_returns_error(self, toolbox: RulesToolbox) -> None:
+        toolbox.rule_expression_evaluator.validate.return_value = RuleExpressionEvaluationResult(
             expression="invalid",
             error="undefined: foo",
         )
@@ -118,10 +115,9 @@ class TestScheduleNotificationValidation:
             schedule_expression="2026-05-01T12:00:00",
             explanation="test",
         )
-        assert isinstance(result, ScheduleRuleToolResult)
-        assert result.error is not None
-        assert "CEL" in result.error
-        assert result.pending is False
+        assert result["error"] is not None
+        assert "wyrażenie reguły" in result["error"]
+        assert result.get("pending", False) is False
 
     @pytest.mark.asyncio()
     async def test_invalid_schedule_returns_error(self, toolbox: RulesToolbox) -> None:
@@ -130,9 +126,8 @@ class TestScheduleNotificationValidation:
             schedule_expression="not-a-date",
             explanation="test",
         )
-        assert isinstance(result, ScheduleRuleToolResult)
-        assert result.error is not None
-        assert "harmonogram" in result.error
+        assert result["error"] is not None
+        assert "harmonogram" in result["error"]
 
     @pytest.mark.asyncio()
     async def test_invalid_cron_schedule_returns_error(self, toolbox: RulesToolbox) -> None:
@@ -141,9 +136,8 @@ class TestScheduleNotificationValidation:
             schedule_expression="not-a-cron",
             explanation="test",
         )
-        assert isinstance(result, ScheduleRuleToolResult)
-        assert result.error is not None
-        assert "harmonogram" in result.error
+        assert result["error"] is not None
+        assert "harmonogram" in result["error"]
 
     @pytest.mark.asyncio()
     async def test_unknown_schedule_type_returns_error(self, toolbox: RulesToolbox) -> None:
@@ -152,8 +146,7 @@ class TestScheduleNotificationValidation:
             schedule_expression="2026-05-01T12:00:00",
             explanation="test",
         )
-        assert isinstance(result, ScheduleRuleToolResult)
-        assert result.error is not None
+        assert result["error"] is not None
 
 
 class TestScheduleNotificationStoresPending:
@@ -168,39 +161,39 @@ class TestScheduleNotificationStoresPending:
             schedule_expression="2026-05-01T12:00:00",
             explanation="Przypomnienie o śniegu",
         )
-        assert result.pending is True
-        assert result.proposal is not None
-        assert "Harmonogram" in result.proposal
+        assert result["pending"] is True
+        assert result["proposal"] is not None
+        assert "Harmonogram" in result["proposal"]
 
         mock_memory_service.store_pending_confirmation.assert_awaited_once()
         call_args = mock_memory_service.store_pending_confirmation.call_args[0]
         stored = call_args[1]
         assert stored["action"] == "schedule_notification"
         assert stored["schedule"] == "once:2026-05-01T12:00:00"
-        assert stored["cel_expression"] == "True"
+        assert stored["rule_expression"] == "true"
 
     @pytest.mark.asyncio()
-    async def test_stores_pending_with_custom_cel(
+    async def test_stores_pending_with_custom_rule_expression(
         self,
         toolbox: RulesToolbox,
         mock_memory_service: MagicMock,
     ) -> None:
-        toolbox.cel_evaluator.validate.return_value = CELEvaluationResult(
+        toolbox.rule_expression_evaluator.validate.return_value = RuleExpressionEvaluationResult(
             expression="temperature_2m_c < 0",
         )
         result = await toolbox.schedule_notification(
             schedule_type="cron",
             schedule_expression="0 8 * * *",
             explanation="Poranne info o mrozie",
-            cel_expression="temperature_2m_c < 0",
+            rule_expression="temperature_2m_c < 0",
         )
-        assert result.pending is True
+        assert result["pending"] is True
 
         mock_memory_service.store_pending_confirmation.assert_awaited_once()
         call_args = mock_memory_service.store_pending_confirmation.call_args[0]
         stored = call_args[1]
         assert stored["schedule"] == "cron:0 8 * * *"
-        assert stored["cel_expression"] == "temperature_2m_c < 0"
+        assert stored["rule_expression"] == "temperature_2m_c < 0"
 
 
 class TestScheduleNotificationAutoSaveLocation:
@@ -241,8 +234,8 @@ class TestScheduleNotificationAutoSaveLocation:
             location_name="Gdynia",
         )
 
-        assert result.pending is True
-        assert result.error is None
+        assert result["pending"] is True
+        assert result.get("error") is None
 
         mock_location_service.create_location.assert_awaited_once_with(
             100,
@@ -290,13 +283,13 @@ class TestScheduleNotificationAutoSaveLocation:
         )
 
         result = await toolbox.propose_notification_rule(
-            cel_expression="True",
+            rule_expression="true",
             explanation="Powiadomienie o pogodzie w Sopocie",
             location_name="Sopot",
         )
 
-        assert result.pending is True
-        assert result.error is None
+        assert result["pending"] is True
+        assert result.get("error") is None
 
         mock_location_service.create_location.assert_awaited_once()
 
@@ -322,9 +315,9 @@ class TestScheduleNotificationAutoSaveLocation:
             location_name="NieistniejaceMiasto",
         )
 
-        assert result.pending is False
-        assert result.error is not None
-        assert "Nie znaleziono lokalizacji" in result.error
+        assert result.get("pending", False) is False
+        assert result["error"] is not None
+        assert "Nie znaleziono lokalizacji" in result["error"]
 
 
 class TestConfirmScheduleNotification:
@@ -337,7 +330,7 @@ class TestConfirmScheduleNotification:
     ) -> None:
         mock_memory_service.get_pending_confirmation.return_value = {
             "action": "schedule_notification",
-            "cel_expression": "True",
+            "rule_expression": "true",
             "explanation": "Przypomnienie",
             "validated": True,
             "location_id": 42,
@@ -353,7 +346,7 @@ class TestConfirmScheduleNotification:
             telegram_chat_id=200,
             telegram_message_thread_id=1,
             location_id=42,
-            expression="True",
+            expression="true",
             schedule="once:2026-05-01T12:00:00",
             description="Przypomnienie",
             created_at=datetime.now(UTC),
@@ -362,11 +355,11 @@ class TestConfirmScheduleNotification:
 
         result = await toolbox.confirm_pending_action()
 
-        assert result.error is None
-        assert result.answer is not None
-        assert "zaplanowane" in result.answer
-        assert "harmonogram" in result.answer
-        assert result.short_id == "R1A2B3"
+        assert result.get("error") is None
+        assert result["answer"] is not None
+        assert "zaplanowane" in result["answer"]
+        assert "harmonogram" in result["answer"]
+        assert result["short_id"] == "R1A2B3"
 
         create_call = mock_rule_service.create_rule.call_args
         assert create_call is not None
@@ -388,7 +381,7 @@ class TestConfirmExistingFlows:
     ) -> None:
         mock_memory_service.get_pending_confirmation.return_value = {
             "action": "create_rule",
-            "cel_expression": "temperature_2m_c > 25",
+            "rule_expression": "temperature_2m_c > 25",
             "explanation": "Gorąco",
             "validated": True,
             "location_id": None,
@@ -412,9 +405,9 @@ class TestConfirmExistingFlows:
 
         result = await toolbox.confirm_pending_action()
 
-        assert result.error is None
-        assert "Nowa reguła" in result.answer
-        assert result.short_id == "R4D5E6"
+        assert result.get("error") is None
+        assert "Nowa reguła" in result["answer"]
+        assert result["short_id"] == "R4D5E6"
 
         create_call = mock_rule_service.create_rule.call_args
         assert create_call is not None
@@ -431,7 +424,7 @@ class TestConfirmExistingFlows:
     ) -> None:
         mock_memory_service.get_pending_confirmation.return_value = {
             "action": "edit_rule",
-            "cel_expression": "wind_gusts_10m_kmh > 60",
+            "rule_expression": "wind_gusts_10m_kmh > 60",
             "explanation": "Silny wiatr",
             "validated": True,
             "location_id": 42,
@@ -456,8 +449,8 @@ class TestConfirmExistingFlows:
 
         result = await toolbox.confirm_pending_action()
 
-        assert result.error is None
-        assert "zaktualizowana" in result.answer
+        assert result.get("error") is None
+        assert "zaktualizowana" in result["answer"]
 
         mock_rule_service.get_rule_for_user.assert_awaited_once_with(100, short_id="R1A2B3")
 
@@ -470,7 +463,7 @@ class TestConfirmExistingFlows:
     ) -> None:
         mock_memory_service.get_pending_confirmation.return_value = {
             "action": "edit_rule",
-            "cel_expression": "wind_gusts_10m_ms > 12",
+            "rule_expression": "wind_gusts_10m_ms > 12",
             "explanation": "Silny wiatr",
             "validated": True,
             "location_id": 42,
@@ -483,5 +476,5 @@ class TestConfirmExistingFlows:
 
         result = await toolbox.confirm_pending_action()
 
-        assert result.error == "Nie znaleziono reguły #R1A2B3"
+        assert result["error"] == "Nie znaleziono reguły #R1A2B3"
         mock_rule_service.update_rule.assert_not_awaited()

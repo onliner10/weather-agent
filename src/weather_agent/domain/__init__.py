@@ -1,17 +1,6 @@
 """Domain package for core application contracts."""
 
 from weather_agent.domain.auth import AuthorizationService, AuthorizedUserRepo, UnauthorizedError
-from weather_agent.domain.cel import (
-    ALL_ALLOWED_FUNCTION_NAMES,
-    ALLOWED_FUNCTIONS,
-    ALLOWED_METRICS,
-    CELEvalError,
-    CELEvaluationResult,
-    CELEvaluator,
-    ValidationResult,
-    get_allowlist_for_prompt,
-    validate_expression,
-)
 from weather_agent.domain.errors import (
     WeatherProviderError,
     WeatherProviderResponseError,
@@ -23,12 +12,23 @@ from weather_agent.domain.providers import (
     ObservationProvider,
     WarningProvider,
 )
+from weather_agent.domain.rule_expression import (
+    ALL_ALLOWED_FUNCTION_NAMES,
+    ALLOWED_FUNCTIONS,
+    ALLOWED_METRICS,
+    RuleExpressionEvalError,
+    RuleExpressionEvaluationResult,
+    RuleExpressionEvaluator,
+    ValidationResult,
+    get_allowlist_for_prompt,
+    validate_expression,
+)
 from weather_agent.domain.rules import (
-    CELValidationError,
     NotificationEvent,
     NotificationRule,
     NotificationRuleService,
     RuleCreate,
+    RuleExpressionValidationError,
     RuleNotFoundError,
     RuleUpdate,
     ShortIdCollisionError,
@@ -55,10 +55,10 @@ __all__ = [
     "ALLOWED_METRICS",
     "AuthorizationService",
     "AuthorizedUserRepo",
-    "CELValidationError",
-    "CELEvalError",
-    "CELEvaluationResult",
-    "CELEvaluator",
+    "RuleExpressionValidationError",
+    "RuleExpressionEvalError",
+    "RuleExpressionEvaluationResult",
+    "RuleExpressionEvaluator",
     "ForecastPoint",
     "ForecastProvider",
     "ForecastResolution",
