@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -11,6 +12,7 @@ from telegram.ext import ContextTypes
 from weather_agent.adapters.telegram.bot import TelegramBot
 from weather_agent.domain.auth import AuthorizationService
 from weather_agent.infrastructure.db.base import Base
+from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 from weather_agent.settings import TelegramSettings
 
 
@@ -50,6 +52,7 @@ def _make_update(
 
 def _make_context() -> ContextTypes.DEFAULT_TYPE:
     context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context.args = []
     return context
 
 
@@ -280,6 +283,134 @@ class TestStatusCommand:
         update.message.reply_text.assert_awaited_once()
         response = update.message.reply_text.call_args[0][0]
         assert "Brak uprawnień" in response
+
+
+class TestInviteCommands:
+    @pytest.mark.asyncio
+    async def test_admin_can_create_invite_link(self) -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            message_handler=_noop_handler,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(user_id=42, command_text="/kod")
+        context = _make_context()
+        context.bot.username = "weather_test_bot"
+
+        with patch(
+            "weather_agent.adapters.telegram.bot._generate_invite_code", return_value="ABC123"
+        ):
+            await bot._kod_command(update, context)
+
+        response = update.message.reply_text.call_args[0][0]
+        assert "https://t.me/weather_test_bot?start=ABC123" in response
+
+        from sqlalchemy import select
+
+        from weather_agent.infrastructure.db.base import GlobalSetting
+
+        async with factory() as session:
+            setting = (
+                await session.execute(
+                    select(GlobalSetting).where(GlobalSetting.key == "telegram_invite:ABC123")
+                )
+            ).scalar_one_or_none()
+            assert setting is not None
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_create_invite_link(self) -> None:
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        await auth.add_authorized_user(100)
+        bot = TelegramBot(settings=settings, auth_service=auth, message_handler=_noop_handler)
+        bot.setup()
+        update = _make_command_update(user_id=100, command_text="/kod")
+        context = _make_context()
+
+        await bot._kod_command(update, context)
+
+        response = update.message.reply_text.call_args[0][0]
+        assert "Brak uprawnień" in response
+
+    @pytest.mark.asyncio
+    async def test_start_with_invite_code_authorizes_new_user(self) -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with factory() as session:
+            repo = AuthRepository(session)
+            await repo.create_invite_code(
+                code="ABC123",
+                created_by=42,
+                expires_at=datetime.now(UTC) + timedelta(hours=24),
+            )
+            await session.commit()
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            message_handler=_noop_handler,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(user_id=100, command_text="/start ABC123")
+        context = _make_context()
+        context.args = ["ABC123"]
+
+        await bot._start_command(update, context)
+
+        response = update.message.reply_text.call_args[0][0]
+        assert "Dostęp przyznany" in response
+        assert auth.is_authorized(100) is True
+
+        async with factory() as session:
+            users = await AuthRepository(session).list_users()
+            assert [user.telegram_user_id for user in users] == [100]
+
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_start_with_invalid_invite_code_shows_error(self) -> None:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        settings = _make_settings(user_ids=[42])
+        auth = AuthorizationService(allowed_user_ids=[42])
+        bot = TelegramBot(
+            settings=settings,
+            auth_service=auth,
+            message_handler=_noop_handler,
+            session_factory=factory,
+        )
+        bot.setup()
+        update = _make_command_update(user_id=100, command_text="/start BAD")
+        context = _make_context()
+        context.args = ["BAD"]
+
+        await bot._start_command(update, context)
+
+        response = update.message.reply_text.call_args[0][0]
+        assert "Nieprawidłowy kod" in response
+        assert auth.is_authorized(100) is False
+
+        await engine.dispose()
 
 
 class TestNoUserInUpdate:

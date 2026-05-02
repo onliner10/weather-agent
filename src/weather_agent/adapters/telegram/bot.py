@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,6 +15,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from weather_agent.domain.auth import AuthorizationService
 from weather_agent.domain.locations import LocationCreate, LocationService
 from weather_agent.infrastructure.db.base import AuthorizedUser
+from weather_agent.infrastructure.repositories.auth_repository import (
+    AuthRepository,
+    InviteRedeemStatus,
+)
 from weather_agent.observability.logging import get_logger
 from weather_agent.observability.metrics import (
     AUTHORIZATION_FAILURES_TOTAL,
@@ -52,6 +59,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("start", self._start_command))
         self._app.add_handler(CommandHandler("help", self._help_command))
         self._app.add_handler(CommandHandler("status", self._status_command))
+        self._app.add_handler(CommandHandler("kod", self._kod_command))
         self._app.add_handler(CommandHandler("dodaj_lok", self._dodaj_lok_command))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._auth_check))
 
@@ -81,6 +89,10 @@ class TelegramBot:
         if user is None:
             return
         TELEGRAM_MESSAGES_TOTAL.inc()
+        invite_code = _first_arg(context)
+        if invite_code and not self._auth_service.is_authorized(user.id):
+            await self._redeem_invite_code(update, invite_code, user.id)
+            return
         if not self._auth_service.is_authorized(user.id):
             chat_id = update.effective_chat.id if update.effective_chat else None
             logger.info(
@@ -118,6 +130,7 @@ class TelegramBot:
                 "/start — przywitanie\n"
                 "/help — ta pomoc\n"
                 "/status — status bota\n"
+                "/kod — wygeneruj jednorazowy kod zaproszenia (admin)\n"
                 "/dodaj_lok <nazwa> <lat> <lon> — zapisz lokalizację domową\n\n"
                 "Możesz też po prostu napisać pytanie o pogodę."
             )
@@ -139,6 +152,51 @@ class TelegramBot:
             return
         if update.message is not None:
             await update.message.reply_text("✅ Bot działa poprawnie.")
+
+    async def _kod_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.effective_user
+        if user is None:
+            return
+        TELEGRAM_MESSAGES_TOTAL.inc()
+        if not self._auth_service.is_admin(user.id):
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            logger.info(
+                "Unauthorized /kod from user_id=%s chat_id=%s",
+                user.id,
+                chat_id,
+            )
+            AUTHORIZATION_FAILURES_TOTAL.inc()
+            await _send_denial(update, context)
+            return
+        if update.message is None:
+            return
+        if self._session_factory is None:
+            logger.error("session_factory not configured — cannot create invite code")
+            await update.message.reply_text(
+                "Przepraszam, wystąpił błąd wewnętrzny. Spróbuj ponownie za chwilę."
+            )
+            return
+
+        code = _generate_invite_code()
+        expires_at = datetime.now(UTC) + timedelta(hours=24)
+        try:
+            async with self._session_factory() as session:
+                auth_repo = AuthRepository(session)
+                await auth_repo.create_invite_code(
+                    code=code,
+                    created_by=user.id,
+                    expires_at=expires_at,
+                )
+                await session.commit()
+        except Exception:
+            logger.exception("invite_code_create_failed", user_id=user.id)
+            await update.message.reply_text("Nie udało się utworzyć kodu. Spróbuj ponownie.")
+            return
+
+        link = await _invite_link(context, code)
+        await update.message.reply_text(
+            f"Kod zaproszenia jest ważny przez 24 godziny i działa tylko raz:\n{link}"
+        )
 
     async def _dodaj_lok_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle ``/dodaj_lok <name> <lat> <lon>`` — persist a home location.
@@ -253,10 +311,78 @@ class TelegramBot:
         async with self._message_semaphore:
             await self._message_handler(update, context)
 
+    async def _redeem_invite_code(self, update: Update, code: str, telegram_user_id: int) -> None:
+        if update.message is None:
+            return
+        if self._session_factory is None:
+            logger.error("session_factory not configured — cannot redeem invite code")
+            await update.message.reply_text(
+                "Przepraszam, wystąpił błąd wewnętrzny. Spróbuj ponownie za chwilę."
+            )
+            return
+
+        try:
+            async with self._session_factory() as session:
+                auth_repo = AuthRepository(session)
+                result = await auth_repo.redeem_invite_code(
+                    code=code,
+                    telegram_user_id=telegram_user_id,
+                    now=datetime.now(UTC),
+                )
+                if result.status is InviteRedeemStatus.REDEEMED:
+                    await session.commit()
+                    await self._auth_service.add_authorized_user(telegram_user_id)
+                elif result.status is InviteRedeemStatus.ALREADY_AUTHORIZED:
+                    await session.rollback()
+                else:
+                    await session.rollback()
+        except Exception:
+            logger.exception("invite_code_redeem_failed", user_id=telegram_user_id)
+            await update.message.reply_text("Nie udało się użyć kodu. Spróbuj ponownie.")
+            return
+
+        if result.status is InviteRedeemStatus.REDEEMED:
+            await update.message.reply_text(
+                "Dostęp przyznany. Cześć! Możesz już pytać mnie o pogodę."
+            )
+            return
+        if result.status is InviteRedeemStatus.ALREADY_AUTHORIZED:
+            await update.message.reply_text("Masz już dostęp do tego bota.")
+            return
+        if result.status is InviteRedeemStatus.EXPIRED:
+            await update.message.reply_text("Ten kod zaproszenia wygasł. Poproś o nowy kod.")
+            return
+        if result.status is InviteRedeemStatus.USED:
+            await update.message.reply_text("Ten kod zaproszenia został już użyty.")
+            return
+        await update.message.reply_text("Nieprawidłowy kod zaproszenia.")
+
 
 async def _send_denial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text("Brak uprawnień do korzystania z tego bota.")
+
+
+def _first_arg(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    args = context.args or []
+    if not args:
+        return None
+    first = args[0].strip()
+    return first or None
+
+
+def _generate_invite_code() -> str:
+    return secrets.token_urlsafe(6).replace("-", "").replace("_", "").upper()[:8]
+
+
+async def _invite_link(context: ContextTypes.DEFAULT_TYPE, code: str) -> str:
+    bot_username = getattr(context.bot, "username", None)
+    if not isinstance(bot_username, str) or not bot_username:
+        bot_user = await context.bot.get_me()
+        bot_username = bot_user.username
+    if bot_username:
+        return f"https://t.me/{bot_username}?start={quote(code)}"
+    return f"/start {code}"
 
 
 async def _post_init(_application: _AppType) -> None:

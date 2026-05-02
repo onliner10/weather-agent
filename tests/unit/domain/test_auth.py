@@ -8,8 +8,8 @@ from weather_agent.domain.auth import AuthorizationService, UnauthorizedError
 
 
 class FakeRepo:
-    async def add_user(self, telegram_user_id: int) -> None:
-        self.added.append(telegram_user_id)
+    async def add_user(self, telegram_user_id: int, role: str = "user") -> None:
+        self.added.append((telegram_user_id, role))
 
     async def remove_user(self, telegram_user_id: int) -> None:
         self.removed.append(telegram_user_id)
@@ -18,7 +18,7 @@ class FakeRepo:
         return []
 
     def __init__(self) -> None:
-        self.added: list[int] = []
+        self.added: list[tuple[int, str]] = []
         self.removed: list[int] = []
 
 
@@ -75,7 +75,7 @@ class TestAddAuthorizedUser:
         repo = FakeRepo()
         svc = AuthorizationService(allowed_user_ids=[42], repo=repo)
         await svc.add_authorized_user(100)
-        assert repo.added == [100]
+        assert repo.added == [(100, "user")]
 
     @pytest.mark.asyncio
     async def test_add_already_authorized_user_idempotent(self) -> None:
@@ -83,6 +83,19 @@ class TestAddAuthorizedUser:
         svc = AuthorizationService(allowed_user_ids=[42], repo=repo)
         await svc.add_authorized_user(42)
         assert svc.is_authorized(42) is True
+
+
+class TestAdminUsers:
+    def test_allowed_users_are_admins_by_default(self) -> None:
+        svc = AuthorizationService(allowed_user_ids=[42])
+        assert svc.is_admin(42) is True
+
+    @pytest.mark.asyncio
+    async def test_invited_runtime_user_is_not_admin(self) -> None:
+        svc = AuthorizationService(allowed_user_ids=[42])
+        await svc.add_authorized_user(100)
+        assert svc.is_authorized(100) is True
+        assert svc.is_admin(100) is False
 
 
 class TestRemoveAuthorizedUser:

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,7 +21,12 @@ from weather_agent.domain.weather import (
     ObservationResult,
     WeatherWarning,
 )
-from weather_agent.infrastructure.db.base import Base
+from weather_agent.infrastructure.db.base import AuthorizedUser as AuthorizedUserORM
+from weather_agent.infrastructure.db.base import Base, GlobalSetting
+from weather_agent.infrastructure.repositories.auth_repository import (
+    AuthRepository,
+    InviteRedeemStatus,
+)
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
 from weather_agent.infrastructure.repositories.observation_repository import ObservationRepository
 from weather_agent.infrastructure.repositories.warning_repository import WarningRepository
@@ -343,6 +349,98 @@ class TestForecastRepository:
             end=datetime(2026, 12, 31, 23, 59, tzinfo=UTC),
         )
         assert len(late_points) == 3
+
+
+class TestAuthRepository:
+    @pytest.mark.asyncio()
+    async def test_add_user_persists_authorized_user(self, async_session: AsyncSession) -> None:
+        repo = AuthRepository(async_session)
+        await repo.add_user(123)
+        await async_session.flush()
+
+        users = await repo.list_users()
+        assert users[0].telegram_user_id == 123
+        assert users[0].role == "user"
+
+    @pytest.mark.asyncio()
+    async def test_list_user_ids_sorted(self, async_session: AsyncSession) -> None:
+        repo = AuthRepository(async_session)
+        await repo.add_user(300)
+        await repo.add_user(100)
+        await async_session.flush()
+
+        assert await repo.list_user_ids() == [100, 300]
+
+    @pytest.mark.asyncio()
+    async def test_create_and_redeem_invite_code(self, async_session: AsyncSession) -> None:
+        repo = AuthRepository(async_session)
+        now = datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+        await repo.create_invite_code(
+            code="ABC123",
+            created_by=42,
+            expires_at=now + timedelta(hours=24),
+        )
+
+        result = await repo.redeem_invite_code(
+            code="ABC123",
+            telegram_user_id=100,
+            now=now,
+        )
+
+        assert result.status is InviteRedeemStatus.REDEEMED
+        user = (
+            await async_session.execute(
+                select(AuthorizedUserORM).where(AuthorizedUserORM.telegram_user_id == 100)
+            )
+        ).scalar_one()
+        assert user.role == "user"
+        setting = (
+            await async_session.execute(
+                select(GlobalSetting).where(GlobalSetting.key == "telegram_invite:ABC123")
+            )
+        ).scalar_one()
+        assert '"used_by":100' in setting.value
+
+    @pytest.mark.asyncio()
+    async def test_redeem_invite_code_only_once(self, async_session: AsyncSession) -> None:
+        repo = AuthRepository(async_session)
+        now = datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+        await repo.create_invite_code(
+            code="ABC123",
+            created_by=42,
+            expires_at=now + timedelta(hours=24),
+        )
+        first = await repo.redeem_invite_code(
+            code="ABC123",
+            telegram_user_id=100,
+            now=now,
+        )
+        second = await repo.redeem_invite_code(
+            code="ABC123",
+            telegram_user_id=101,
+            now=now,
+        )
+
+        assert first.status is InviteRedeemStatus.REDEEMED
+        assert second.status is InviteRedeemStatus.USED
+
+    @pytest.mark.asyncio()
+    async def test_redeem_expired_invite_code(self, async_session: AsyncSession) -> None:
+        repo = AuthRepository(async_session)
+        now = datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+        await repo.create_invite_code(
+            code="OLD",
+            created_by=42,
+            expires_at=now - timedelta(seconds=1),
+        )
+
+        result = await repo.redeem_invite_code(
+            code="OLD",
+            telegram_user_id=100,
+            now=now,
+        )
+
+        assert result.status is InviteRedeemStatus.EXPIRED
 
 
 class TestObservationRepository:

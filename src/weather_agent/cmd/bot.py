@@ -36,11 +36,16 @@ def cmd_bot(_args: argparse.Namespace) -> None:
             from weather_agent.adapters.telegram.bot import TelegramBot
             from weather_agent.adapters.telegram.handler import make_message_handler
             from weather_agent.domain.auth import AuthorizationService
+            from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
 
             message_handler = await make_message_handler(app)
 
+            async with app.session_factory() as session:
+                persisted_users = await AuthRepository(session).list_users()
+            env_admin_ids = list(app.settings.telegram.allowed_user_ids)
+            persisted_user_ids = [user.telegram_user_id for user in persisted_users]
             auth_service = AuthorizationService(
-                allowed_user_ids=list(app.settings.telegram.allowed_user_ids),
+                allowed_user_ids=[*env_admin_ids, *persisted_user_ids],
             )
 
             bot = TelegramBot(

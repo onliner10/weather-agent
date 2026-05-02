@@ -167,6 +167,14 @@ class TestCmdBot:
         container = AsyncMock()
         container.settings.telegram = MagicMock()
         container.settings.telegram.allowed_user_ids = ()
+        session_result = MagicMock()
+        session_result.scalars.return_value.all.return_value = []
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=session_result)
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        container.session_factory = MagicMock(return_value=session_context)
         container.settings.observability.enabled = False
         container.settings.health = MagicMock()
         container.settings.scheduler = MagicMock()
