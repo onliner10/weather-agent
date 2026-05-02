@@ -7,6 +7,8 @@ on:
 
 env:
   LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT || 'weather-agent-preprod' }}
+  LANGSMITH_APPLICATION: ${{ vars.LANGSMITH_APPLICATION || vars.LANGSMITH_PROJECT || 'weather-agent-preprod' }}
+  LANGSMITH_ENVIRONMENT: ${{ vars.LANGSMITH_ENVIRONMENT || 'preprod' }}
   WEATHER_AGENT_MODEL__PROVIDER: ${{ vars.WEATHER_AGENT_MODEL__PROVIDER || 'openrouter' }}
   WEATHER_AGENT_MODEL__MODEL_NAME: ${{ vars.WEATHER_AGENT_MODEL__MODEL_NAME || 'qwen/qwen3.5-flash-02-23' }}
   WEATHER_AGENT_MODEL__BASE_URL: ${{ vars.WEATHER_AGENT_MODEL__BASE_URL || 'https://openrouter.ai/api/v1' }}

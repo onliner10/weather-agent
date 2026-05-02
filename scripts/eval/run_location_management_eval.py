@@ -17,6 +17,10 @@ from typing import Literal, cast
 from langsmith import Client
 from pydantic import SecretStr
 
+from weather_agent.eval.langsmith_experiments import (
+    build_langsmith_eval_experiment_prefix,
+    build_langsmith_eval_metadata,
+)
 from weather_agent.eval.location_management_dataset import DATASET_NAME
 from weather_agent.eval.location_management_evaluators import location_management_fidelity
 from weather_agent.eval.location_management_targets import (
@@ -84,15 +88,26 @@ async def _run() -> None:
     )
 
     client = Client()
+    git_sha = _get_git_sha() or "unknown"
+    eval_suite = "location-management"
     results = await client.aevaluate(
         target,
         data=DATASET_NAME,
         evaluators=[location_management_fidelity],
-        experiment_prefix=f"location-management-{model_settings.provider}-{model_settings.model_name}",
+        experiment_prefix=build_langsmith_eval_experiment_prefix(
+            eval_suite=eval_suite,
+            model_provider=model_settings.provider,
+            model_name=model_settings.model_name,
+        ),
         metadata={
+            **build_langsmith_eval_metadata(
+                eval_suite=eval_suite,
+                dataset_name=DATASET_NAME,
+                git_sha=git_sha,
+            ),
             "model_provider": model_settings.provider,
             "model_name": model_settings.model_name,
-            "git_sha": _get_git_sha() or "unknown",
+            "models": [f"{model_settings.provider}:{model_settings.model_name}"],
             "dataset_version": "v1",
             "prompt_version": "production-weather-agent-md",
             "metric": "location_management_fidelity",

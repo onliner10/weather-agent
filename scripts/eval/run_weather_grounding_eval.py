@@ -21,6 +21,10 @@ from weather_agent.eval.judges import (
     WEATHER_GROUNDEDNESS_JUDGE_PROMPT_VERSION,
     build_weather_groundedness_judge,
 )
+from weather_agent.eval.langsmith_experiments import (
+    build_langsmith_eval_experiment_prefix,
+    build_langsmith_eval_metadata,
+)
 from weather_agent.eval.targets import build_weather_answer_async_target_from_factory
 from weather_agent.llm.model_factory import ModelFactory
 from weather_agent.observability.langsmith_tracing import configure_tracing
@@ -101,17 +105,28 @@ async def _run() -> None:
     )
 
     client = Client()
+    git_sha = _get_git_sha() or "unknown"
+    eval_suite = "weather-functional"
     results = await client.aevaluate(
         target,
         data=DATASET_NAME,
         evaluators=[weather_functional_correctness, groundedness_judge],
-        experiment_prefix=f"weather-functional-{model_settings.provider}-{model_settings.model_name}",
+        experiment_prefix=build_langsmith_eval_experiment_prefix(
+            eval_suite=eval_suite,
+            model_provider=model_settings.provider,
+            model_name=model_settings.model_name,
+        ),
         metadata={
+            **build_langsmith_eval_metadata(
+                eval_suite=eval_suite,
+                dataset_name=DATASET_NAME,
+                git_sha=git_sha,
+            ),
             "model_provider": model_settings.provider,
             "model_name": model_settings.model_name,
+            "models": [f"{model_settings.provider}:{model_settings.model_name}"],
             "judge_model_provider": judge_model_settings.provider,
             "judge_model_name": judge_model_settings.model_name,
-            "git_sha": _get_git_sha() or "unknown",
             "dataset_version": "v5",
             "prompt_version": "production-weather-agent-md",
             "metrics": [

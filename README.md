@@ -277,6 +277,21 @@ with `WEATHER_AGENT_MODEL__PROVIDER`, `WEATHER_AGENT_MODEL__MODEL_NAME`,
 the optional `LANGSMITH_PROJECT` repository variable to send those experiments
 to a non-production project such as `weather-agent-preprod`.
 
+CI model-quality eval experiments are named with a stable
+`<application>--ci-eval--<suite>--<provider>--<model>` prefix and include
+filterable LangSmith metadata:
+
+- `application`, defaulting to `LANGSMITH_APPLICATION`, then `LANGSMITH_PROJECT`
+- `environment`, defaulting to `LANGSMITH_ENVIRONMENT` or inferred from the application
+- `eval_kind=model_quality`
+- `eval_suite`, for example `weather-functional`
+- `run_source=github_actions`
+- `github_workflow`, `github_run_id`, `github_ref_name`, and `github_sha`
+
+Use these fields in LangSmith to find CI eval runs separately from normal
+preprod tracing. Set `LANGSMITH_APPLICATION` if the UI filter name should differ
+from `LANGSMITH_PROJECT`.
+
 ### Model benchmark experiments
 
 Model candidate sweeps are configured in `scripts/eval/model_benchmark_candidates.json`.
