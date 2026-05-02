@@ -77,6 +77,9 @@ class ListRulesToolResult(BaseModel):
 class CELCapabilitiesToolResult(BaseModel):
     functions: dict[str, list[str]] | None = None
     metrics: list[str] | None = None
+    signatures: dict[str, str] | None = None
+    rules: list[str] | None = None
+    examples: list[str] | None = None
     error: str | None = None
 
 
@@ -239,9 +242,15 @@ class RulesToolbox:
                 allowlist = get_allowlist_for_prompt()
                 functions: dict[str, list[str]] = allowlist["functions"]  # type: ignore[assignment]
                 metrics: list[str] = allowlist["metrics"]  # type: ignore[assignment]
+                signatures: dict[str, str] = allowlist["signatures"]  # type: ignore[assignment]
+                rules: list[str] = allowlist["rules"]  # type: ignore[assignment]
+                examples: list[str] = allowlist["examples"]  # type: ignore[assignment]
                 return CELCapabilitiesToolResult(
                     functions=functions,
                     metrics=metrics,
+                    signatures=signatures,
+                    rules=rules,
+                    examples=examples,
                 )
             finally:
                 TOOL_CALL_DURATION_SECONDS.labels(tool="get_cel_capabilities").observe(

@@ -29,6 +29,7 @@ _LINE_COUNT_EXCEPTIONS: dict[str, str] = {
     "adapters/telegram/bot.py": "Telegram bot setup with command registration",
     "adapters/imgw/warnings_provider.py": "IMGW warning parsing and transformation",
     "adapters/open_meteo/forecast_provider.py": "Open-Meteo API forecast fetching",
+    "eval/targets.py": "Weather grounding eval fixture target with sync and async entrypoints",
     "llm/tools/weather_tools.py": "Weather toolbox with forecast/observations/location",
     "llm/tools/rules_tools.py": "Rules toolbox with notification rule CRUD and CEL validation",
 }

@@ -12,6 +12,21 @@ class TestValidateSyntax:
         result = validate_expression('max("wind_gusts_10m_ms", weekend()) >= 12')
         assert result.valid
 
+    def test_rejects_aggregation_with_reversed_arguments(self) -> None:
+        result = validate_expression("max(weekend, wind_gusts_10m_ms) > 12")
+        assert not result.valid
+        assert "first argument must be a quoted allowed metric" in result.error
+
+    def test_rejects_aggregation_without_time_range(self) -> None:
+        result = validate_expression("min(temperature_2m_c) < -10")
+        assert not result.valid
+        assert "expects exactly 2 arguments" in result.error
+
+    def test_rejects_unquoted_metric_in_aggregation(self) -> None:
+        result = validate_expression("sum(precipitation_mm, next_hours(6)) > 5")
+        assert not result.valid
+        assert "first argument must be a quoted allowed metric" in result.error
+
     def test_valid_avg_comparison(self) -> None:
         result = validate_expression('avg("wind_speed_10m_ms", next_hours(24)) >= 7')
         assert result.valid
@@ -55,9 +70,13 @@ class TestUnknownFunctionRejection:
         assert result.valid
 
     def test_all_aggregation_functions_pass(self) -> None:
-        for func in ["min", "max", "avg", "sum", "median", "stddev", "pctl"]:
+        for func in ["min", "max", "avg", "sum", "median", "stddev"]:
             result = validate_expression(f'{func}("temperature_2m_c", weekend()) > 0')
             assert result.valid, f"Function {func} failed validation"
+
+    def test_pctl_passes_with_percentile_argument(self) -> None:
+        result = validate_expression('pctl("temperature_2m_c", weekend(), 90) > 0')
+        assert result.valid
 
     def test_all_time_functions_pass(self) -> None:
         for func in ["now", "today", "tomorrow", "weekend", "previous_snapshot"]:

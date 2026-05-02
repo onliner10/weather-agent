@@ -256,6 +256,11 @@ uv run pytest -m smoke
 
 # Evaluate intent and CEL generation
 uv run pytest tests/eval/
+
+# Create and run notification rule proposal fidelity eval
+uv run python scripts/eval/create_notification_rule_dataset.py
+LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
+  uv run python scripts/eval/run_notification_rule_eval.py
 ```
 
 ### Model benchmark experiments

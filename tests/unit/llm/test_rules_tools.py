@@ -90,6 +90,21 @@ class TestToolRegistration:
         assert sn.args_schema is not None
 
 
+class TestCELCapabilities:
+    @pytest.mark.asyncio()
+    async def test_capabilities_include_signatures_rules_and_examples(
+        self,
+        toolbox: RulesToolbox,
+    ) -> None:
+        result = await toolbox.get_cel_capabilities()
+
+        assert result.signatures is not None
+        assert result.rules is not None
+        assert result.examples is not None
+        assert result.signatures["max"] == 'max("metric_name", time_range)'
+        assert 'max("wind_gusts_10m_ms", weekend()) > 12.0' in result.examples
+
+
 class TestScheduleNotificationValidation:
     @pytest.mark.asyncio()
     async def test_invalid_cel_expression_returns_error(self, toolbox: RulesToolbox) -> None:
