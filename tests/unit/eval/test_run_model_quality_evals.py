@@ -43,6 +43,9 @@ def test_main_runs_all_eval_steps_in_order(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls-key")
     monkeypatch.setenv("WEATHER_AGENT_MODEL__API_KEY", "model-key")
+    monkeypatch.delenv("WEATHER_AGENT_MODEL__PROVIDER", raising=False)
+    monkeypatch.delenv("WEATHER_AGENT_MODEL__MODEL_NAME", raising=False)
+    monkeypatch.delenv("WEATHER_AGENT_MODEL__BASE_URL", raising=False)
 
     def fake_run(
         command: list[str],
@@ -58,10 +61,39 @@ def test_main_runs_all_eval_steps_in_order(monkeypatch: pytest.MonkeyPatch) -> N
 
     run_model_quality_evals.main()
 
+    assert run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__PROVIDER"] == "openrouter"
+    assert (
+        run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__MODEL_NAME"]
+        == "qwen/qwen3.5-flash-02-23"
+    )
+    assert (
+        run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__BASE_URL"]
+        == "https://openrouter.ai/api/v1"
+    )
     assert calls == [
         ([sys.executable, script_path], run_model_quality_evals.REPO_ROOT)
         for _, script_path in run_model_quality_evals.EVAL_STEPS
     ]
+
+
+def test_main_preserves_explicit_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_model_quality_evals = _load_script()
+
+    monkeypatch.setenv("LANGSMITH_API_KEY", "ls-key")
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__API_KEY", "model-key")
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__PROVIDER", "openai")
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__MODEL_NAME", "gpt-4.1-mini")
+    monkeypatch.setenv("WEATHER_AGENT_MODEL__BASE_URL", "https://proxy.example.com/v1")
+    monkeypatch.setattr(run_model_quality_evals, "_run_step", lambda _label, _script_path: None)
+
+    run_model_quality_evals.main()
+
+    assert run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__PROVIDER"] == "openai"
+    assert run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__MODEL_NAME"] == "gpt-4.1-mini"
+    assert (
+        run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__BASE_URL"]
+        == "https://proxy.example.com/v1"
+    )
 
 
 def test_main_stops_on_first_failed_eval_step(monkeypatch: pytest.MonkeyPatch) -> None:

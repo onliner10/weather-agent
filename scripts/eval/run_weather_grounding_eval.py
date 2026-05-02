@@ -87,7 +87,7 @@ async def _run() -> None:
 
     model_settings = _model_settings_from_env(
         "WEATHER_AGENT_MODEL__",
-        ModelSettings(provider="openai", model_name="gpt-4.1-mini"),
+        ModelSettings(),
     )
     judge_model_settings = _model_settings_from_env(
         "WEATHER_AGENT_JUDGE_MODEL__",

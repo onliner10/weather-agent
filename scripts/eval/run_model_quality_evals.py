@@ -20,6 +20,14 @@ REQUIRED_ENV_VARS = (
     "WEATHER_AGENT_MODEL__API_KEY",
 )
 
+DEFAULT_MODEL_ENV = {
+    "WEATHER_AGENT_MODEL__PROVIDER": "openrouter",
+    "WEATHER_AGENT_MODEL__MODEL_NAME": "qwen/qwen3.5-flash-02-23",
+    "WEATHER_AGENT_MODEL__BASE_URL": "https://openrouter.ai/api/v1",
+    "WEATHER_AGENT_MODEL__ROUTING_SORT": "price",
+    "WEATHER_AGENT_MODEL__REQUIRE_SUPPORTED_PARAMETERS": "true",
+}
+
 EVAL_STEPS = (
     ("Sync notification rule dataset", "scripts/eval/create_notification_rule_dataset.py"),
     ("Run notification rule eval", "scripts/eval/run_notification_rule_eval.py"),
@@ -45,12 +53,19 @@ def _run_step(label: str, script_path: str) -> None:
         raise SystemExit(result.returncode)
 
 
+def _apply_default_model_env() -> None:
+    for name, value in DEFAULT_MODEL_ENV.items():
+        os.environ.setdefault(name, value)
+
+
 def main() -> None:
     missing = _missing_env_vars(REQUIRED_ENV_VARS)
     if missing:
         joined = ", ".join(missing)
         print(f"Error: missing required environment variables: {joined}", file=sys.stderr)
         raise SystemExit(1)
+
+    _apply_default_model_env()
 
     for label, script_path in EVAL_STEPS:
         _run_step(label, script_path)

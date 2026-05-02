@@ -269,9 +269,13 @@ LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
 ```
 
 The GitHub Actions model-quality workflow uses `LANGSMITH_API_KEY` and
-`WEATHER_AGENT_MODEL__API_KEY` secrets. Set the optional `LANGSMITH_PROJECT`
-repository variable to send those experiments to a non-production project such
-as `weather-agent-preprod`.
+`WEATHER_AGENT_MODEL__API_KEY` secrets. It defaults to OpenRouter with
+`qwen/qwen3.5-flash-02-23` and `https://openrouter.ai/api/v1`; override those
+with `WEATHER_AGENT_MODEL__PROVIDER`, `WEATHER_AGENT_MODEL__MODEL_NAME`,
+`WEATHER_AGENT_MODEL__BASE_URL`, `WEATHER_AGENT_MODEL__ROUTING_SORT`, and
+`WEATHER_AGENT_MODEL__REQUIRE_SUPPORTED_PARAMETERS` repository variables. Set
+the optional `LANGSMITH_PROJECT` repository variable to send those experiments
+to a non-production project such as `weather-agent-preprod`.
 
 ### Model benchmark experiments
 

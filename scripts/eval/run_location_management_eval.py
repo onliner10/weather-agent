@@ -60,9 +60,13 @@ async def _run() -> None:
     routing_sort = os.environ.get("WEATHER_AGENT_MODEL__ROUTING_SORT")
     if routing_sort not in ROUTING_SORT_VALUES:
         routing_sort = None
+    fallback_model_settings = ModelSettings()
     model_settings = ModelSettings(
-        provider=os.environ.get("WEATHER_AGENT_MODEL__PROVIDER", "openai"),
-        model_name=os.environ.get("WEATHER_AGENT_MODEL__MODEL_NAME", "gpt-4.1-mini"),
+        provider=os.environ.get("WEATHER_AGENT_MODEL__PROVIDER", fallback_model_settings.provider),
+        model_name=os.environ.get(
+            "WEATHER_AGENT_MODEL__MODEL_NAME",
+            fallback_model_settings.model_name,
+        ),
         api_key=(
             SecretStr(api_key)
             if (api_key := os.environ.get("WEATHER_AGENT_MODEL__API_KEY")) is not None
