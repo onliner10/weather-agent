@@ -42,20 +42,23 @@ def _missing_env_vars(names: Sequence[str]) -> list[str]:
     return [name for name in names if not os.environ.get(name)]
 
 
-def _run_step(label: str, script_path: str) -> None:
+def _run_step(label: str, script_path: str, env: dict[str, str]) -> None:
     print(f"\n==> {label}", flush=True)
     result = subprocess.run(
         [sys.executable, script_path],
         cwd=REPO_ROOT,
         check=False,
+        env=env,
     )
     if result.returncode != 0:
         raise SystemExit(result.returncode)
 
 
-def _apply_default_model_env() -> None:
+def _build_child_env() -> dict[str, str]:
+    env = dict(os.environ)
     for name, value in DEFAULT_MODEL_ENV.items():
-        os.environ.setdefault(name, value)
+        env.setdefault(name, value)
+    return env
 
 
 def main() -> None:
@@ -65,10 +68,10 @@ def main() -> None:
         print(f"Error: missing required environment variables: {joined}", file=sys.stderr)
         raise SystemExit(1)
 
-    _apply_default_model_env()
+    child_env = _build_child_env()
 
     for label, script_path in EVAL_STEPS:
-        _run_step(label, script_path)
+        _run_step(label, script_path, child_env)
 
 
 if __name__ == "__main__":

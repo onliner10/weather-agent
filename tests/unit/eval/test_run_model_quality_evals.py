@@ -39,7 +39,7 @@ def test_main_fails_with_clear_error_when_required_env_is_missing(
 
 def test_main_runs_all_eval_steps_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
     run_model_quality_evals = _load_script()
-    calls: list[tuple[list[str], Path]] = []
+    calls: list[tuple[list[str], Path, dict[str, str]]] = []
 
     monkeypatch.setenv("LANGSMITH_API_KEY", "ls-key")
     monkeypatch.setenv("WEATHER_AGENT_MODEL__API_KEY", "model-key")
@@ -52,26 +52,23 @@ def test_main_runs_all_eval_steps_in_order(monkeypatch: pytest.MonkeyPatch) -> N
         *,
         cwd: Path,
         check: bool,
+        env: dict[str, str],
     ) -> subprocess.CompletedProcess[str]:
         assert check is False
-        calls.append((command, cwd))
+        calls.append((command, cwd, env))
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(run_model_quality_evals.subprocess, "run", fake_run)
 
     run_model_quality_evals.main()
 
-    assert run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__PROVIDER"] == "openrouter"
-    assert (
-        run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__MODEL_NAME"]
-        == "qwen/qwen3.5-flash-02-23"
-    )
-    assert (
-        run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__BASE_URL"]
-        == "https://openrouter.ai/api/v1"
-    )
+    assert "WEATHER_AGENT_MODEL__PROVIDER" not in run_model_quality_evals.os.environ
+    first_env = calls[0][2]
+    assert first_env["WEATHER_AGENT_MODEL__PROVIDER"] == "openrouter"
+    assert first_env["WEATHER_AGENT_MODEL__MODEL_NAME"] == "qwen/qwen3.5-flash-02-23"
+    assert first_env["WEATHER_AGENT_MODEL__BASE_URL"] == "https://openrouter.ai/api/v1"
     assert calls == [
-        ([sys.executable, script_path], run_model_quality_evals.REPO_ROOT)
+        ([sys.executable, script_path], run_model_quality_evals.REPO_ROOT, first_env)
         for _, script_path in run_model_quality_evals.EVAL_STEPS
     ]
 
@@ -84,7 +81,12 @@ def test_main_preserves_explicit_model_env(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("WEATHER_AGENT_MODEL__PROVIDER", "openai")
     monkeypatch.setenv("WEATHER_AGENT_MODEL__MODEL_NAME", "gpt-4.1-mini")
     monkeypatch.setenv("WEATHER_AGENT_MODEL__BASE_URL", "https://proxy.example.com/v1")
-    monkeypatch.setattr(run_model_quality_evals, "_run_step", lambda _label, _script_path: None)
+    child_envs: list[dict[str, str]] = []
+
+    def fake_run_step(_label: str, _script_path: str, env: dict[str, str]) -> None:
+        child_envs.append(env)
+
+    monkeypatch.setattr(run_model_quality_evals, "_run_step", fake_run_step)
 
     run_model_quality_evals.main()
 
@@ -94,6 +96,9 @@ def test_main_preserves_explicit_model_env(monkeypatch: pytest.MonkeyPatch) -> N
         run_model_quality_evals.os.environ["WEATHER_AGENT_MODEL__BASE_URL"]
         == "https://proxy.example.com/v1"
     )
+    assert child_envs[0]["WEATHER_AGENT_MODEL__PROVIDER"] == "openai"
+    assert child_envs[0]["WEATHER_AGENT_MODEL__MODEL_NAME"] == "gpt-4.1-mini"
+    assert child_envs[0]["WEATHER_AGENT_MODEL__BASE_URL"] == "https://proxy.example.com/v1"
 
 
 def test_main_stops_on_first_failed_eval_step(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,6 +113,7 @@ def test_main_stops_on_first_failed_eval_step(monkeypatch: pytest.MonkeyPatch) -
         *,
         cwd: Path,
         check: bool,
+        env: dict[str, str],
     ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         return subprocess.CompletedProcess(command, 42)
