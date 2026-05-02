@@ -138,7 +138,7 @@ class NotificationDeduplicator:
                 .where(
                     NotificationEventORM.rule_id == rule.id,
                     NotificationEventORM.payload_hash == dedupe_hash,
-                    NotificationEventORM.suppressed.is_(False),
+                    NotificationEventORM.delivery_status == "sent",
                 )
                 .limit(1)
             )
@@ -159,7 +159,7 @@ class NotificationDeduplicator:
                 .where(
                     NotificationEventORM.rule_id == rule.id,
                     NotificationEventORM.payload_hash.isnot(None),
-                    NotificationEventORM.suppressed.is_(False),
+                    NotificationEventORM.delivery_status == "sent",
                 )
                 .order_by(NotificationEventORM.created_at.desc())
                 .limit(1)

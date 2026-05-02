@@ -5,15 +5,15 @@ import math
 import operator
 from datetime import datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from weather_agent.domain.cel.allowlist import ALL_ALLOWED_FUNCTION_NAMES, ALLOWED_METRICS
 from weather_agent.domain.cel.validation import ValidationResult, validate_expression
+from weather_agent.domain.time import WARSAW_TZ, ensure_aware, parse_datetime
 from weather_agent.domain.weather import TimeRange
 
-_WARSAW = ZoneInfo("Europe/Warsaw")
+_WARSAW = WARSAW_TZ
 
 _DataDict = dict[str, Any]
 
@@ -115,8 +115,8 @@ def _next_hours(n: int | float) -> TimeRangeValue:
 
 
 def _date_range(start_iso: str, end_iso: str) -> TimeRangeValue:
-    start = datetime.fromisoformat(start_iso).replace(tzinfo=_WARSAW)
-    end = datetime.fromisoformat(end_iso).replace(tzinfo=_WARSAW)
+    start = parse_datetime(start_iso, _WARSAW)
+    end = parse_datetime(end_iso, _WARSAW)
     return TimeRangeValue(start, end)
 
 
@@ -150,10 +150,12 @@ def _points_in_range(points: list[_DataDict], time_range: TimeRangeValue) -> lis
             result.append(point)
             continue
         if isinstance(target_time, str):
-            target_time = datetime.fromisoformat(target_time)
+            target_time = parse_datetime(target_time, _WARSAW)
+        elif isinstance(target_time, datetime):
+            target_time = ensure_aware(target_time, _WARSAW)
         if time_range.start <= target_time <= time_range.end:
             result.append(point)
-    return result if result else points
+    return result
 
 
 def _metric_agg(metric_key: str, time_range: TimeRangeValue, data: _DataDict) -> list[float]:
@@ -264,6 +266,8 @@ def _forecast_delta_(
     snapshot_ref: SnapshotRef,
     data: _DataDict,
 ) -> float:
+    if snapshot_ref.label != "previous":
+        raise CELEvalError(f"Unsupported snapshot reference: {snapshot_ref.label}")
     current_values = _metric_agg(metric_key, time_range, data)
     previous_points = data.get("previous_points", [])
     prev_data: _DataDict = {**data, "points": previous_points}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 
 import httpx
 
@@ -11,6 +11,7 @@ from weather_agent.domain.errors import (
     WeatherProviderUnavailableError,
 )
 from weather_agent.domain.providers import WarningProvider
+from weather_agent.domain.time import WARSAW_TZ, ensure_utc
 from weather_agent.domain.weather import (
     LocationRef,
     TimeRange,
@@ -65,7 +66,7 @@ def _parse_imgw_datetime(raw: str) -> datetime:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
             dt = datetime.strptime(raw, fmt)
-            return dt.replace(tzinfo=UTC)
+            return ensure_utc(dt, naive_tz=WARSAW_TZ)
         except ValueError:
             continue
     raise ValueError(f"Cannot parse IMGW datetime: {raw!r}")

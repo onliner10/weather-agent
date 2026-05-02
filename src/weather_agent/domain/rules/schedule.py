@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Literal, cast
-from zoneinfo import ZoneInfo
 
 from croniter import croniter  # type: ignore[import-untyped]
 
-_WARSAW = ZoneInfo("Europe/Warsaw")
+from weather_agent.domain.time import WARSAW_TZ, ensure_aware, parse_datetime
+
+_WARSAW = WARSAW_TZ
 
 ScheduleKind = Literal["none", "once", "cron"]
 
@@ -33,9 +34,7 @@ def parse_schedule(schedule: str | None) -> ScheduleParseResult:
     if schedule.startswith("once:"):
         iso = schedule[5:]
         try:
-            dt = datetime.fromisoformat(iso)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=_WARSAW)
+            parse_datetime(iso, _WARSAW)
         except (ValueError, TypeError):
             err = f"Invalid once datetime: {iso}"
             return ScheduleParseResult(kind="once", error=err, raw=schedule)
@@ -59,11 +58,9 @@ def is_rule_due(schedule: str | None, now: datetime | None = None) -> bool:
     if parsed.kind == "once":
         if now is None:
             now = datetime.now(_WARSAW)
-        elif now.tzinfo is None:
-            now = now.replace(tzinfo=_WARSAW)
-        dt = datetime.fromisoformat(parsed.raw[5:])
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=_WARSAW)
+        else:
+            now = ensure_aware(now, _WARSAW)
+        dt = parse_datetime(parsed.raw[5:], _WARSAW)
         return now >= dt
     return True
 
@@ -75,8 +72,8 @@ def last_cron_slot(schedule: str, now: datetime | None = None) -> datetime | Non
     expr = parsed.raw[5:]
     if now is None:
         now = datetime.now(_WARSAW)
-    elif now.tzinfo is None:
-        now = now.replace(tzinfo=_WARSAW)
+    else:
+        now = ensure_aware(now, _WARSAW)
     offset = _WARSAW.utcoffset(now) or timedelta()
     cron = croniter(expr, now - offset)
     prev = cast("datetime", cron.get_prev(datetime))

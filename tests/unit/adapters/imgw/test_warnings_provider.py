@@ -102,11 +102,11 @@ def _make_hydro_warning(
 class TestParseImgwDatetime:
     def test_space_separated_format(self) -> None:
         result = _parse_imgw_datetime("2026-04-28 23:00:00")
-        assert result == datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC)
+        assert result == datetime(2026, 4, 28, 21, 0, 0, tzinfo=UTC)
 
     def test_iso_format(self) -> None:
         result = _parse_imgw_datetime("2026-04-28T23:00:00")
-        assert result == datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC)
+        assert result == datetime(2026, 4, 28, 21, 0, 0, tzinfo=UTC)
 
     def test_invalid_format_raises(self) -> None:
         with pytest.raises(ValueError, match="Cannot parse"):
@@ -212,8 +212,8 @@ class TestParseMeteoWarnings:
         assert w.category == WarningCategory.meteo
         assert w.headline == "Przymrozki"
         assert w.description == "Spadek temperatury do -1°C"
-        assert w.valid_from == datetime(2026, 4, 28, 23, 0, 0, tzinfo=UTC)
-        assert w.valid_to == datetime(2026, 4, 29, 7, 0, 0, tzinfo=UTC)
+        assert w.valid_from == datetime(2026, 4, 28, 21, 0, 0, tzinfo=UTC)
+        assert w.valid_to == datetime(2026, 4, 29, 5, 0, 0, tzinfo=UTC)
 
     def test_raw_payload_preserved(self) -> None:
         raw_item = _make_meteo_warning()
@@ -278,8 +278,8 @@ class TestParseHydroWarnings:
         assert w.category == WarningCategory.hydro
         assert w.headline == "Susza hydrologiczna"
         assert w.description == "Niskie przepływy wody"
-        assert w.valid_from == datetime(2026, 4, 17, 8, 46, 51, tzinfo=UTC)
-        assert w.valid_to == datetime(2026, 4, 25, 23, 59, 59, tzinfo=UTC)
+        assert w.valid_from == datetime(2026, 4, 17, 6, 46, 51, tzinfo=UTC)
+        assert w.valid_to == datetime(2026, 4, 25, 21, 59, 59, tzinfo=UTC)
 
     def test_raw_payload_preserved(self) -> None:
         raw_item = _make_hydro_warning()

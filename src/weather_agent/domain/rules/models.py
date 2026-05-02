@@ -41,6 +41,8 @@ class NotificationEvent(BaseModel):
     suppress_reason: str | None = None
     payload_hash: str | None = None
     message_text: str | None = None
+    delivery_status: str = "pending"
+    delivery_claimed_at: datetime | None = None
     created_at: datetime
 
 

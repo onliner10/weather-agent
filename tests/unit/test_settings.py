@@ -32,6 +32,9 @@ def test_settings_apply_model_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.model.model_name == "qwen/qwen3.5-flash-02-23"
     assert settings.model.routing_sort is None
     assert settings.model.require_supported_parameters is True
+    assert settings.model.timeout_seconds == 45.0
+    assert settings.model.fallback_provider is None
+    assert settings.model.fallback_model_name is None
     assert settings.telegram.bot_token == SecretStr("telegram-token")
 
 
@@ -87,6 +90,9 @@ def test_settings_observability_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.observability.enabled is True
     assert settings.observability.bot_port == 8080
     assert settings.observability.worker_port == 8081
+    assert settings.health.worker_stale_after_minutes == 45
+    assert settings.health.forecast_stale_after_minutes == 120
+    assert settings.telegram.max_concurrent_updates == 4
 
 
 def test_settings_observability_overrides(monkeypatch: pytest.MonkeyPatch) -> None:

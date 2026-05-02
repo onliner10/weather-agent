@@ -168,6 +168,9 @@ class TestCmdBot:
         container.settings.telegram = MagicMock()
         container.settings.telegram.allowed_user_ids = ()
         container.settings.observability.enabled = False
+        container.settings.health = MagicMock()
+        container.settings.scheduler = MagicMock()
+        container.settings.model = MagicMock()
         container.__aenter__.return_value = container
         container.__aexit__.return_value = None
         return container
@@ -176,8 +179,10 @@ class TestCmdBot:
         from weather_agent.cmd.bot import cmd_bot
 
         mock_container = self._make_mock_container()
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations") as mock_migrate,
@@ -191,14 +196,16 @@ class TestCmdBot:
 
             with pytest.raises(RuntimeError):
                 cmd_bot(MagicMock())
-            mock_migrate.assert_called_once()
+            mock_migrate.assert_called_once_with("sqlite+aiosqlite:///:memory:")
 
     def test_cmd_bot_creates_and_runs_telegram_bot(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
         mock_container = self._make_mock_container()
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations"),
@@ -216,12 +223,14 @@ class TestCmdBot:
             mock_bot.start.assert_called_once()
             mock_bot.stop.assert_called_once()
 
-    def test_cmd_bot_migration_failure_is_warned(self) -> None:
+    def test_cmd_bot_migration_failure_fails_startup(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
 
         mock_container = self._make_mock_container()
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch(
@@ -238,7 +247,7 @@ class TestCmdBot:
 
             with pytest.raises(RuntimeError):
                 cmd_bot(MagicMock())
-            mock_bot.setup.assert_called_once()
+            mock_bot.setup.assert_not_called()
 
     def test_cmd_bot_starts_observability_server_when_enabled(self) -> None:
         from weather_agent.cmd.bot import cmd_bot
@@ -246,8 +255,10 @@ class TestCmdBot:
         mock_container = self._make_mock_container()
         mock_container.settings.observability.enabled = True
         mock_container.settings.observability.bot_port = 9999
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.bot.acquire_lock", return_value="/tmp/bot.pid"),
             patch("weather_agent.cmd.bot.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.bot.run_migrations"),
@@ -273,6 +284,8 @@ class TestCmdWorker:
         container = AsyncMock()
         container.settings.scheduler = MagicMock()
         container.settings.observability.enabled = False
+        container.settings.health = MagicMock()
+        container.settings.model = MagicMock()
         container.cel_evaluator = MagicMock()
         container.session_factory = MagicMock()
         container.__aenter__.return_value = container
@@ -285,8 +298,10 @@ class TestCmdWorker:
         mock_container = self._make_mock_container()
         mock_session = AsyncMock()
         mock_container.session_factory.return_value.__aenter__.return_value = mock_session
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
             patch("weather_agent.cmd.worker.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.worker.run_migrations") as mock_migrate,
@@ -306,7 +321,7 @@ class TestCmdWorker:
             mock_worker_cls.return_value = mock_worker
 
             cmd_worker(MagicMock())
-            mock_migrate.assert_called_once()
+            mock_migrate.assert_called_once_with("sqlite+aiosqlite:///:memory:")
 
     def test_cmd_worker_starts_observability_server_when_enabled(self) -> None:
         from weather_agent.cmd.worker import cmd_worker
@@ -316,8 +331,10 @@ class TestCmdWorker:
         mock_container.settings.observability.worker_port = 9998
         mock_session = AsyncMock()
         mock_container.session_factory.return_value.__aenter__.return_value = mock_session
+        mock_settings = MagicMock(database_url="sqlite+aiosqlite:///:memory:")
 
         with (
+            patch("weather_agent.settings.load_settings", return_value=mock_settings),
             patch("weather_agent.cmd.worker.acquire_lock", return_value="/tmp/worker.pid"),
             patch("weather_agent.cmd.worker.AppContainer", return_value=mock_container),
             patch("weather_agent.cmd.worker.run_migrations"),

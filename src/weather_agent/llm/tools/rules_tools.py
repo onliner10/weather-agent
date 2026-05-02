@@ -418,7 +418,10 @@ class RulesToolbox:
                 )
                 short_id = rule.short_id
             elif pending.action == "edit_rule" and pending.edit_short_id:
-                existing = await self.rule_service.get_rule(short_id=pending.edit_short_id)
+                existing = await self.rule_service.get_rule_for_user(
+                    self.user_id,
+                    short_id=pending.edit_short_id,
+                )
                 if existing is None:
                     return ConfirmActionToolResult(
                         error=f"Nie znaleziono reguły #{pending.edit_short_id}",

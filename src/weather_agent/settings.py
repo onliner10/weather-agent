@@ -16,6 +16,7 @@ class TelegramSettings(BaseModel):
 
     bot_token: SecretStr
     allowed_user_ids: Annotated[tuple[int, ...], NoDecode] = ()
+    max_concurrent_updates: int = Field(default=4, ge=1)
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod
@@ -51,6 +52,9 @@ class ModelSettings(BaseModel):
     temperature: float = 0.2
     api_key: SecretStr | None = None
     base_url: str | None = None
+    timeout_seconds: float = Field(default=45.0, gt=0)
+    fallback_provider: str | None = None
+    fallback_model_name: str | None = None
     routing_sort: Literal["price", "latency", "throughput"] | None = None
     require_supported_parameters: bool = True
 
@@ -106,6 +110,15 @@ class ObservabilitySettings(BaseModel):
     worker_port: int = 8081
 
 
+class HealthSettings(BaseModel):
+    """Readiness freshness thresholds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    worker_stale_after_minutes: int = Field(default=45, gt=0)
+    forecast_stale_after_minutes: int = Field(default=120, gt=0)
+
+
 class RetentionSettings(BaseModel):
     """Retention windows for user context, weather data, and audit evidence."""
 
@@ -147,6 +160,7 @@ class AppSettings(BaseSettings):
     units: GlobalUnitsSettings = GlobalUnitsSettings()
     scheduler: SchedulerSettings = SchedulerSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
+    health: HealthSettings = HealthSettings()
     retention: RetentionSettings = RetentionSettings()
     default_timezone: str = "Europe/Warsaw"
     default_language: str = "pl-PL"

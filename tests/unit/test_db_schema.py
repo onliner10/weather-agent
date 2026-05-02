@@ -345,6 +345,8 @@ class TestNotificationEvents:
             "suppress_reason",
             "payload_hash",
             "message_text",
+            "delivery_status",
+            "delivery_claimed_at",
             "created_at",
         }
         assert expected <= cols
@@ -363,8 +365,13 @@ class TestNotificationEvents:
             "suppress_reason",
             "payload_hash",
             "message_text",
+            "delivery_claimed_at",
         ]:
             assert cols[nullable_field]["nullable"] is True, f"{nullable_field} should be nullable"
+
+    def test_delivery_status_not_nullable(self, inspector: Inspector) -> None:
+        cols = {c["name"]: c for c in inspector.get_columns("notification_events")}
+        assert cols["delivery_status"]["nullable"] is False
 
     def test_fk_to_notification_rules(self, inspector: Inspector) -> None:
         fks = inspector.get_foreign_keys("notification_events")

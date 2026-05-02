@@ -20,6 +20,7 @@ def mock_rule_service() -> MagicMock:
     svc = MagicMock()
     svc.create_rule = AsyncMock()
     svc.get_rule = AsyncMock()
+    svc.get_rule_for_user = AsyncMock()
     svc.update_rule = AsyncMock()
     svc.list_rules = AsyncMock()
     return svc
@@ -458,4 +459,29 @@ class TestConfirmExistingFlows:
         assert result.error is None
         assert "zaktualizowana" in result.answer
 
-        mock_rule_service.get_rule.assert_awaited_once_with(short_id="R1A2B3")
+        mock_rule_service.get_rule_for_user.assert_awaited_once_with(100, short_id="R1A2B3")
+
+    @pytest.mark.asyncio()
+    async def test_confirm_edit_treats_other_users_rule_as_not_found(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        mock_memory_service.get_pending_confirmation.return_value = {
+            "action": "edit_rule",
+            "cel_expression": "wind_gusts_10m_ms > 12",
+            "explanation": "Silny wiatr",
+            "validated": True,
+            "location_id": 42,
+            "chat_id": 200,
+            "message_thread_id": 1,
+            "stored_at": datetime.now(UTC).isoformat(),
+            "edit_short_id": "R1A2B3",
+        }
+        mock_rule_service.get_rule_for_user.return_value = None
+
+        result = await toolbox.confirm_pending_action()
+
+        assert result.error == "Nie znaleziono reguły #R1A2B3"
+        mock_rule_service.update_rule.assert_not_awaited()

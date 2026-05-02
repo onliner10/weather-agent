@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event as sa_event
@@ -237,6 +237,8 @@ class TestCreateEvent:
         assert evt.telegram_chat_id == 12345
         assert evt.sent_at is None
         assert evt.suppressed is False
+        assert evt.delivery_status == "sending"
+        assert evt.delivery_claimed_at is not None
 
     async def test_create_event_stores_in_db(self, session: AsyncSession) -> None:
         await _create_user(session)
@@ -335,6 +337,86 @@ class TestCreateEvent:
         evt = await service.create_event(rule, evaluation, None, payload={})
         assert evt.evaluation_run_id == 99
 
+    async def test_create_event_once_reuses_existing_unsuppressed_event(
+        self, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _create_rule_orm(session)
+        audit = AuditLogger(session)
+        service = NotificationEventService(session, audit)
+
+        rule = _make_rule()
+        evaluation = _make_evaluation_result()
+        dedupe_key = compute_dedupe_key(
+            rule_id=rule.id,
+            location_id=rule.location_id,
+            expression=rule.expression,
+        )
+
+        first, first_created = await service.create_event_once(
+            rule,
+            evaluation,
+            dedupe_key,
+            payload={},
+        )
+        second, second_created = await service.create_event_once(
+            rule,
+            evaluation,
+            dedupe_key,
+            payload={},
+        )
+
+        assert first_created is True
+        assert second_created is False
+        assert second.id == first.id
+
+        stmt = select(NotificationEventORM).where(NotificationEventORM.rule_id == rule.id)
+        result = await session.execute(stmt)
+        assert len(result.scalars().all()) == 1
+
+    async def test_create_event_once_reclaims_stale_unsent_event(
+        self, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _create_rule_orm(session)
+        audit = AuditLogger(session)
+        service = NotificationEventService(session, audit)
+
+        rule = _make_rule()
+        evaluation = _make_evaluation_result()
+        dedupe_key = compute_dedupe_key(
+            rule_id=rule.id,
+            location_id=rule.location_id,
+            expression=rule.expression,
+        )
+
+        first, first_created = await service.create_event_once(
+            rule,
+            evaluation,
+            dedupe_key,
+            payload={},
+        )
+        orm = await session.get(NotificationEventORM, first.id)
+        assert orm is not None
+        orm.delivery_claimed_at = datetime.now(UTC) - timedelta(minutes=20)
+        await session.flush()
+
+        second, second_created = await service.create_event_once(
+            rule,
+            evaluation,
+            dedupe_key,
+            payload={},
+            lease_timeout=timedelta(minutes=10),
+        )
+
+        assert first_created is True
+        assert second_created is True
+        assert second.id == first.id
+        assert second.delivery_status == "sending"
+        assert second.delivery_claimed_at is not None
+
 
 class TestMarkSent:
     async def test_mark_sent_sets_sent_at(self, session: AsyncSession) -> None:
@@ -352,6 +434,7 @@ class TestMarkSent:
         updated = await service.mark_sent(evt.id, message_text="Wind alert!")
         assert updated.sent_at is not None
         assert updated.message_text == "Wind alert!"
+        assert updated.delivery_status == "sent"
 
     async def test_mark_sent_without_message_text(self, session: AsyncSession) -> None:
         await _create_user(session)
@@ -391,6 +474,7 @@ class TestMarkSuppressed:
         updated = await service.mark_suppressed(evt.id, reason="cooldown")
         assert updated.suppressed is True
         assert updated.suppress_reason == "cooldown"
+        assert updated.delivery_status == "suppressed"
 
     async def test_mark_suppressed_nonexistent_raises(self, session: AsyncSession) -> None:
         audit = AuditLogger(session)

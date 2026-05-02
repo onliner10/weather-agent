@@ -4,7 +4,6 @@ import asyncio
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from zoneinfo import ZoneInfo
 
 from langsmith import trace
 from pydantic import BaseModel, ConfigDict
@@ -15,10 +14,12 @@ from weather_agent.domain.cel.evaluator import CELEvaluator
 from weather_agent.domain.rules.models import NotificationRule
 from weather_agent.domain.rules.schedule import is_rule_due, last_cron_slot
 from weather_agent.domain.rules.service import NotificationRuleService
+from weather_agent.domain.time import ensure_utc
 from weather_agent.infrastructure.db.base import ForecastPoint as ForecastPointORM
 from weather_agent.infrastructure.db.base import NotificationEvent as NotificationEventORM
 from weather_agent.infrastructure.db.base import RuleEvaluationRun as RuleEvaluationRunORM
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
+from weather_agent.infrastructure.worker.coordination import WorkerCoordinator
 from weather_agent.observability.logging import (
     bound_worker_context,
     generate_correlation_id,
@@ -82,6 +83,7 @@ class RuleEvaluationWorker:
         notification_sender: NotificationSender | None = None,
         event_service: NotificationEventService | None = None,
         deduplicator: NotificationDeduplicator | None = None,
+        coordinator: WorkerCoordinator | None = None,
     ) -> None:
         self._session = session
         self._forecast_repo = forecast_repo
@@ -92,11 +94,33 @@ class RuleEvaluationWorker:
         self._notification_sender = notification_sender
         self._event_service = event_service
         self._deduplicator = deduplicator
+        self._coordinator = coordinator or WorkerCoordinator(session)
 
     async def evaluate_rules(self, dry_run: bool = False) -> list[EvaluationResult]:
-        all_rules = await self._rule_service.list_all_enabled_rules()
-        now = datetime.now(UTC)
-        rules = [r for r in all_rules if await self._is_rule_due(r, now)]
+        rules = await self._claim_due_rules()
+        if not rules:
+            return []
+
+        return await self._evaluate_due_rules(rules=rules, dry_run=dry_run)
+
+    async def _claim_due_rules(self) -> list[NotificationRule]:
+        worker_lock = await self._coordinator.acquire()
+        if not worker_lock.acquired:
+            logger.info("rule_evaluation_worker_lock_busy")
+            return []
+
+        try:
+            all_rules = await self._rule_service.list_all_enabled_rules()
+            now = datetime.now(UTC)
+            return [r for r in all_rules if await self._is_rule_due(r, now)]
+        finally:
+            await self._coordinator.release()
+
+    async def _evaluate_due_rules(
+        self,
+        rules: list[NotificationRule],
+        dry_run: bool = False,
+    ) -> list[EvaluationResult]:
         async with trace(
             "evaluate_rules",
             run_type="tool",
@@ -160,6 +184,7 @@ class RuleEvaluationWorker:
                 stmt = select(NotificationEventORM).where(
                     NotificationEventORM.rule_id == rule.id,
                     NotificationEventORM.created_at >= slot,
+                    NotificationEventORM.delivery_status.in_(("sent", "suppressed")),
                 )
                 result = await self._session.execute(stmt)
                 if result.scalar_one_or_none() is not None:
@@ -371,8 +396,8 @@ class RuleEvaluationWorker:
     @staticmethod
     def _orm_point_to_dict(p: ForecastPointORM) -> dict[str, Any]:
         target_time = p.target_time
-        if target_time is not None and target_time.tzinfo is None:
-            target_time = target_time.replace(tzinfo=ZoneInfo("Europe/Warsaw"))
+        if target_time is not None:
+            target_time = ensure_utc(target_time)
         d: dict[str, Any] = {
             "target_time": target_time,
             "fetched_at": None,
@@ -423,7 +448,10 @@ class RuleEvaluationWorker:
         rule: NotificationRule,
         result: EvaluationResult,
     ) -> None:
-        from weather_agent.domain.notifications.deduplication import NotificationCandidate
+        from weather_agent.domain.notifications.deduplication import (
+            NotificationCandidate,
+            compute_dedupe_key,
+        )
 
         assert self._event_service is not None
         assert self._notification_sender is not None
@@ -460,12 +488,21 @@ class RuleEvaluationWorker:
         if self._deduplicator is not None:
             suppressed, suppress_reason = await self._deduplicator.should_suppress(rule, candidate)
 
-        event = await self._event_service.create_event(
+        dedupe_key = compute_dedupe_key(
+            rule_id=rule.id,
+            location_id=rule.location_id,
+            expression=rule.expression,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        event, created = await self._event_service.create_event_once(
             rule=rule,
             evaluation=result,
-            dedupe_key=None,
+            dedupe_key=dedupe_key,
             payload=detail,
         )
+        if not created:
+            return
 
         if suppressed:
             await self._event_service.mark_suppressed(event.id, suppress_reason or "suppressed")

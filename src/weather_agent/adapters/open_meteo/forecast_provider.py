@@ -11,6 +11,7 @@ from weather_agent.domain.errors import (
     WeatherProviderTimeoutError,
     WeatherProviderUnavailableError,
 )
+from weather_agent.domain.time import parse_datetime_as_utc
 from weather_agent.domain.weather import (
     ForecastPoint,
     ForecastResolution,
@@ -197,7 +198,7 @@ class OpenMeteoDwdIconProvider:
         points: list[ForecastPoint] = []
         for idx, time_str in enumerate(time_data):
             try:
-                target_time = datetime.fromisoformat(time_str).replace(tzinfo=UTC)
+                target_time = parse_datetime_as_utc(time_str)
             except (ValueError, TypeError):
                 continue
 

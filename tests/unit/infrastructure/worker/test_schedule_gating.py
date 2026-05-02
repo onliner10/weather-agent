@@ -308,6 +308,8 @@ class TestScheduleGating:
             short_id="NE0001",
             rule_id=rule.id,
             telegram_chat_id=12345,
+            sent_at=datetime.now(UTC),
+            delivery_status="sent",
             created_at=datetime.now(UTC),
         )
         session.add(event_orm)
@@ -323,6 +325,41 @@ class TestScheduleGating:
         results = await worker.evaluate_rules()
 
         assert results == []
+
+    async def test_cron_rule_with_recent_pending_event_is_retried(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session)
+        rule = await _create_rule(rule_service, schedule="cron:*/5 * * * *")
+
+        event_orm = NotificationEventORM(
+            short_id="NE0001",
+            rule_id=rule.id,
+            telegram_chat_id=12345,
+            delivery_status="sending",
+            created_at=datetime.now(UTC),
+        )
+        session.add(event_orm)
+        await session.flush()
+
+        worker = _make_worker(
+            session,
+            forecast_repo,
+            rule_service,
+            cel_evaluator,
+            scheduler_settings,
+        )
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        assert results[0].evaluated is True
 
     async def test_invalid_schedule_is_skipped(
         self,

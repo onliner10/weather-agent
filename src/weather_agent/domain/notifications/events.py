@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.domain.notifications.deduplication import DedupeKey
@@ -18,6 +19,7 @@ from weather_agent.domain.rules.short_id_generator import (
     generate_short_id,
     strip_hash_prefix,
 )
+from weather_agent.domain.time import ensure_utc
 from weather_agent.infrastructure.db.base import (
     NotificationEvent as NotificationEventORM,
 )
@@ -57,6 +59,8 @@ def _orm_to_domain(orm: NotificationEventORM) -> NotificationEvent:
         suppress_reason=orm.suppress_reason,
         payload_hash=orm.payload_hash,
         message_text=orm.message_text,
+        delivery_status=orm.delivery_status,
+        delivery_claimed_at=orm.delivery_claimed_at,
         created_at=orm.created_at,
     )
 
@@ -110,6 +114,8 @@ class NotificationEventService:
             suppress_reason=None,
             payload_hash=payload_hash,
             message_text=None,
+            delivery_status="sending",
+            delivery_claimed_at=now,
             created_at=now,
         )
         self._session.add(orm)
@@ -131,6 +137,52 @@ class NotificationEventService:
 
         return _orm_to_domain(orm)
 
+    async def create_event_once(
+        self,
+        rule: NotificationRule,
+        evaluation: EvaluationResult,
+        dedupe_key: DedupeKey,
+        payload: dict[str, object],
+        lease_timeout: timedelta = timedelta(minutes=10),
+    ) -> tuple[NotificationEvent, bool]:
+        payload_hash = hashlib.sha256(dedupe_key.dedupe_key.encode()).hexdigest()
+        now = datetime.now(UTC)
+        existing_stmt = (
+            select(NotificationEventORM)
+            .where(
+                NotificationEventORM.rule_id == rule.id,
+                NotificationEventORM.payload_hash == payload_hash,
+                NotificationEventORM.delivery_status.in_(("pending", "sending", "sent")),
+            )
+            .limit(1)
+        )
+        existing_result = await self._session.execute(existing_stmt)
+        existing = existing_result.scalar_one_or_none()
+        if existing is not None:
+            if existing.delivery_status == "sent":
+                return _orm_to_domain(existing), False
+            claimed_at = existing.delivery_claimed_at
+            claimed_at_utc = claimed_at if claimed_at is not None else existing.created_at
+            if now - ensure_utc(claimed_at_utc) < lease_timeout:
+                return _orm_to_domain(existing), False
+            existing.delivery_status = "sending"
+            existing.delivery_claimed_at = now
+            await self._session.flush()
+            await self._session.refresh(existing)
+            return _orm_to_domain(existing), True
+
+        try:
+            async with self._session.begin_nested():
+                event = await self.create_event(rule, evaluation, dedupe_key, payload)
+        except IntegrityError:
+            existing_result = await self._session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+            if existing is None:
+                raise
+            return _orm_to_domain(existing), False
+
+        return event, True
+
     async def mark_sent(
         self,
         event_id: int,
@@ -142,6 +194,7 @@ class NotificationEventService:
         orm.sent_at = datetime.now(UTC)
         if message_text is not None:
             orm.message_text = message_text
+        orm.delivery_status = "sent"
         await self._session.flush()
         await self._session.refresh(orm)
 
@@ -162,6 +215,7 @@ class NotificationEventService:
             raise EventNotFoundError(event_id=event_id)
         orm.suppressed = True
         orm.suppress_reason = reason
+        orm.delivery_status = "suppressed"
         await self._session.flush()
         await self._session.refresh(orm)
 

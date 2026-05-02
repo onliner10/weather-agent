@@ -125,6 +125,27 @@ class NotificationRuleService:
             return _orm_to_domain(orm)
         return None
 
+    async def get_rule_for_user(
+        self,
+        user_id: int,
+        rule_id: int | None = None,
+        short_id: str | None = None,
+    ) -> NotificationRule | None:
+        stmt = select(NotificationRuleORM).where(NotificationRuleORM.user_id == user_id)
+        if rule_id is not None:
+            stmt = stmt.where(NotificationRuleORM.id == rule_id)
+        elif short_id is not None:
+            clean_id = strip_hash_prefix(short_id)
+            stmt = stmt.where(NotificationRuleORM.short_id == clean_id)
+        else:
+            return None
+
+        result = await self._session.execute(stmt)
+        orm = result.scalar_one_or_none()
+        if orm is None:
+            return None
+        return _orm_to_domain(orm)
+
     async def update_rule(self, rule_id: int, data: RuleUpdate) -> NotificationRule:
         orm = await self._session.get(NotificationRuleORM, rule_id)
         if orm is None:

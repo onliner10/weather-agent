@@ -27,6 +27,7 @@ _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 def _base_chat_kwargs(settings: ModelSettings) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "temperature": settings.temperature,
+        "timeout": settings.timeout_seconds,
     }
     if settings.api_key is not None:
         kwargs["api_key"] = settings.api_key.get_secret_value()
@@ -134,6 +135,17 @@ class ModelFactory:
     @property
     def model_name(self) -> str:
         return self._settings.model_name
+
+    def create_fallback_chat_model(self) -> BaseChatModel | None:
+        if self._settings.fallback_provider is None or self._settings.fallback_model_name is None:
+            return None
+        fallback_settings = self._settings.model_copy(
+            update={
+                "provider": self._settings.fallback_provider,
+                "model_name": self._settings.fallback_model_name,
+            }
+        )
+        return ModelFactory(fallback_settings).create_chat_model()
 
     def create_structured_output(self, schema: type) -> Runnable[Any, Any]:
         return self.create_chat_model().with_structured_output(schema)

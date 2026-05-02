@@ -65,6 +65,7 @@ _NOW = datetime(2026, 4, 28, 12, 0, tzinfo=_WARSAW)
 
 _WIDE_START = datetime(2020, 1, 1, 0, 0, tzinfo=_WARSAW)
 _WIDE_END = datetime(2030, 12, 31, 23, 59, tzinfo=_WARSAW)
+_WIDE_RANGE_EXPR = 'date_range("2020-01-01T00:00:00", "2030-12-31T23:59:00")'
 
 
 class TestCELEvaluatorSimpleComparisons:
@@ -168,7 +169,7 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'max("wind_gusts_10m_ms", weekend()) >= 12',
+            f'max("wind_gusts_10m_ms", {_WIDE_RANGE_EXPR}) >= 12',
             data=data,
         )
         assert result.error is None
@@ -181,7 +182,7 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'min("temperature_2m_c", weekend()) >= 15',
+            f'min("temperature_2m_c", {_WIDE_RANGE_EXPR}) >= 15',
             data=data,
         )
         assert result.error is None
@@ -194,7 +195,7 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'avg("wind_speed_10m_ms", next_hours(24)) >= 7',
+            f'avg("wind_speed_10m_ms", {_WIDE_RANGE_EXPR}) >= 7',
             data=data,
         )
         assert result.error is None
@@ -206,7 +207,7 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'sum("precipitation_mm", next_hours(24)) > 10',
+            f'sum("precipitation_mm", {_WIDE_RANGE_EXPR}) > 10',
             data=data,
         )
         assert result.error is None
@@ -219,7 +220,7 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'median("temperature_2m_c", weekend()) >= 12',
+            f'median("temperature_2m_c", {_WIDE_RANGE_EXPR}) >= 12',
             data=data,
         )
         assert result.error is None
@@ -229,7 +230,7 @@ class TestCELEvaluatorAggregation:
         points = [_make_point(_NOW - timedelta(hours=i), temperature_2m_c=20.0) for i in range(5)]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'stddev("temperature_2m_c", weekend()) < 1',
+            f'stddev("temperature_2m_c", {_WIDE_RANGE_EXPR}) < 1',
             data=data,
         )
         assert result.error is None
@@ -242,11 +243,65 @@ class TestCELEvaluatorAggregation:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'pctl("wind_gusts_10m_ms", weekend(), 90) > 10',
+            f'pctl("wind_gusts_10m_ms", {_WIDE_RANGE_EXPR}, 90) > 10',
             data=data,
         )
         assert result.error is None
         assert result.result is True
+
+    def test_empty_time_window_does_not_fall_back_to_all_points(self) -> None:
+        data = _make_data(
+            [
+                _make_point(
+                    datetime(2026, 4, 28, 12, 0, tzinfo=_WARSAW),
+                    wind_gusts_10m_ms=30.0,
+                )
+            ]
+        )
+        result = CELEvaluator(data).evaluate(
+            'max("wind_gusts_10m_ms", date_range("2026-05-01T00:00:00", '
+            '"2026-05-01T23:59:00")) >= 12',
+            data=data,
+        )
+
+        assert result.error == "No data points for metric 'wind_gusts_10m_ms'"
+        assert result.result is None
+
+    def test_any_empty_time_window_returns_false(self) -> None:
+        data = _make_data(
+            [
+                _make_point(
+                    datetime(2026, 4, 28, 12, 0, tzinfo=_WARSAW),
+                    wind_gusts_10m_ms=30.0,
+                )
+            ]
+        )
+        result = CELEvaluator(data).evaluate(
+            'any(wind_gusts_10m_ms >= 12, date_range("2026-05-01T00:00:00", '
+            '"2026-05-01T23:59:00"))',
+            data=data,
+        )
+
+        assert result.error is None
+        assert result.result is False
+
+    def test_count_empty_time_window_returns_zero(self) -> None:
+        data = _make_data(
+            [
+                _make_point(
+                    datetime(2026, 4, 28, 12, 0, tzinfo=_WARSAW),
+                    wind_gusts_10m_ms=30.0,
+                )
+            ]
+        )
+        result = CELEvaluator(data).evaluate(
+            'count_where(wind_gusts_10m_ms >= 12, date_range("2026-05-01T00:00:00", '
+            '"2026-05-01T23:59:00"))',
+            data=data,
+        )
+
+        assert result.error is None
+        assert result.result == 0
 
 
 class TestCELEvaluatorTimeRangeHelpers:
@@ -294,7 +349,7 @@ class TestCELEvaluatorChangeTrend:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'delta("temperature_2m_c", weekend()) > 5',
+            f'delta("temperature_2m_c", {_WIDE_RANGE_EXPR}) > 5',
             data=data,
         )
         assert result.error is None
@@ -308,7 +363,7 @@ class TestCELEvaluatorChangeTrend:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'abs_delta("temperature_2m_c", weekend()) > 10',
+            f'abs_delta("temperature_2m_c", {_WIDE_RANGE_EXPR}) > 10',
             data=data,
         )
         assert result.error is None
@@ -321,7 +376,7 @@ class TestCELEvaluatorChangeTrend:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            'rate_of_change("temperature_2m_c", weekend()) > 0.5',
+            f'rate_of_change("temperature_2m_c", {_WIDE_RANGE_EXPR}) > 0.5',
             data=data,
         )
         assert result.error is None
@@ -337,7 +392,10 @@ class TestCELEvaluatorChangeTrend:
         ]
         data = _make_data(points, previous_points=prev_points)
         result = CELEvaluator(data).evaluate(
-            'forecast_delta("apparent_temperature_c", weekend(), previous_snapshot()) < -5',
+            (
+                f'forecast_delta("apparent_temperature_c", {_WIDE_RANGE_EXPR}, '
+                "previous_snapshot()) < -5"
+            ),
             data=data,
         )
         assert result.error is None
@@ -389,7 +447,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "duration_where(precipitation_mm > 0.2, weekend()) >= minutes(60)",
+            f"duration_where(precipitation_mm > 0.2, {_WIDE_RANGE_EXPR}) >= minutes(60)",
             data=data,
         )
         assert result.error is None
@@ -403,7 +461,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "count_where(cloud_cover_pct > 50, weekend()) >= 2",
+            f"count_where(cloud_cover_pct > 50, {_WIDE_RANGE_EXPR}) >= 2",
             data=data,
         )
         assert result.error is None
@@ -417,7 +475,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "any(wind_gusts_10m_ms >= 12, weekend())",
+            f"any(wind_gusts_10m_ms >= 12, {_WIDE_RANGE_EXPR})",
             data=data,
         )
         assert result.error is None
@@ -431,7 +489,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "all(relative_humidity_2m_pct > 70, weekend())",
+            f"all(relative_humidity_2m_pct > 70, {_WIDE_RANGE_EXPR})",
             data=data,
         )
         assert result.error is None
@@ -445,7 +503,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "all(relative_humidity_2m_pct > 70, weekend())",
+            f"all(relative_humidity_2m_pct > 70, {_WIDE_RANGE_EXPR})",
             data=data,
         )
         assert result.error is None
@@ -459,7 +517,7 @@ class TestCELEvaluatorConditionOverTime:
         ]
         data = _make_data(points)
         result = CELEvaluator(data).evaluate(
-            "any(wind_gusts_10m_ms >= 12, weekend())",
+            f"any(wind_gusts_10m_ms >= 12, {_WIDE_RANGE_EXPR})",
             data=data,
         )
         assert result.error is None

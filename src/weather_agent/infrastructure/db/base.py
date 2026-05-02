@@ -255,9 +255,26 @@ class NotificationEvent(Base):
     suppress_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[str] = mapped_column(String(20), default="pending")
+    delivery_claimed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
     rule: Mapped[NotificationRule | None] = relationship(back_populates="notification_events")
+
+    __table_args__ = (
+        Index(
+            "uq_notification_events_rule_payload_active",
+            "rule_id",
+            "payload_hash",
+            unique=True,
+            sqlite_where=(
+                payload_hash.isnot(None) & delivery_status.in_(("pending", "sending", "sent"))
+            ),
+            postgresql_where=(
+                payload_hash.isnot(None) & delivery_status.in_(("pending", "sending", "sent"))
+            ),
+        ),
+    )
 
 
 class RuleEvaluationRun(Base):

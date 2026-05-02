@@ -8,7 +8,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from weather_agent.agent_factory import build_current_time_prompt_suffix, create_weather_agent
+from weather_agent.adapters.telegram.agent_invocation import invoke_agent_with_timeout
+from weather_agent.agent_factory import build_current_time_prompt_suffix
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.app_container import AppContainer
@@ -116,8 +117,6 @@ async def make_message_handler(container: AppContainer) -> Any:
 
                 context_suffix = build_current_time_prompt_suffix()
 
-                model = container.model_factory.create_chat_model()
-
                 _DIRECT_CONFIRMATIONS: frozenset[str] = frozenset(
                     {
                         "tak",
@@ -165,12 +164,6 @@ async def make_message_handler(container: AppContainer) -> Any:
                     await _save_turn(memory_service, context_key, text, answer)
                     await session.commit()
                 else:
-                    agent = create_weather_agent(
-                        model=model,
-                        tools=all_tools,
-                        system_prompt_suffix=context_suffix,
-                    )
-
                     messages: list[BaseMessage] = []
                     conversation_turns = await memory_service.load_turns(context_key)
                     if conversation_turns:
@@ -199,28 +192,21 @@ async def make_message_handler(container: AppContainer) -> Any:
 
                     CONVERSATION_TURNS_TOTAL.inc()
                     turn_start = time.perf_counter()
-                    try:
-                        result = await agent.ainvoke(
-                            {"messages": messages},
-                            config={
-                                "configurable": {"thread_id": context_key},
-                                **graph_config,
-                            },
-                        )
-                        final = result["messages"][-1]
-                        answer = final.content if hasattr(final, "content") else str(final)
-                        if not answer:
-                            answer = "Przepraszam, nie udało się przetworzyć zapytania."
-                    except Exception as exc:
+                    answer, failed = await invoke_agent_with_timeout(
+                        model_factory=container.model_factory,
+                        tools=all_tools,
+                        messages=messages,
+                        config={
+                            "configurable": {"thread_id": context_key},
+                            **graph_config,
+                        },
+                        system_prompt_suffix=context_suffix,
+                        timeout_seconds=container.settings.model.timeout_seconds,
+                        logger=logger,
+                    )
+                    if failed:
                         CONVERSATION_FAILURES_TOTAL.inc()
-                        logger.exception(
-                            "agent_invocation_failed",
-                            error_class=type(exc).__name__,
-                            outcome="failure",
-                        )
-                        answer = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
-                    finally:
-                        CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
+                    CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
 
                     await _save_turn(
                         memory_service,

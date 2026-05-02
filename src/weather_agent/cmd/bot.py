@@ -20,20 +20,17 @@ def cmd_bot(_args: argparse.Namespace) -> None:
     async def _run() -> None:
         async with AppContainer() as app:
             if app.settings.observability.enabled:
-                health_app = create_health_app(session_factory=app.session_factory)
+                health_app = create_health_app(
+                    session_factory=app.session_factory,
+                    health_settings=app.settings.health,
+                    scheduler_settings=app.settings.scheduler,
+                    model_settings=app.settings.model,
+                    role="bot",
+                )
                 start_observability_server(
                     app=health_app,
                     host="0.0.0.0",
                     port=app.settings.observability.bot_port,
-                )
-
-            try:
-                run_migrations()
-            except Exception as exc:
-                logger.warning(
-                    "migration_failed",
-                    error_class=type(exc).__name__,
-                    error_message=str(exc),
                 )
 
             from weather_agent.adapters.telegram.bot import TelegramBot
@@ -62,6 +59,13 @@ def cmd_bot(_args: argparse.Namespace) -> None:
                 await bot.stop()
 
     try:
+        try:
+            from weather_agent.settings import load_settings
+
+            run_migrations(load_settings().database_url)
+        except Exception:
+            logger.exception("migration_failed")
+            raise
         asyncio.run(_run())
     finally:
         if os.path.exists(pid_file):

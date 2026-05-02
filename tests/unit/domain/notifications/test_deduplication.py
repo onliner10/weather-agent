@@ -138,6 +138,11 @@ async def _create_event_orm(
     payload_hash: str | None = None,
     sent_at: datetime | None = None,
 ) -> NotificationEventORM:
+    delivery_status = "pending"
+    if suppressed:
+        delivery_status = "suppressed"
+    elif sent_at is not None:
+        delivery_status = "sent"
     orm = NotificationEventORM(
         id=event_id,
         short_id=short_id,
@@ -148,6 +153,7 @@ async def _create_event_orm(
         suppress_reason=suppress_reason,
         payload_hash=payload_hash,
         sent_at=sent_at,
+        delivery_status=delivery_status,
         created_at=datetime.now(UTC),
     )
     session.add(orm)
@@ -422,6 +428,46 @@ class TestNotificationDeduplicator:
             expression=rule_orm.expression,
             forecast_window_start=new_window_start,
             forecast_window_end=new_window_end,
+        )
+        dedup = NotificationDeduplicator(session)
+        suppressed, reason = await dedup.should_suppress(rule, candidate)
+        assert suppressed is False
+        assert reason is None
+
+    async def test_pending_duplicate_event_does_not_suppress(self, session: AsyncSession) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        rule_orm = await _create_rule_orm(session)
+        window_start = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+        window_end = datetime(2025, 6, 1, 18, 0, tzinfo=UTC)
+        dedupe_key = compute_dedupe_key(
+            rule_id=1,
+            location_id=1,
+            expression=rule_orm.expression,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        import hashlib
+
+        dedupe_hash = hashlib.sha256(dedupe_key.dedupe_key.encode()).hexdigest()
+
+        await _create_event_orm(
+            session,
+            rule_id=rule_orm.id,
+            event_id=10,
+            short_id="E0010",
+            suppressed=False,
+            sent_at=None,
+            payload_hash=dedupe_hash,
+        )
+
+        rule = _make_rule(expression=rule_orm.expression)
+        candidate = NotificationCandidate(
+            rule_id=1,
+            location_id=1,
+            expression=rule_orm.expression,
+            forecast_window_start=window_start,
+            forecast_window_end=window_end,
         )
         dedup = NotificationDeduplicator(session)
         suppressed, reason = await dedup.should_suppress(rule, candidate)

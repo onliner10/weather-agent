@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from weather_agent import __version__
-from weather_agent.api.health import HealthStatus, create_health_app
+from weather_agent.api.health import ComponentHealth, HealthStatus, create_health_app
 
 
 class TestHealthStatusModel:
@@ -21,6 +21,11 @@ class TestHealthStatusModel:
             last_rule_evaluation=now,
             scheduler_status="running",
             langsmith_enabled=True,
+            migrations_current=True,
+            readiness="ready",
+            components={
+                "db": ComponentHealth(status="healthy", checked_at=now),
+            },
             timestamp=now,
         )
         assert status.status == "healthy"
@@ -30,6 +35,8 @@ class TestHealthStatusModel:
         assert status.last_rule_evaluation == now
         assert status.scheduler_status == "running"
         assert status.langsmith_enabled is True
+        assert status.migrations_current is True
+        assert status.readiness == "ready"
 
     def test_health_status_degraded(self) -> None:
         status = HealthStatus(
@@ -40,6 +47,15 @@ class TestHealthStatusModel:
             last_rule_evaluation=None,
             scheduler_status="stopped",
             langsmith_enabled=False,
+            migrations_current=False,
+            readiness="not_ready",
+            components={
+                "db": ComponentHealth(
+                    status="degraded",
+                    detail="database connection failed",
+                    checked_at=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
+                ),
+            },
             timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
         )
         assert status.status == "degraded"
@@ -47,6 +63,8 @@ class TestHealthStatusModel:
         assert status.last_forecast_fetch is None
         assert status.last_rule_evaluation is None
         assert status.scheduler_status == "stopped"
+        assert status.migrations_current is False
+        assert status.readiness == "not_ready"
 
 
 class TestCreateHealthApp:
@@ -65,6 +83,9 @@ class TestCreateHealthApp:
         assert "last_rule_evaluation" in data
         assert "scheduler_status" in data
         assert "langsmith_enabled" in data
+        assert "migrations_current" in data
+        assert "readiness" in data
+        assert "components" in data
         assert "timestamp" in data
 
     @pytest.mark.asyncio()
@@ -77,6 +98,7 @@ class TestCreateHealthApp:
         data = response.json()
         assert data["status"] == "degraded"
         assert data["db_connected"] is False
+        assert data["readiness"] == "not_ready"
         assert data["scheduler_status"] == "stopped"
         assert data["last_forecast_fetch"] is None
         assert data["last_rule_evaluation"] is None
@@ -114,6 +136,7 @@ class TestCreateHealthApp:
         data = response.json()
         assert data["status"] == "healthy"
         assert data["db_connected"] is True
+        assert data["components"]["db"]["status"] == "healthy"
 
     @pytest.mark.asyncio()
     async def test_health_endpoint_with_db_failure(self) -> None:
@@ -137,6 +160,24 @@ class TestCreateHealthApp:
         data = response.json()
         assert data["status"] == "degraded"
         assert data["db_connected"] is False
+
+    @pytest.mark.asyncio()
+    async def test_livez_is_process_only(self) -> None:
+        app = create_health_app(session_factory=None)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/livez")
+        assert response.status_code == 200
+        assert response.json()["status"] == "alive"
+
+    @pytest.mark.asyncio()
+    async def test_readyz_returns_503_when_not_ready(self) -> None:
+        app = create_health_app(session_factory=None)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/readyz")
+        assert response.status_code == 503
+        assert response.json()["readiness"] == "not_ready"
 
     @pytest.mark.asyncio()
     async def test_metrics_endpoint_returns_prometheus_text(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -43,6 +44,7 @@ class TelegramBot:
         self._message_handler = message_handler
         self._session_factory = session_factory
         self._app: _AppType | None = None
+        self._message_semaphore = asyncio.Semaphore(settings.max_concurrent_updates)
 
     def setup(self) -> None:
         token = self._settings.bot_token.get_secret_value()
@@ -248,7 +250,8 @@ class TelegramBot:
             AUTHORIZATION_FAILURES_TOTAL.inc()
             await _send_denial(update, context)
             return
-        await self._message_handler(update, context)
+        async with self._message_semaphore:
+            await self._message_handler(update, context)
 
 
 async def _send_denial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -256,5 +259,5 @@ async def _send_denial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Brak uprawnień do korzystania z tego bota.")
 
 
-async def _post_init(application: _AppType) -> None:
+async def _post_init(_application: _AppType) -> None:
     logger.info("Telegram bot application initialized")

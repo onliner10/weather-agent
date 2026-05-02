@@ -315,6 +315,19 @@ class TestGetRule:
         result = await service.get_rule()
         assert result is None
 
+    async def test_get_rule_for_user_scopes_short_id(
+        self, service: NotificationRuleService, session: AsyncSession
+    ) -> None:
+        await _create_user(session, user_id=1)
+        await _create_user(session, user_id=2)
+        await _create_location(session, user_id=1, loc_id=1)
+        await _create_location(session, user_id=2, loc_id=2)
+        await _create_rule_raw(session, user_id=1, rule_id=1, short_id="RUSER1")
+
+        fetched = await service.get_rule_for_user(2, short_id="RUSER1")
+
+        assert fetched is None
+
 
 class TestUpdateRule:
     async def test_update_expression(

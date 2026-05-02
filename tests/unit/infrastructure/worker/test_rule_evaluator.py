@@ -10,6 +10,8 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from weather_agent.domain.cel.evaluator import CELEvaluator
+from weather_agent.domain.notifications.deduplication import NotificationDeduplicator
+from weather_agent.domain.notifications.events import NotificationEventService
 from weather_agent.domain.rules.models import RuleCreate
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.db.base import (
@@ -30,6 +32,7 @@ from weather_agent.infrastructure.worker.rule_evaluator import (
     EvaluationResult,
     RuleEvaluationWorker,
 )
+from weather_agent.observability.logging import AuditLogger
 from weather_agent.settings import SchedulerSettings
 
 
@@ -707,6 +710,46 @@ class TestRuleEvaluationWorker:
 
         assert len(results) == 1
         assert results[0].evaluated is True
+
+    async def test_duplicate_candidate_is_not_sent_twice(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        cel_evaluator: CELEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        await _create_rule(rule_service)
+
+        class Sender:
+            def __init__(self) -> None:
+                self.count = 0
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                if chat_id and thread_id is None and text:
+                    self.count += 1
+                return True
+
+        sender = Sender()
+        event_service = NotificationEventService(session, AuditLogger(session))
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            cel_evaluator=cel_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            notification_sender=sender,
+            event_service=event_service,
+            deduplicator=NotificationDeduplicator(session),
+        )
+
+        await worker.evaluate_rules()
+        await worker.evaluate_rules()
+
+        assert sender.count == 1
 
     async def test_run_loop_commits_read_only_cycle_before_sleep(
         self,
