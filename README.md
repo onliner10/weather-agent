@@ -261,6 +261,11 @@ uv run pytest tests/eval/
 uv run python scripts/eval/create_notification_rule_dataset.py
 LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
   uv run python scripts/eval/run_notification_rule_eval.py
+
+# Create and run location management eval
+uv run python scripts/eval/create_location_management_dataset.py
+LANGSMITH_API_KEY=... WEATHER_AGENT_MODEL__API_KEY=... \
+  uv run python scripts/eval/run_location_management_eval.py
 ```
 
 ### Model benchmark experiments

@@ -16,7 +16,9 @@ from weather_agent.domain.locations import (
     LocationCreate,
     LocationNameConflictError,
     LocationService,
+    LocationUpdate,
 )
+from weather_agent.domain.polish_utils import normalize_for_matching
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
     ForecastResolution,
@@ -165,6 +167,35 @@ class SaveLocationToolResult(BaseModel):
     error: str | None = None
 
 
+class EditLocationArgs(BaseModel):
+    location_name: str = Field(description="Nazwa, alias albo ID zapisanej lokalizacji")
+    new_name: str = Field(default="", description="Nowa nazwa lokalizacji; puste = bez zmian")
+    aliases: list[str] = Field(
+        default_factory=list,
+        description="Nowa pełna lista aliasów; pusta lista = bez zmian",
+    )
+    latitude: float | None = Field(default=None, description="Nowa szerokość geograficzna")
+    longitude: float | None = Field(default=None, description="Nowa długość geograficzna")
+    enabled: bool | None = Field(default=None, description="Czy lokalizacja ma być aktywna")
+
+
+class EditLocationToolResult(BaseModel):
+    location: dict[str, Any] | None = None
+    success: str | None = None
+    error: str | None = None
+
+
+class RemoveLocationArgs(BaseModel):
+    location_name: str = Field(
+        description="Nazwa, alias albo ID zapisanej lokalizacji do usunięcia"
+    )
+
+
+class RemoveLocationToolResult(BaseModel):
+    success: str | None = None
+    error: str | None = None
+
+
 class ListLocationsArgs(BaseModel):
     include_disabled: bool = Field(
         default=False,
@@ -199,15 +230,58 @@ class WeatherToolbox:
         async with self._lock:
             try:
                 if self.location_service is not None:
+                    if not name.strip():
+                        return await self.location_service.get_default_location(self.user_id)
                     resolved = await self.location_service.resolve_location(name, self.user_id)
                     if resolved is not None:
                         return resolved
+                if not name.strip():
+                    return None
                 return await self.geocoder.geocode(name)
             except Exception:
                 logger.exception(
                     "resolve_location_failed", location_name=name, user_id=self.user_id
                 )
                 return None
+
+    async def _find_saved_location(self, location_name: str) -> int | None:
+        if self.location_service is None:
+            return None
+        query = location_name.strip()
+        if not query:
+            default = await self.location_service.get_default_location(self.user_id)
+            if default is None:
+                return None
+            try:
+                return int(default.id)
+            except (TypeError, ValueError):
+                return None
+
+        query_norm = normalize_for_matching(query)
+        locations = await self.location_service.list_locations(self.user_id)
+        for loc in locations:
+            if str(loc.id) == query:
+                return loc.id
+            if normalize_for_matching(loc.name) == query_norm:
+                return loc.id
+            if any(normalize_for_matching(alias) == query_norm for alias in loc.aliases):
+                return loc.id
+        return None
+
+    @staticmethod
+    def _location_dict(location: Any) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "id": location.id,
+            "name": location.name,
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "enabled": location.enabled,
+        }
+        if location.aliases:
+            data["aliases"] = location.aliases
+        if location.description:
+            data["description"] = location.description
+        return data
 
     @traceable(run_type="tool")
     async def get_forecast(
@@ -237,6 +311,10 @@ class WeatherToolbox:
     ) -> ForecastToolResult:
         location = await self._resolve_location(location_name)
         if location is None:
+            if not location_name.strip():
+                return ForecastToolResult(
+                    error="Nie mam zapisanej domyślnej lokalizacji. Podaj lokalizację."
+                )
             return ForecastToolResult(error=f"Nie znaleziono lokalizacji: {location_name}")
 
         try:
@@ -311,6 +389,10 @@ class WeatherToolbox:
 
         location = await self._resolve_location(location_name)
         if location is None:
+            if not location_name.strip():
+                return ObservationToolResult(
+                    error="Nie mam zapisanej domyślnej lokalizacji. Podaj lokalizację."
+                )
             return ObservationToolResult(error=f"Nie znaleziono lokalizacji: {location_name}")
 
         provider_name = getattr(self.observation_provider, "provider", "unknown")
@@ -396,6 +478,107 @@ class WeatherToolbox:
                 return SaveLocationToolResult(error=f"Błąd podczas zapisywania lokalizacji: {exc}")
 
     @traceable(run_type="tool")
+    async def edit_location(
+        self,
+        location_name: str,
+        new_name: str = "",
+        aliases: list[str] | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        enabled: bool | None = None,
+    ) -> EditLocationToolResult:
+        TOOL_CALLS_TOTAL.labels(tool="edit_location").inc()
+        start = _time.perf_counter()
+        try:
+            return await self._execute_edit_location(
+                location_name=location_name,
+                new_name=new_name,
+                aliases=aliases or [],
+                latitude=latitude,
+                longitude=longitude,
+                enabled=enabled,
+            )
+        finally:
+            TOOL_CALL_DURATION_SECONDS.labels(tool="edit_location").observe(
+                _time.perf_counter() - start
+            )
+
+    async def _execute_edit_location(
+        self,
+        *,
+        location_name: str,
+        new_name: str,
+        aliases: list[str],
+        latitude: float | None,
+        longitude: float | None,
+        enabled: bool | None,
+    ) -> EditLocationToolResult:
+        async with self._lock:
+            if self.location_service is None:
+                return EditLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
+
+            location_id = await self._find_saved_location(location_name)
+            if location_id is None:
+                return EditLocationToolResult(
+                    error=f"Nie znaleziono zapisanej lokalizacji: {location_name}"
+                )
+
+            update = LocationUpdate(
+                name=new_name or None,
+                aliases=aliases or None,
+                latitude=latitude,
+                longitude=longitude,
+                enabled=enabled,
+            )
+            if update == LocationUpdate():
+                return EditLocationToolResult(error="Podaj zmianę lokalizacji do zapisania.")
+
+            try:
+                updated = await self.location_service.update_location(location_id, update)
+                return EditLocationToolResult(
+                    location=self._location_dict(updated),
+                    success=f"Zaktualizowałem lokalizację: {updated.name}",
+                )
+            except (LocationAliasConflictError, LocationNameConflictError):
+                return EditLocationToolResult(
+                    error="Masz już zapisaną lokalizację o tej nazwie lub aliasie."
+                )
+            except Exception as exc:
+                logger.exception("edit_location_failed", user_id=self.user_id)
+                return EditLocationToolResult(error=f"Błąd podczas edycji lokalizacji: {exc}")
+
+    @traceable(run_type="tool")
+    async def remove_location(self, location_name: str) -> RemoveLocationToolResult:
+        TOOL_CALLS_TOTAL.labels(tool="remove_location").inc()
+        start = _time.perf_counter()
+        try:
+            return await self._execute_remove_location(location_name)
+        finally:
+            TOOL_CALL_DURATION_SECONDS.labels(tool="remove_location").observe(
+                _time.perf_counter() - start
+            )
+
+    async def _execute_remove_location(self, location_name: str) -> RemoveLocationToolResult:
+        async with self._lock:
+            if self.location_service is None:
+                return RemoveLocationToolResult(error="Usługa lokalizacji jest niedostępna.")
+
+            location_id = await self._find_saved_location(location_name)
+            if location_id is None:
+                return RemoveLocationToolResult(
+                    error=f"Nie znaleziono zapisanej lokalizacji: {location_name}"
+                )
+
+            try:
+                disabled = await self.location_service.disable_location(location_id)
+                return RemoveLocationToolResult(
+                    success=f"Usunąłem lokalizację: {disabled.name}",
+                )
+            except Exception as exc:
+                logger.exception("remove_location_failed", user_id=self.user_id)
+                return RemoveLocationToolResult(error=f"Błąd podczas usuwania lokalizacji: {exc}")
+
+    @traceable(run_type="tool")
     async def list_locations(self, include_disabled: bool = False) -> ListLocationsToolResult:
         TOOL_CALLS_TOTAL.labels(tool="list_locations").inc()
         start = _time.perf_counter()
@@ -417,18 +600,7 @@ class WeatherToolbox:
                 )
                 locations_data: list[dict[str, Any]] = []
                 for loc in locations:
-                    entry: dict[str, Any] = {
-                        "id": loc.id,
-                        "name": loc.name,
-                        "latitude": loc.latitude,
-                        "longitude": loc.longitude,
-                        "enabled": loc.enabled,
-                    }
-                    if loc.aliases:
-                        entry["aliases"] = loc.aliases
-                    if loc.description:
-                        entry["description"] = loc.description
-                    locations_data.append(entry)
+                    locations_data.append(self._location_dict(loc))
                 return ListLocationsToolResult(locations=locations_data, count=len(locations_data))
             except Exception as exc:
                 logger.exception("list_locations_failed", user_id=self.user_id)
@@ -467,6 +639,24 @@ class WeatherToolbox:
                     " lokalizacji domowej', ustaw alias na 'dom'."
                 ),
                 args_schema=SaveLocationArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.edit_location,
+                name="edit_location",
+                description=(
+                    "Edytuj zapisaną lokalizację użytkownika po nazwie, aliasie albo ID. "
+                    "Możesz zmienić nazwę, aliasy, współrzędne albo aktywność lokalizacji."
+                ),
+                args_schema=EditLocationArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.remove_location,
+                name="remove_location",
+                description=(
+                    "Usuń zapisaną lokalizację użytkownika po nazwie, aliasie albo ID. "
+                    "Operacja dezaktywuje lokalizację zamiast usuwać ją trwale."
+                ),
+                args_schema=RemoveLocationArgs,
             ),
             StructuredTool.from_function(
                 coroutine=self.list_locations,
