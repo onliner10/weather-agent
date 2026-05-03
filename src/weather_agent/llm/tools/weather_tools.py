@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time as _time
 from datetime import date, datetime
+from datetime import time as datetime_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,7 @@ from weather_agent.domain.locations import (
 from weather_agent.domain.polish_utils import normalize_for_matching
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
+    ForecastPoint,
     ForecastResolution,
     LocationRef,
     TimeRange,
@@ -152,6 +154,20 @@ class RenderForecastChartArgs(BaseModel):
     location_name: str = Field(description="Nazwa miejscowości (np. Gdańsk, Chwarzno)")
     start_date: str = Field(description="Data początkowa w formacie yyyy-mm-dd")
     end_date: str = Field(description="Końcowa data yyyy-mm-dd. Dla jednego dnia powtórz.")
+    start_time: str = Field(
+        default="",
+        description=(
+            "Opcjonalna godzina początkowa w formacie HH:MM w strefie Europe/Warsaw. "
+            "Puste oznacza początek dnia."
+        ),
+    )
+    end_time: str = Field(
+        default="",
+        description=(
+            "Opcjonalna godzina końcowa w formacie HH:MM w strefie Europe/Warsaw. "
+            "Puste oznacza koniec dnia."
+        ),
+    )
     variables: list[str] = Field(
         description=(
             "Lista zmiennych pogodowych użytych na wykresie. Dostępne: "
@@ -184,6 +200,47 @@ def _chart_spec_or_default(
     if vega_lite_spec is None:
         return default_forecast_chart_spec(variables)
     return dict(vega_lite_spec)
+
+
+def _parse_chart_time_range(
+    *,
+    start_date_str: str,
+    end_date_str: str,
+    start_time_str: str,
+    end_time_str: str,
+) -> TimeRange:
+    s = date.fromisoformat(start_date_str)
+    e = date.fromisoformat(end_date_str)
+    start_time = _parse_chart_time(start_time_str, default=datetime_time(0, 0))
+    end_time = _parse_chart_time(end_time_str, default=datetime_time(23, 59))
+    start_dt = datetime.combine(s, start_time, tzinfo=_WARSAW)
+    end_dt = datetime.combine(e, end_time, tzinfo=_WARSAW)
+    if start_dt > end_dt:
+        raise ValueError("start_date/start_time nie może być późniejsze niż end_date/end_time")
+    return TimeRange(start=start_dt, end=end_dt)
+
+
+def _parse_chart_time(value: str, *, default: datetime_time) -> datetime_time:
+    stripped = value.strip()
+    if not stripped:
+        return default
+    parsed = datetime_time.fromisoformat(stripped)
+    return datetime_time(parsed.hour, parsed.minute, parsed.second, parsed.microsecond)
+
+
+def _format_time_range(time_range: TimeRange) -> str:
+    start = time_range.start.astimezone(_WARSAW)
+    end = time_range.end.astimezone(_WARSAW)
+    if start.date() == end.date():
+        return f"{start:%Y-%m-%d %H:%M} – {end:%H:%M}"
+    return f"{start:%Y-%m-%d %H:%M} – {end:%Y-%m-%d %H:%M}"
+
+
+def _filter_points_to_time_range(
+    points: list[ForecastPoint],
+    time_range: TimeRange,
+) -> list[ForecastPoint]:
+    return [point for point in points if time_range.start <= point.target_time <= time_range.end]
 
 
 class SaveLocationArgs(BaseModel):
@@ -379,12 +436,16 @@ class WeatherToolbox:
         end_date: str,
         variables: list[str],
         vega_lite_spec: dict[str, JsonValue] | None = None,
+        start_time: str = "",
+        end_time: str = "",
     ) -> ToolResult:
         with observe_tool_call("render_forecast_chart"):
             return await self._execute_render_forecast_chart(
                 location_name=location_name,
                 start_date_str=start_date,
                 end_date_str=end_date,
+                start_time_str=start_time,
+                end_time_str=end_time,
                 variable_names=variables,
                 vega_lite_spec=vega_lite_spec,
             )
@@ -395,6 +456,8 @@ class WeatherToolbox:
         location_name: str,
         start_date_str: str,
         end_date_str: str,
+        start_time_str: str,
+        end_time_str: str,
         variable_names: list[str],
         vega_lite_spec: dict[str, JsonValue] | None,
     ) -> ToolResult:
@@ -408,15 +471,14 @@ class WeatherToolbox:
             return {"error": f"Nie znaleziono lokalizacji: {location_name}"}
 
         try:
-            s = date.fromisoformat(start_date_str)
-            e = date.fromisoformat(end_date_str)
-            start_dt = datetime(s.year, s.month, s.day, tzinfo=_WARSAW)
-            end_dt = datetime(e.year, e.month, e.day, 23, 59, tzinfo=_WARSAW)
-            if start_dt > end_dt:
-                return {"error": "start_date nie może być późniejsza niż end_date"}
-            time_range = TimeRange(start=start_dt, end=end_dt)
+            time_range = _parse_chart_time_range(
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+                start_time_str=start_time_str,
+                end_time_str=end_time_str,
+            )
         except ValueError:
-            return {"error": "Nieprawidłowy format daty. Użyj yyyy-mm-dd."}
+            return {"error": "Nieprawidłowy zakres dat/godzin. Użyj dat yyyy-mm-dd i godzin HH:MM."}
 
         variables: list[WeatherVariable] = []
         invalid_variables: list[str] = []
@@ -444,9 +506,12 @@ class WeatherToolbox:
                 variables=variables,
                 resolution=ForecastResolution.hourly,
             )
+            points = _filter_points_to_time_range(forecast.points, time_range)
+            if not points:
+                return {"error": "Brak danych prognozy dla podanego zakresu godzin."}
             png = render_forecast_chart_png(
                 spec=_chart_spec_or_default(vega_lite_spec, variables),
-                records=forecast_points_to_records(forecast.points),
+                records=forecast_points_to_records(points),
                 variables=variables,
                 time_range=time_range,
             )
@@ -478,7 +543,7 @@ class WeatherToolbox:
         return {
             "success": "Wykres został przygotowany i zostanie dołączony do odpowiedzi.",
             "location": location.name,
-            "time_range": f"{start_date_str} – {end_date_str}",
+            "time_range": _format_time_range(time_range),
             "variables": [variable.value for variable in variables],
         }
 
@@ -696,6 +761,7 @@ class WeatherToolbox:
                 name="render_forecast_chart",
                 description=(
                     "Wyrenderuj wykres prognozy jako PNG i dołącz go do odpowiedzi Telegrama. "
+                    "Gdy użytkownik poda zakres godzin, przekaż start_time i end_time jako HH:MM. "
                     "Możesz podać standardowy Vega-Lite v6 spec używający "
                     'data: {"name": "forecast"}. '
                     "Nie przekazuj surowych danych, data.values, data.url, datasets ani transform. "

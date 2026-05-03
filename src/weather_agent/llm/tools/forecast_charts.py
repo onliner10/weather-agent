@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from datetime import timedelta
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import altair as alt
 import vl_convert as vlc
@@ -17,6 +18,7 @@ _MAX_WIDTH = 900
 _MAX_HEIGHT = 500
 _DATASET_NAME = "forecast"
 _PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+_CHART_TIMEZONE = ZoneInfo("Europe/Warsaw")
 _DISALLOWED_TOP_LEVEL_KEYS = frozenset(
     {"datasets", "facet", "concat", "hconcat", "vconcat", "repeat", "params"}
 )
@@ -58,7 +60,10 @@ class ForecastChartError(ValueError):
 def forecast_points_to_records(points: list[ForecastPoint]) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for point in points:
-        record: dict[str, object] = {"time": point.target_time.isoformat()}
+        target_time = point.target_time
+        if target_time.tzinfo is not None:
+            target_time = target_time.astimezone(_CHART_TIMEZONE)
+        record: dict[str, object] = {"time": target_time.replace(tzinfo=None).isoformat()}
         for variable in WeatherVariable:
             value = getattr(point, variable.value)
             if value is not None:

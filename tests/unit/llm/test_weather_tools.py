@@ -76,9 +76,11 @@ class FakeGeocoder:
 class FakeForecastProvider(ForecastProvider):
     provider = "fake"
 
-    def __init__(self) -> None:
+    def __init__(self, points: list[ForecastPoint] | None = None) -> None:
         self.locations: list[LocationRef] = []
+        self.time_ranges: list[TimeRange] = []
         self.variables: list[list[WeatherVariable]] = []
+        self._points = points
 
     async def get_forecast(
         self,
@@ -89,6 +91,7 @@ class FakeForecastProvider(ForecastProvider):
     ) -> ForecastResult:
         del resolution
         self.locations.append(location)
+        self.time_ranges.append(time_range)
         self.variables.append(variables)
         fetched_at = datetime.now(UTC)
         return ForecastResult(
@@ -96,7 +99,9 @@ class FakeForecastProvider(ForecastProvider):
             model="fake",
             location=location,
             fetched_at=fetched_at,
-            points=[
+            points=self._points
+            if self._points is not None
+            else [
                 ForecastPoint(
                     target_time=time_range.start,
                     fetched_at=fetched_at,
@@ -332,3 +337,79 @@ class TestWeatherToolboxCharts:
         assert len(attachments) == 1
         assert attachments[0].media_type == "image/png"
         assert attachments[0].data.startswith(b"\x89PNG\r\n\x1a\n")
+
+    async def test_render_forecast_chart_respects_hour_window(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _create_user(session)
+        service = LocationService(session)
+        await _create_location(service, name="Chwarzno", aliases=["dom"])
+        fetched_at = datetime(2026, 5, 4, tzinfo=UTC)
+        points = [
+            ForecastPoint(
+                target_time=datetime(2026, 5, 4, hour, tzinfo=UTC),
+                fetched_at=fetched_at,
+                provider="fake",
+                model="fake",
+                location_id="loc",
+                wind_speed_10m_ms=float(hour),
+                wind_gusts_10m_ms=float(hour + 2),
+                raw_payload={},
+            )
+            for hour in (11, 12, 17, 18)
+        ]
+        forecast_provider = FakeForecastProvider(points=points)
+        attachments: list[BotAttachment] = []
+        captured: dict[str, object] = {}
+
+        def fake_render_forecast_chart_png(
+            *,
+            spec: dict[str, object],
+            records: list[dict[str, object]],
+            variables: list[WeatherVariable],
+            time_range: TimeRange,
+        ) -> bytes:
+            del spec, variables
+            captured["records"] = records
+            captured["time_range"] = time_range
+            return b"\x89PNG\r\n\x1a\nfake"
+
+        monkeypatch.setattr(
+            "weather_agent.llm.tools.weather_tools.render_forecast_chart_png",
+            fake_render_forecast_chart_png,
+        )
+        toolbox = WeatherToolbox(
+            forecast_provider=forecast_provider,
+            observation_provider=FakeObservationProvider(),
+            geocoder=FakeGeocoder(),  # type: ignore[arg-type]
+            location_service=service,
+            user_id=1,
+            reply_attachments=attachments,
+        )
+
+        result = await toolbox.render_forecast_chart(
+            location_name="dom",
+            start_date="2026-05-04",
+            end_date="2026-05-04",
+            variables=["wind_speed_10m_ms", "wind_gusts_10m_ms"],
+            start_time="14:00",
+            end_time="19:00",
+        )
+
+        assert result.get("error") is None
+        assert result["time_range"] == "2026-05-04 14:00 – 19:00"
+        assert forecast_provider.time_ranges[0].start.hour == 14
+        assert forecast_provider.time_ranges[0].end.hour == 19
+        assert captured["records"] == [
+            {
+                "time": "2026-05-04T14:00:00",
+                "wind_speed_10m_ms": 12.0,
+                "wind_gusts_10m_ms": 14.0,
+            },
+            {
+                "time": "2026-05-04T19:00:00",
+                "wind_speed_10m_ms": 17.0,
+                "wind_gusts_10m_ms": 19.0,
+            },
+        ]
+        assert len(attachments) == 1

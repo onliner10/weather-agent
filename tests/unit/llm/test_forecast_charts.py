@@ -85,6 +85,12 @@ def test_prepare_vega_lite_spec_injects_forecast_dataset() -> None:
     assert spec["height"] == 360
 
 
+def test_forecast_points_to_records_uses_warsaw_wall_clock_time() -> None:
+    records = forecast_points_to_records(_points())
+
+    assert records[0]["time"] == "2026-05-04T02:00:00"
+
+
 def test_default_forecast_chart_spec_builds_valid_layered_wind_spec() -> None:
     spec = default_forecast_chart_spec(
         [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms]
