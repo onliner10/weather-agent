@@ -1,6 +1,6 @@
 """scheduled notification context
 
-Revision ID: 004_scheduled_notification_context
+Revision ID: 004_sched_ctx
 Revises: 003_notification_idempotency
 Create Date: 2026-05-03
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "004_scheduled_notification_context"
+revision: str = "004_sched_ctx"
 down_revision: str | None = "003_notification_idempotency"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
