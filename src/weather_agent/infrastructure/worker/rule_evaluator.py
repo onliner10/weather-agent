@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
 from weather_agent.domain.rules.models import NotificationRule
+from weather_agent.domain.rules.notification_context import notification_context_fingerprint
 from weather_agent.domain.rules.schedule import is_rule_due, last_cron_slot
 from weather_agent.domain.rules.service import NotificationRuleService
-from weather_agent.domain.time import ensure_utc
+from weather_agent.domain.time import WARSAW_TZ, ensure_utc
 from weather_agent.infrastructure.db.base import ForecastPoint as ForecastPointORM
 from weather_agent.infrastructure.db.base import NotificationEvent as NotificationEventORM
 from weather_agent.infrastructure.db.base import RuleEvaluationRun as RuleEvaluationRunORM
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from weather_agent.domain.notifications.events import NotificationEventService
 
 logger = get_logger(__name__)
+_FORECAST_REFRESH_FAILED = "forecast_refresh_failed"
 
 
 class EvaluationResult(BaseModel):
@@ -71,6 +73,15 @@ class NotificationSender(Protocol):
     async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool: ...
 
 
+@runtime_checkable
+class NotificationContentGenerator(Protocol):
+    async def generate(
+        self,
+        rule: NotificationRule,
+        evaluation_detail: dict[str, Any],
+    ) -> str | None: ...
+
+
 class RuleEvaluationWorker:
     def __init__(
         self,
@@ -84,6 +95,7 @@ class RuleEvaluationWorker:
         event_service: NotificationEventService | None = None,
         deduplicator: NotificationDeduplicator | None = None,
         coordinator: WorkerCoordinator | None = None,
+        notification_content_generator: NotificationContentGenerator | None = None,
     ) -> None:
         self._session = session
         self._forecast_repo = forecast_repo
@@ -95,6 +107,7 @@ class RuleEvaluationWorker:
         self._event_service = event_service
         self._deduplicator = deduplicator
         self._coordinator = coordinator or WorkerCoordinator(session)
+        self._notification_content_generator = notification_content_generator
 
     async def evaluate_rules(self, dry_run: bool = False) -> list[EvaluationResult]:
         rules = await self._claim_due_rules()
@@ -156,8 +169,16 @@ class RuleEvaluationWorker:
                 results.append(result)
 
             if not dry_run:
+                delivered_scheduled_keys: set[str] = set()
                 for rule, result in zip(rules, results, strict=True):
                     if result.notification_candidate:
+                        scheduled_key = _scheduled_notification_key(rule)
+                        if scheduled_key is not None:
+                            if scheduled_key in delivered_scheduled_keys:
+                                if rule.schedule is not None and rule.schedule.startswith("once:"):
+                                    await self._rule_service.disable_rule(rule.id)
+                                continue
+                            delivered_scheduled_keys.add(scheduled_key)
                         if (
                             self._notification_sender is not None
                             and self._event_service is not None
@@ -212,33 +233,79 @@ class RuleEvaluationWorker:
                 rule_short_id=rule.short_id,
                 location_id=rule.location_id,
             )
-            if self._forecast_fetcher is not None:
-                refresh_start = time.perf_counter()
-                try:
-                    async with trace(
-                        "forecast_refresh",
-                        run_type="tool",
-                        metadata={"location_id": rule.location_id},
-                    ):
-                        await self._forecast_fetcher.fetch_fresh_forecast(rule.location_id)
+            try:
+                fresh_snapshot_id: int | None = None
+                if self._forecast_fetcher is not None:
+                    refresh_failed = False
+                    refresh_start = time.perf_counter()
+                    try:
+                        async with trace(
+                            "forecast_refresh",
+                            run_type="tool",
+                            metadata={"location_id": rule.location_id},
+                        ):
+                            fresh_snapshot_id = await self._forecast_fetcher.fetch_fresh_forecast(
+                                rule.location_id
+                            )
+                    except Exception as exc:
+                        refresh_failed = True
+                        FORECAST_REFRESH_TOTAL.labels(outcome="failure").inc()
+                        logger.warning(
+                            "forecast_fetch_failed",
+                            location_id=rule.location_id,
+                            error_class=type(exc).__name__,
+                        )
+                    finally:
+                        FORECAST_REFRESH_DURATION_SECONDS.observe(
+                            time.perf_counter() - refresh_start
+                        )
+                    if fresh_snapshot_id is None:
+                        if not refresh_failed:
+                            FORECAST_REFRESH_TOTAL.labels(outcome="failure").inc()
+                            logger.warning(
+                                "forecast_fetch_failed",
+                                location_id=rule.location_id,
+                                error_class="NoSnapshot",
+                            )
+                        return await self._finish_forecast_refresh_failed(rule, dry_run)
                     FORECAST_REFRESH_TOTAL.labels(outcome="success").inc()
                     LAST_SUCCESSFUL_FORECAST_REFRESH_TIMESTAMP_SECONDS.set(time.time())
-                except Exception as exc:
-                    FORECAST_REFRESH_TOTAL.labels(outcome="failure").inc()
-                    logger.warning(
-                        "forecast_fetch_failed",
-                        location_id=rule.location_id,
-                        error_class=type(exc).__name__,
-                    )
-                finally:
-                    FORECAST_REFRESH_DURATION_SECONDS.observe(time.perf_counter() - refresh_start)
 
-            data = await self._build_evaluation_data(rule.location_id)
-            try:
-                result = await self._finish_evaluation(rule, dry_run, data)
+                data = await self._build_evaluation_data(rule.location_id, fresh_snapshot_id)
+                return await self._finish_evaluation(rule, dry_run, data)
             finally:
                 RULE_EVALUATION_DURATION_SECONDS.observe(time.perf_counter() - eval_start)
-            return result
+
+    async def _finish_forecast_refresh_failed(
+        self,
+        rule: NotificationRule,
+        dry_run: bool,
+    ) -> EvaluationResult:
+        evaluation_detail: dict[str, Any] = {
+            "rule_id": rule.id,
+            "rule_short_id": rule.short_id,
+            "location_id": rule.location_id,
+            "snapshot_id": None,
+            "point_count": 0,
+            "error": _FORECAST_REFRESH_FAILED,
+        }
+        await self._save_evaluation_run(
+            rule,
+            evaluated=False,
+            result=False,
+            evaluation_detail=evaluation_detail,
+        )
+        return EvaluationResult(
+            rule_id=rule.id,
+            rule_short_id=rule.short_id,
+            expression=rule.expression,
+            evaluated=False,
+            result=None,
+            error=_FORECAST_REFRESH_FAILED,
+            notification_candidate=False,
+            evaluation_detail=evaluation_detail,
+            dry_run=dry_run,
+        )
 
     async def _finish_evaluation(
         self,
@@ -307,6 +374,7 @@ class RuleEvaluationWorker:
             last_point = data["points"][-1] if data["points"] else {}
             evaluation_detail["forecast_window_start"] = str(first_point.get("target_time", ""))
             evaluation_detail["forecast_window_end"] = str(last_point.get("target_time", ""))
+            evaluation_detail["forecast_points"] = _notification_forecast_points(data["points"])
             key_metrics: dict[str, float | str | None] = {}
             for metric in rule_expression_result.evaluated_metrics:
                 key_metrics[metric] = first_point.get(metric)
@@ -357,10 +425,19 @@ class RuleEvaluationWorker:
             dry_run=dry_run,
         )
 
-    async def _build_evaluation_data(self, location_id: int) -> dict[str, Any]:
-        snapshot = await self._forecast_repo.get_latest_snapshot(str(location_id))
+    async def _build_evaluation_data(
+        self,
+        location_id: int,
+        snapshot_id: int | None = None,
+    ) -> dict[str, Any]:
+        if snapshot_id is None:
+            snapshot = await self._forecast_repo.get_latest_snapshot(str(location_id))
+        else:
+            snapshot = await self._forecast_repo.get_snapshot(snapshot_id)
         if snapshot is None:
             return {"points": [], "snapshot_id": None}
+        if snapshot.location_id != location_id:
+            return {"points": [], "snapshot_id": snapshot.id}
 
         now = datetime.now(UTC)
         time_start = now - timedelta(hours=1)
@@ -511,7 +588,7 @@ class RuleEvaluationWorker:
             await self._event_service.mark_suppressed(event.id, suppress_reason or "suppressed")
             return
 
-        message_text = _build_forecast_message(rule, detail)
+        message_text = await self._build_notification_message(rule, detail)
         sent = await self._notification_sender.send(
             chat_id=rule.telegram_chat_id,
             thread_id=rule.telegram_message_thread_id,
@@ -521,6 +598,22 @@ class RuleEvaluationWorker:
             await self._event_service.mark_sent(event.id, message_text=message_text)
         else:
             await self._event_service.mark_suppressed(event.id, "telegram_send_failed")
+
+    async def _build_notification_message(
+        self,
+        rule: NotificationRule,
+        detail: dict[str, Any],
+    ) -> str:
+        if rule.schedule is not None:
+            if (
+                rule.notification_context is not None
+                and self._notification_content_generator is not None
+            ):
+                generated = await self._notification_content_generator.generate(rule, detail)
+                if generated is not None:
+                    return generated
+            return _build_scheduled_fallback_message(rule, detail)
+        return _build_forecast_message(rule, detail)
 
     async def run_once(self) -> None:
         await self.evaluate_rules()
@@ -581,6 +674,88 @@ _UNIT_SUFFIXES: dict[str, str] = {
     "pressure_msl_hpa": " hPa",
     "relative_humidity_2m_pct": "%",
 }
+
+
+def _notification_forecast_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for point in points[:24]:
+        target_time = point.get("target_time")
+        if isinstance(target_time, datetime):
+            target_text = target_time.astimezone(WARSAW_TZ).strftime("%Y-%m-%d %H:%M")
+        else:
+            target_text = str(target_time)
+        compact: dict[str, Any] = {"time": target_text}
+        for metric in _METRIC_LABELS:
+            if metric in point:
+                compact[metric] = point[metric]
+        output.append(compact)
+    return output
+
+
+def _scheduled_notification_key(rule: NotificationRule) -> str | None:
+    if rule.schedule is None:
+        return None
+    return "|".join(
+        [
+            str(rule.user_id),
+            str(rule.telegram_chat_id),
+            str(rule.telegram_message_thread_id or ""),
+            str(rule.location_id),
+            rule.expression,
+            rule.schedule,
+            notification_context_fingerprint(rule.notification_context),
+        ]
+    )
+
+
+def _numeric_values(points: list[dict[str, Any]], metric: str) -> list[float]:
+    values: list[float] = []
+    for point in points:
+        raw = point.get(metric)
+        if isinstance(raw, (int, float)):
+            values.append(float(raw))
+    return values
+
+
+def _range_text(values: list[float], suffix: str) -> str | None:
+    if not values:
+        return None
+    return f"{min(values):.1f}-{max(values):.1f}{suffix}"
+
+
+def _build_scheduled_fallback_message(
+    rule: NotificationRule,
+    evaluation_detail: dict[str, Any],
+) -> str:
+    context = rule.notification_context
+    location = context.location_name if context is not None else None
+    header = context.human_request if context is not None else rule.description
+    lines = [header or f"Aktualna prognoza pogody{f' dla {location}' if location else ''}."]
+
+    points_raw = evaluation_detail.get("forecast_points")
+    points = [p for p in points_raw if isinstance(p, dict)] if isinstance(points_raw, list) else []
+    if points:
+        first_time = str(points[0].get("time", ""))
+        last_time = str(points[-1].get("time", ""))
+        if first_time and last_time:
+            lines.append(f"Okres: {first_time} - {last_time}.")
+
+        temp = _range_text(_numeric_values(points, "temperature_2m_c"), "°C")
+        wind = _range_text(_numeric_values(points, "wind_speed_10m_ms"), " m/s")
+        gusts = _numeric_values(points, "wind_gusts_10m_ms")
+        precipitation = sum(_numeric_values(points, "precipitation_mm"))
+
+        details: list[str] = []
+        if temp is not None:
+            details.append(f"temperatura {temp}")
+        if wind is not None:
+            details.append(f"wiatr {wind}")
+        if gusts:
+            details.append(f"porywy do {max(gusts):.1f} m/s")
+        details.append(f"opady {precipitation:.1f} mm")
+        lines.append(", ".join(details) + ".")
+
+    return "\n".join(lines)
 
 
 def _build_forecast_message(

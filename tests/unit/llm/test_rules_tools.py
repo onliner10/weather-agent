@@ -18,6 +18,7 @@ def mock_rule_service() -> MagicMock:
     svc.create_rule = AsyncMock()
     svc.get_rule = AsyncMock()
     svc.get_rule_for_user = AsyncMock()
+    svc.find_matching_scheduled_rule = AsyncMock(return_value=None)
     svc.update_rule = AsyncMock()
     svc.list_rules = AsyncMock()
     return svc
@@ -52,6 +53,7 @@ def mock_memory_service() -> MagicMock:
     m.store_pending_confirmation = AsyncMock()
     m.get_pending_confirmation = AsyncMock(return_value=None)
     m.clear_pending_confirmation = AsyncMock()
+    m.load_turns = AsyncMock(return_value=[])
     return m
 
 
@@ -171,6 +173,32 @@ class TestScheduleNotificationStoresPending:
         assert stored["action"] == "schedule_notification"
         assert stored["schedule"] == "once:2026-05-01T12:00:00"
         assert stored["rule_expression"] == "true"
+        assert stored["notification_context"]["human_request"] == "Przypomnienie o śniegu"
+        assert stored["notification_context"]["schedule"] == "once:2026-05-01T12:00:00"
+
+    @pytest.mark.asyncio()
+    async def test_stores_recent_turns_in_notification_context(
+        self,
+        toolbox: RulesToolbox,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        toolbox.current_user_message = "Wyślij mi jutro o 9 aktualną prognozę"
+        mock_memory_service.load_turns.return_value = [
+            {"role": "user", "text": f"pytanie {i}"} for i in range(8)
+        ]
+
+        result = await toolbox.schedule_notification(
+            schedule_type="once",
+            schedule_expression="2026-05-01T12:00:00",
+            explanation="Aktualna prognoza dla Gdyni",
+        )
+
+        assert result["pending"] is True
+        stored = mock_memory_service.store_pending_confirmation.call_args[0][1]
+        context = stored["notification_context"]
+        assert context["scheduling_message"] == "Wyślij mi jutro o 9 aktualną prognozę"
+        assert len(context["prior_turns"]) == 6
+        assert context["prior_turns"][0]["text"] == "pytanie 2"
 
     @pytest.mark.asyncio()
     async def test_stores_pending_with_custom_rule_expression(
@@ -338,6 +366,14 @@ class TestConfirmScheduleNotification:
             "message_thread_id": 1,
             "stored_at": datetime.now(UTC).isoformat(),
             "schedule": "once:2026-05-01T12:00:00",
+            "notification_context": {
+                "scheduling_message": "wyślij o 12",
+                "human_request": "Przypomnienie",
+                "schedule": "once:2026-05-01T12:00:00",
+                "location_id": 42,
+                "location_name": "Gdynia",
+                "prior_turns": [],
+            },
         }
         mock_rule_service.create_rule.return_value = NotificationRule(
             id=1,
@@ -349,6 +385,7 @@ class TestConfirmScheduleNotification:
             expression="true",
             schedule="once:2026-05-01T12:00:00",
             description="Przypomnienie",
+            notification_context=None,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
@@ -366,7 +403,57 @@ class TestConfirmScheduleNotification:
         _, rule_create = create_call[0]
         assert isinstance(rule_create, RuleCreate)
         assert rule_create.schedule == "once:2026-05-01T12:00:00"
+        assert rule_create.notification_context is not None
+        assert rule_create.notification_context.human_request == "Przypomnienie"
 
+        mock_memory_service.clear_pending_confirmation.assert_awaited_once()
+
+    @pytest.mark.asyncio()
+    async def test_confirm_reuses_existing_matching_scheduled_rule(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        mock_memory_service.get_pending_confirmation.return_value = {
+            "action": "schedule_notification",
+            "rule_expression": "true",
+            "explanation": "Przypomnienie",
+            "validated": True,
+            "location_id": 42,
+            "chat_id": 200,
+            "message_thread_id": 1,
+            "stored_at": datetime.now(UTC).isoformat(),
+            "schedule": "once:2026-05-01T12:00:00",
+            "notification_context": {
+                "scheduling_message": "wyślij jutro o 12",
+                "human_request": "Przypomnienie",
+                "schedule": "once:2026-05-01T12:00:00",
+                "location_id": 42,
+                "location_name": "Gdynia",
+                "prior_turns": [],
+            },
+        }
+        existing = NotificationRule(
+            id=2,
+            short_id="R2222",
+            user_id=100,
+            telegram_chat_id=200,
+            telegram_message_thread_id=1,
+            location_id=42,
+            expression="true",
+            schedule="once:2026-05-01T12:00:00",
+            description="Przypomnienie",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        mock_rule_service.find_matching_scheduled_rule.return_value = existing
+
+        result = await toolbox.confirm_pending_action()
+
+        assert result["short_id"] == "R2222"
+        assert "już zapisane" in result["answer"]
+        mock_rule_service.create_rule.assert_not_awaited()
         mock_memory_service.clear_pending_confirmation.assert_awaited_once()
 
 

@@ -85,14 +85,17 @@ class _ToolAnswer:
 
 
 class _RulesToolbox(_Toolbox):
-    def __init__(self, answer: str = "Potwierdzono.") -> None:
+    def __init__(self, answer: str = "Potwierdzono.", result: Any | None = None) -> None:
         super().__init__(["rules-tool"])
         self.answer = answer
+        self.result = result
         self.confirmed = False
         self.cancelled = False
 
-    async def confirm_pending_action(self) -> _ToolAnswer:
+    async def confirm_pending_action(self) -> Any:
         self.confirmed = True
+        if self.result is not None:
+            return self.result
         return _ToolAnswer(self.answer)
 
     async def cancel_pending_action(self) -> _ToolAnswer:
@@ -199,6 +202,63 @@ async def test_direct_confirmation_is_handled_without_agent_invocation() -> None
     assert agent_called is False
     assert session_factory.session.committed is True
     assert [turn["role"] for _key, turn in memory.saved] == ["user", "bot"]
+
+
+async def test_direct_confirmation_accepts_dict_tool_result() -> None:
+    session_factory = _SessionFactory()
+    memory = _Memory(pending={"action": "schedule_notification"})
+    rules_toolbox = _RulesToolbox(result={"answer": "Powiadomienie zapisane."})
+
+    async def agent_invoker(
+        _model_factory: ModelFactory,
+        _tools: list[Any],
+        _messages: Sequence[BaseMessage],
+        _config: RunnableConfig,
+        _system_prompt_suffix: str,
+        _timeout_seconds: float,
+        _logger: Logger,
+    ) -> tuple[str, bool]:
+        raise AssertionError("agent should not be called")
+
+    service = _service(
+        session_factory=session_factory,
+        memory=memory,
+        agent_invoker=agent_invoker,
+        rules_toolbox=rules_toolbox,
+    )
+
+    answer = await service.handle(_request("Tak"))
+
+    assert answer == "Powiadomienie zapisane."
+    assert rules_toolbox.confirmed is True
+
+
+async def test_direct_confirmation_returns_dict_tool_error() -> None:
+    session_factory = _SessionFactory()
+    memory = _Memory(pending={"action": "schedule_notification"})
+    rules_toolbox = _RulesToolbox(result={"error": "Nie udało się zapisać powiadomienia."})
+
+    async def agent_invoker(
+        _model_factory: ModelFactory,
+        _tools: list[Any],
+        _messages: Sequence[BaseMessage],
+        _config: RunnableConfig,
+        _system_prompt_suffix: str,
+        _timeout_seconds: float,
+        _logger: Logger,
+    ) -> tuple[str, bool]:
+        raise AssertionError("agent should not be called")
+
+    service = _service(
+        session_factory=session_factory,
+        memory=memory,
+        agent_invoker=agent_invoker,
+        rules_toolbox=rules_toolbox,
+    )
+
+    answer = await service.handle(_request("Tak"))
+
+    assert answer == "Nie udało się zapisać powiadomienia."
 
 
 async def test_normal_message_loads_history_invokes_agent_and_saves_turn() -> None:

@@ -12,7 +12,12 @@ from weather_agent.domain.rules.models import (
     RuleExpressionValidationError,
     RuleNotFoundError,
     RuleUpdate,
+    ScheduledNotificationContext,
     ShortIdCollisionError,
+)
+from weather_agent.domain.rules.notification_context import (
+    notification_context_fingerprint,
+    notification_context_from_mapping,
 )
 from weather_agent.domain.rules.short_id_generator import generate_short_id, strip_hash_prefix
 from weather_agent.infrastructure.db.base import NotificationRule as NotificationRuleORM
@@ -36,6 +41,7 @@ def _orm_to_domain(orm: NotificationRuleORM) -> NotificationRule:
         enabled=orm.enabled,
         dry_run=orm.dry_run,
         description=orm.description,
+        notification_context=notification_context_from_mapping(orm.notification_context),
         snooze_until=orm.snooze_until,
         created_at=orm.created_at,
         updated_at=orm.updated_at,
@@ -84,6 +90,11 @@ class NotificationRuleService:
             enabled=data.enabled,
             dry_run=data.dry_run,
             description=data.description,
+            notification_context=(
+                data.notification_context.model_dump(mode="json")
+                if data.notification_context is not None
+                else None
+            ),
             created_at=now,
             updated_at=now,
         )
@@ -110,6 +121,47 @@ class NotificationRuleService:
         )
         result = await self._session.execute(stmt)
         return [_orm_to_domain(r) for r in result.scalars().all()]
+
+    async def find_matching_scheduled_rule(
+        self,
+        *,
+        user_id: int,
+        telegram_chat_id: int,
+        telegram_message_thread_id: int | None,
+        location_id: int,
+        expression: str,
+        schedule: str,
+        notification_context: ScheduledNotificationContext | None,
+    ) -> NotificationRule | None:
+        stmt = (
+            select(NotificationRuleORM)
+            .where(
+                NotificationRuleORM.user_id == user_id,
+                NotificationRuleORM.telegram_chat_id == telegram_chat_id,
+                NotificationRuleORM.location_id == location_id,
+                NotificationRuleORM.expression == expression,
+                NotificationRuleORM.schedule == schedule,
+                NotificationRuleORM.enabled.is_(True),
+            )
+            .order_by(NotificationRuleORM.id)
+        )
+        if telegram_message_thread_id is None:
+            stmt = stmt.where(NotificationRuleORM.telegram_message_thread_id.is_(None))
+        else:
+            stmt = stmt.where(
+                NotificationRuleORM.telegram_message_thread_id == telegram_message_thread_id
+            )
+
+        result = await self._session.execute(stmt)
+        expected_fingerprint = notification_context_fingerprint(notification_context)
+        for orm in result.scalars().all():
+            candidate = _orm_to_domain(orm)
+            if (
+                notification_context_fingerprint(candidate.notification_context)
+                == expected_fingerprint
+            ):
+                return candidate
+        return None
 
     async def get_rule(
         self, rule_id: int | None = None, short_id: str | None = None
@@ -180,6 +232,8 @@ class NotificationRuleService:
             orm.dry_run = data.dry_run
         if data.description is not None:
             orm.description = data.description
+        if data.notification_context is not None:
+            orm.notification_context = data.notification_context.model_dump(mode="json")
 
         orm.updated_at = datetime.now(UTC)
         await self._session.flush()

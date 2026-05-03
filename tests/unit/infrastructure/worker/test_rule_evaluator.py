@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from weather_agent.domain.notifications.deduplication import NotificationDeduplicator
 from weather_agent.domain.notifications.events import NotificationEventService
 from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
-from weather_agent.domain.rules.models import RuleCreate
+from weather_agent.domain.rules.models import RuleCreate, ScheduledNotificationContext
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.db.base import (
     AuthorizedUser,
@@ -23,6 +23,9 @@ from weather_agent.infrastructure.db.base import (
 )
 from weather_agent.infrastructure.db.base import (
     ForecastPoint as ForecastPointORM,
+)
+from weather_agent.infrastructure.db.base import (
+    NotificationEvent as NotificationEventORM,
 )
 from weather_agent.infrastructure.db.base import (
     NotificationRule as NotificationRuleORM,
@@ -113,6 +116,9 @@ async def _create_rule(
     expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
     dry_run: bool = False,
     enabled: bool = True,
+    schedule: str | None = None,
+    description: str | None = None,
+    notification_context: ScheduledNotificationContext | None = None,
 ) -> Any:
     data = RuleCreate(
         telegram_chat_id=12345,
@@ -120,6 +126,9 @@ async def _create_rule(
         expression=expression,
         dry_run=dry_run,
         enabled=enabled,
+        schedule=schedule,
+        description=description,
+        notification_context=notification_context,
     )
     return await rule_service.create_rule(user_id, data)
 
@@ -181,6 +190,7 @@ def _make_worker(
     rule_expression_evaluator: RuleExpressionEvaluator,
     settings: SchedulerSettings,
     forecast_fetcher: Any = None,
+    notification_content_generator: Any = None,
 ) -> RuleEvaluationWorker:
     return RuleEvaluationWorker(
         session=session,
@@ -189,6 +199,7 @@ def _make_worker(
         rule_service=rule_service,
         settings=settings,
         forecast_fetcher=forecast_fetcher,
+        notification_content_generator=notification_content_generator,
     )
 
 
@@ -696,10 +707,64 @@ class TestRuleEvaluationWorker:
         await _create_user(session)
         await _create_location(session)
         await _seed_forecast_data(session, wind_gusts_base=14.0)
-        await _create_rule(rule_service)
+        rule = await _create_rule(rule_service)
 
         fetcher = AsyncMock()
         fetcher.fetch_fresh_forecast = AsyncMock(side_effect=Exception("network error"))
+
+        class Sender:
+            def __init__(self) -> None:
+                self.count = 0
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id, text
+                self.count += 1
+                return True
+
+        sender = Sender()
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            forecast_fetcher=fetcher,
+            notification_sender=sender,
+            event_service=NotificationEventService(session, AuditLogger(session)),
+            deduplicator=NotificationDeduplicator(session),
+        )
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        assert results[0].evaluated is False
+        assert results[0].notification_candidate is False
+        assert results[0].error == "forecast_refresh_failed"
+        assert sender.count == 0
+
+        event_result = await session.execute(select(NotificationEventORM))
+        assert event_result.scalars().all() == []
+
+        run_result = await session.execute(
+            select(RuleEvaluationRun).where(RuleEvaluationRun.rule_id == rule.id)
+        )
+        eval_run = run_result.scalar_one()
+        assert eval_run.evaluation_detail["error"] == "forecast_refresh_failed"
+
+    async def test_forecast_fetcher_none_result_is_refresh_failure(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session)
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        await _create_rule(rule_service)
+
+        fetcher = AsyncMock()
+        fetcher.fetch_fresh_forecast = AsyncMock(return_value=None)
 
         worker = _make_worker(
             session,
@@ -709,10 +774,172 @@ class TestRuleEvaluationWorker:
             scheduler_settings,
             forecast_fetcher=fetcher,
         )
+
         results = await worker.evaluate_rules()
 
         assert len(results) == 1
-        assert results[0].evaluated is True
+        assert results[0].evaluated is False
+        assert results[0].notification_candidate is False
+        assert results[0].error == "forecast_refresh_failed"
+
+    async def test_fetcher_failure_leaves_once_rule_enabled_and_skips_llm_generation(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session, name="Gdynia Chwarzno")
+        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        context = ScheduledNotificationContext(
+            scheduling_message="Wyślij mi jutro o 9 aktualną prognozę dla Chwarzna",
+            human_request="Aktualna prognoza dla Gdyni Chwarzno",
+            schedule="once:2026-05-01T09:00:00+02:00",
+            location_id=1,
+            location_name="Gdynia Chwarzno",
+        )
+        rule = await _create_rule(
+            rule_service,
+            expression="true",
+            schedule=context.schedule,
+            description=context.human_request,
+            notification_context=context,
+        )
+
+        fetcher = AsyncMock()
+        fetcher.fetch_fresh_forecast = AsyncMock(side_effect=Exception("network error"))
+
+        class Sender:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id
+                self.messages.append(text)
+                return True
+
+        class Generator:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def generate(
+                self,
+                rule: Any,
+                evaluation_detail: dict[str, Any],
+            ) -> str:
+                del rule, evaluation_detail
+                self.calls += 1
+                return "Aktualna prognoza dla Chwarzna: ciepło, bez opadów."
+
+        sender = Sender()
+        generator = Generator()
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            forecast_fetcher=fetcher,
+            notification_sender=sender,
+            event_service=NotificationEventService(session, AuditLogger(session)),
+            deduplicator=NotificationDeduplicator(session),
+            notification_content_generator=generator,
+        )
+
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        assert results[0].error == "forecast_refresh_failed"
+        assert results[0].notification_candidate is False
+        assert sender.messages == []
+        assert generator.calls == 0
+
+        db_rule = await session.get(NotificationRuleORM, rule.id)
+        assert db_rule is not None
+        assert db_rule.enabled is True
+
+    async def test_evaluation_uses_snapshot_returned_by_fetcher(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session, name="Gdynia Chwarzno")
+        now = datetime.now(UTC)
+        await _seed_forecast_data(
+            session,
+            fetched_at=now + timedelta(minutes=5),
+            wind_gusts_base=20.0,
+        )
+        fresh_snapshot_id = await _seed_forecast_data(
+            session,
+            fetched_at=now,
+            wind_gusts_base=4.0,
+        )
+        context = ScheduledNotificationContext(
+            scheduling_message="Wyślij mi jutro o 9 aktualną prognozę dla Chwarzna",
+            human_request="Aktualna prognoza dla Gdyni Chwarzno",
+            schedule="once:2026-05-01T09:00:00+02:00",
+            location_id=1,
+            location_name="Gdynia Chwarzno",
+        )
+        await _create_rule(
+            rule_service,
+            expression="true",
+            schedule=context.schedule,
+            description=context.human_request,
+            notification_context=context,
+        )
+
+        fetcher = AsyncMock()
+        fetcher.fetch_fresh_forecast = AsyncMock(return_value=fresh_snapshot_id)
+
+        class Sender:
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id, text
+                return True
+
+        class Generator:
+            def __init__(self) -> None:
+                self.details: list[dict[str, Any]] = []
+
+            async def generate(
+                self,
+                rule: Any,
+                evaluation_detail: dict[str, Any],
+            ) -> str:
+                del rule
+                self.details.append(evaluation_detail)
+                return "Aktualna prognoza dla Chwarzna: spokojnie i bez opadów."
+
+        generator = Generator()
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            forecast_fetcher=fetcher,
+            notification_sender=Sender(),
+            event_service=NotificationEventService(session, AuditLogger(session)),
+            deduplicator=NotificationDeduplicator(session),
+            notification_content_generator=generator,
+        )
+
+        results = await worker.evaluate_rules()
+
+        assert len(results) == 1
+        assert results[0].evaluation_detail is not None
+        assert results[0].evaluation_detail["snapshot_id"] == fresh_snapshot_id
+        assert len(generator.details) == 1
+        forecast_points = generator.details[0]["forecast_points"]
+        assert isinstance(forecast_points, list)
+        assert forecast_points[0]["wind_gusts_10m_ms"] == 4.0
 
     async def test_duplicate_candidate_is_not_sent_twice(
         self,
@@ -753,6 +980,197 @@ class TestRuleEvaluationWorker:
         await worker.evaluate_rules()
 
         assert sender.count == 1
+
+    async def test_duplicate_scheduled_rules_send_once_and_disable_once_rules(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session, name="Gdynia Chwarzno")
+        await _seed_forecast_data(session, wind_gusts_base=4.0)
+        context = ScheduledNotificationContext(
+            scheduling_message="Wyślij mi jutro o 9 aktualną prognozę dla Chwarzna",
+            human_request="Aktualna prognoza dla Gdyni Chwarzno",
+            schedule="once:2026-05-01T09:00:00+02:00",
+            location_id=1,
+            location_name="Gdynia Chwarzno",
+        )
+        rule_a = await _create_rule(
+            rule_service,
+            expression="true",
+            schedule=context.schedule,
+            description=context.human_request,
+            notification_context=context,
+        )
+        rule_b = await _create_rule(
+            rule_service,
+            expression="true",
+            schedule=context.schedule,
+            description=context.human_request,
+            notification_context=context,
+        )
+
+        class Sender:
+            def __init__(self) -> None:
+                self.messages: list[str] = []
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id
+                self.messages.append(text)
+                return True
+
+        class Generator:
+            def __init__(self) -> None:
+                self.calls: list[tuple[int, dict[str, Any]]] = []
+
+            async def generate(
+                self,
+                rule: Any,
+                evaluation_detail: dict[str, Any],
+            ) -> str:
+                self.calls.append((rule.id, evaluation_detail))
+                return "Aktualna prognoza dla Chwarzna: ciepło, bez opadów."
+
+        sender = Sender()
+        generator = Generator()
+        event_service = NotificationEventService(session, AuditLogger(session))
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            notification_sender=sender,
+            event_service=event_service,
+            deduplicator=NotificationDeduplicator(session),
+            notification_content_generator=generator,
+        )
+
+        results = await worker.evaluate_rules()
+
+        assert [r.rule_id for r in results] == [rule_a.id, rule_b.id]
+        assert len(sender.messages) == 1
+        assert sender.messages[0].startswith("Aktualna prognoza")
+        assert len(generator.calls) == 1
+        assert "forecast_points" in generator.calls[0][1]
+
+        stmt = select(NotificationRuleORM).order_by(NotificationRuleORM.id)
+        db_result = await session.execute(stmt)
+        rules = db_result.scalars().all()
+        assert [rule.enabled for rule in rules] == [False, False]
+
+    async def test_scheduled_notification_falls_back_without_raw_utc_window(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session, name="Gdynia Chwarzno")
+        await _seed_forecast_data(session, wind_gusts_base=4.0)
+        context = ScheduledNotificationContext(
+            scheduling_message="Wyślij mi jutro o 9 aktualną prognozę dla Chwarzna",
+            human_request="Aktualna prognoza dla Gdyni Chwarzno",
+            schedule="once:2026-05-01T09:00:00+02:00",
+            location_id=1,
+            location_name="Gdynia Chwarzno",
+        )
+        await _create_rule(
+            rule_service,
+            expression="true",
+            schedule=context.schedule,
+            description=context.human_request,
+            notification_context=context,
+        )
+
+        class Sender:
+            def __init__(self) -> None:
+                self.message = ""
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id
+                self.message = text
+                return True
+
+        class Generator:
+            async def generate(
+                self,
+                rule: Any,
+                evaluation_detail: dict[str, Any],
+            ) -> None:
+                del rule, evaluation_detail
+                return None
+
+        sender = Sender()
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            notification_sender=sender,
+            event_service=NotificationEventService(session, AuditLogger(session)),
+            deduplicator=NotificationDeduplicator(session),
+            notification_content_generator=Generator(),
+        )
+
+        await worker.evaluate_rules()
+
+        assert "Aktualna prognoza dla Gdyni Chwarzno" in sender.message
+        assert "+00:00" not in sender.message
+        assert "T00:" not in sender.message
+
+    async def test_scheduled_notification_without_context_uses_polish_fallback(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        await _create_user(session)
+        await _create_location(session, name="Gdynia Chwarzno")
+        await _seed_forecast_data(session, wind_gusts_base=4.0)
+        await _create_rule(
+            rule_service,
+            expression="true",
+            schedule="once:2026-05-01T09:00:00+02:00",
+            description="Aktualna prognoza dla Gdyni Chwarzno",
+        )
+
+        class Sender:
+            def __init__(self) -> None:
+                self.message = ""
+
+            async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
+                del chat_id, thread_id
+                self.message = text
+                return True
+
+        sender = Sender()
+        worker = RuleEvaluationWorker(
+            session=session,
+            forecast_repo=forecast_repo,
+            rule_expression_evaluator=rule_expression_evaluator,
+            rule_service=rule_service,
+            settings=scheduler_settings,
+            notification_sender=sender,
+            event_service=NotificationEventService(session, AuditLogger(session)),
+            deduplicator=NotificationDeduplicator(session),
+        )
+
+        await worker.evaluate_rules()
+
+        assert "Aktualna prognoza dla Gdyni Chwarzno" in sender.message
+        assert "temperatura" in sender.message
+        assert "+00:00" not in sender.message
+        assert "T00:" not in sender.message
 
     async def test_run_loop_commits_read_only_cycle_before_sleep(
         self,
@@ -1020,7 +1438,7 @@ class TestRuleEvaluationWorker:
     ) -> None:
         await _create_user(session)
         await _create_location(session)
-        await _seed_forecast_data(session, wind_gusts_base=14.0)
+        snapshot_id = await _seed_forecast_data(session, wind_gusts_base=14.0)
         await _create_rule(rule_service)
 
         fetcher_calls: list[int] = []
@@ -1028,7 +1446,7 @@ class TestRuleEvaluationWorker:
         class CountingFetcher:
             async def fetch_fresh_forecast(self, location_id: int) -> int | None:
                 fetcher_calls.append(location_id)
-                return None
+                return snapshot_id
 
         worker = _make_worker(
             session,

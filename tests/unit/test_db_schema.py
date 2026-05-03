@@ -302,6 +302,7 @@ class TestNotificationRules:
             "enabled",
             "dry_run",
             "description",
+            "notification_context",
             "created_at",
             "updated_at",
         }
@@ -320,6 +321,7 @@ class TestNotificationRules:
             "lead_time_minutes",
             "cooldown_minutes",
             "description",
+            "notification_context",
         ]:
             assert cols[nullable_field]["nullable"] is True, f"{nullable_field} should be nullable"
 

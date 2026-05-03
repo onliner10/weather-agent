@@ -12,7 +12,11 @@ from weather_agent.application.conversation_models import PendingConfirmation
 from weather_agent.domain.locations import LocationCreate, LocationService
 from weather_agent.domain.rule_expression.allowlist import get_allowlist_for_prompt
 from weather_agent.domain.rule_expression.evaluator import RuleExpressionEvaluator
-from weather_agent.domain.rules.models import RuleCreate
+from weather_agent.domain.rules.models import (
+    RuleCreate,
+    ScheduledNotificationContext,
+    ScheduledNotificationTurn,
+)
 from weather_agent.domain.rules.schedule import parse_schedule
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.domain.rules.short_id_generator import strip_hash_prefix
@@ -22,6 +26,7 @@ from weather_agent.observability.logging import get_logger
 from weather_agent.observability.metrics import observe_tool_call
 
 logger = get_logger(__name__)
+_SCHEDULE_CONTEXT_TURNS = 6
 
 
 class ListNotificationRulesArgs(BaseModel):
@@ -107,6 +112,7 @@ class RulesToolbox:
         user_id: int,
         chat_id: int,
         message_thread_id: int | None,
+        current_user_message: str = "",
         session_lock: asyncio.Lock | None = None,
     ) -> None:
         self.rule_service = rule_service
@@ -118,24 +124,25 @@ class RulesToolbox:
         self.user_id = user_id
         self.chat_id = chat_id
         self.message_thread_id = message_thread_id
+        self.current_user_message = current_user_message
         self._lock = session_lock or asyncio.Lock()
 
-    async def _resolve_location_id(self, location_name: str) -> int | None:
+    async def _resolve_location(self, location_name: str) -> tuple[int | None, str | None]:
         if not location_name.strip():
             default = await self.location_service.get_default_location(self.user_id)
             if default is not None:
                 try:
-                    return int(default.id)
+                    return int(default.id), str(default.name)
                 except (ValueError, TypeError):
-                    return None
-            return None
+                    return None, None
+            return None, None
 
         resolved = await self.location_service.resolve_location(location_name, self.user_id)
         if resolved is not None:
             try:
-                return int(resolved.id)
+                return int(resolved.id), str(resolved.name)
             except (ValueError, TypeError):
-                return None
+                return None, None
 
         geo = await self.geocoder.geocode(location_name)
         if geo is not None:
@@ -151,12 +158,42 @@ class RulesToolbox:
                         longitude=geo.longitude,
                     ),
                 )
-                return created.id
+                return created.id, created.name
             except Exception:
                 logger.exception("auto_save_location_failed", location_name=location_name)
-                return None
+                return None, None
 
-        return None
+        return None, None
+
+    async def _resolve_location_id(self, location_name: str) -> int | None:
+        location_id, _location_name = await self._resolve_location(location_name)
+        return location_id
+
+    async def _build_scheduled_notification_context(
+        self,
+        *,
+        schedule: str,
+        explanation: str,
+        location_id: int | None,
+        location_name: str | None,
+    ) -> ScheduledNotificationContext:
+        raw_turns = await self.memory_service.load_turns(self.context_key)
+        prior_turns: list[ScheduledNotificationTurn] = []
+        for turn in raw_turns[-_SCHEDULE_CONTEXT_TURNS:]:
+            role = turn.get("role")
+            text = turn.get("text") or turn.get("answer_summary")
+            if isinstance(role, str) and isinstance(text, str) and text.strip():
+                prior_turns.append(ScheduledNotificationTurn(role=role, text=text.strip()[:500]))
+
+        scheduling_message = self.current_user_message.strip() or explanation
+        return ScheduledNotificationContext(
+            scheduling_message=scheduling_message[:1000],
+            human_request=explanation.strip()[:1000],
+            schedule=schedule,
+            location_id=location_id,
+            location_name=location_name,
+            prior_turns=tuple(prior_turns),
+        )
 
     @traceable(run_type="tool")
     async def list_notification_rules(
@@ -329,21 +366,38 @@ class RulesToolbox:
 
         try:
             if pending.action == "schedule_notification":
-                rule = await self.rule_service.create_rule(
-                    self.user_id,
-                    RuleCreate(
-                        telegram_chat_id=effective_chat_id,
-                        telegram_message_thread_id=effective_thread_id,
-                        location_id=location_id,
-                        expression=rule_expression,
-                        schedule=pending.schedule,
-                        lead_time_minutes=pending.lead_time_minutes,
-                        description=explanation,
-                    ),
+                if pending.schedule is None:
+                    return {"error": "Brak harmonogramu dla zaplanowanego powiadomienia."}
+                existing_rule = await self.rule_service.find_matching_scheduled_rule(
+                    user_id=self.user_id,
+                    telegram_chat_id=effective_chat_id,
+                    telegram_message_thread_id=effective_thread_id,
+                    location_id=location_id,
+                    expression=rule_expression,
+                    schedule=pending.schedule,
+                    notification_context=pending.notification_context,
                 )
+                if existing_rule is None:
+                    rule = await self.rule_service.create_rule(
+                        self.user_id,
+                        RuleCreate(
+                            telegram_chat_id=effective_chat_id,
+                            telegram_message_thread_id=effective_thread_id,
+                            location_id=location_id,
+                            expression=rule_expression,
+                            schedule=pending.schedule,
+                            lead_time_minutes=pending.lead_time_minutes,
+                            description=explanation,
+                            notification_context=pending.notification_context,
+                        ),
+                    )
+                    answer_prefix = "Nowe zaplanowane powiadomienie"
+                else:
+                    rule = existing_rule
+                    answer_prefix = "Takie zaplanowane powiadomienie jest już zapisane"
                 schedule_info = f"harmonogram: {pending.schedule}" if pending.schedule else ""
                 answer = (
-                    f"Nowe zaplanowane powiadomienie #{rule.short_id} zostało zapisane.\n"
+                    f"{answer_prefix} #{rule.short_id}.\n"
                     f"\U0001f4dd wyrażenie reguły: `{rule.expression}`\n"
                     f"\U0001f4c5 {schedule_info}"
                 )
@@ -435,7 +489,7 @@ class RulesToolbox:
                 if not parsed.valid:
                     return {"error": f"Nieprawidłowy harmonogram: {parsed.error}"}
 
-                location_id = await self._resolve_location_id(location_name)
+                location_id, resolved_location_name = await self._resolve_location(location_name)
                 if location_id is None and location_name.strip():
                     return {"error": f"Nie znaleziono lokalizacji: {location_name}"}
 
@@ -449,6 +503,12 @@ class RulesToolbox:
                     message_thread_id=self.message_thread_id,
                     stored_at=datetime.now(UTC).isoformat(),
                     schedule=schedule_str,
+                    notification_context=await self._build_scheduled_notification_context(
+                        schedule=schedule_str,
+                        explanation=explanation,
+                        location_id=location_id,
+                        location_name=resolved_location_name or location_name.strip() or None,
+                    ),
                 )
 
                 await self.memory_service.store_pending_confirmation(

@@ -2,7 +2,25 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ScheduledNotificationTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str
+    text: str
+
+
+class ScheduledNotificationContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduling_message: str
+    human_request: str
+    schedule: str
+    location_id: int | None = None
+    location_name: str | None = None
+    prior_turns: tuple[ScheduledNotificationTurn, ...] = Field(default_factory=tuple)
 
 
 class NotificationRule(BaseModel):
@@ -22,6 +40,7 @@ class NotificationRule(BaseModel):
     enabled: bool = True
     dry_run: bool = False
     description: str | None = None
+    notification_context: ScheduledNotificationContext | None = None
     snooze_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -60,6 +79,7 @@ class RuleCreate(BaseModel):
     enabled: bool = True
     dry_run: bool = False
     description: str | None = None
+    notification_context: ScheduledNotificationContext | None = None
 
 
 class RuleUpdate(BaseModel):
@@ -76,6 +96,7 @@ class RuleUpdate(BaseModel):
     enabled: bool | None = None
     dry_run: bool | None = None
     description: str | None = None
+    notification_context: ScheduledNotificationContext | None = None
 
 
 class RuleNotFoundError(Exception):

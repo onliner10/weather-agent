@@ -161,6 +161,7 @@ class ConversationService:
             user_id=authorized_user_id,
             chat_id=request.chat_id,
             message_thread_id=request.message_thread_id,
+            current_user_message=request.text,
             session_lock=tool_session_lock,
         )
 
@@ -237,8 +238,19 @@ class ConversationService:
         else:
             result = await rules_toolbox.cancel_pending_action()
 
-        answer = getattr(result, "answer", None)
-        return answer if isinstance(answer, str) and answer else _GENERIC_FAILURE_ANSWER
+        answer: object | None
+        error: object | None = None
+        if isinstance(result, Mapping):
+            answer = result.get("answer")
+            error = result.get("error")
+        else:
+            answer = getattr(result, "answer", None)
+            error = getattr(result, "error", None)
+        if isinstance(answer, str) and answer:
+            return answer
+        if isinstance(error, str) and error:
+            return error
+        return _GENERIC_FAILURE_ANSWER
 
 
 async def save_turn(

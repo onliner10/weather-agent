@@ -226,6 +226,10 @@ class NotificationRule(Base):
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
     snooze_until: Mapped[datetime | None] = mapped_column(nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notification_context: Mapped[dict[str, object] | None] = mapped_column(
+        JSONBVariant,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 

@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from weather_agent.domain.rules.models import ScheduledNotificationContext
+
 
 @dataclass(frozen=True)
 class UserMessage:
@@ -36,6 +38,7 @@ class PendingConfirmation(BaseModel):
     edit_short_id: str | None = None
     schedule: str | None = None
     lead_time_minutes: int | None = None
+    notification_context: ScheduledNotificationContext | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json", exclude_none=True)

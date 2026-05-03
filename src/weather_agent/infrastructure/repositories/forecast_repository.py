@@ -62,6 +62,9 @@ class ForecastRepository(BaseRepository):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_snapshot(self, snapshot_id: int) -> ForecastSnapshotORM | None:
+        return await self._session.get(ForecastSnapshotORM, snapshot_id)
+
     async def get_points_by_time_range(
         self,
         location_id: str,

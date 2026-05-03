@@ -51,6 +51,9 @@ def cmd_worker(_args: argparse.Namespace) -> None:
             from weather_agent.infrastructure.worker.forecast_fetcher import (
                 WorkerForecastFetcher,
             )
+            from weather_agent.infrastructure.worker.notification_content import (
+                LlmNotificationContentGenerator,
+            )
             from weather_agent.infrastructure.worker.rule_evaluator import (
                 RuleEvaluationWorker,
             )
@@ -88,6 +91,10 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                         bot_token=app.settings.telegram.bot_token,
                         httpx_client=app.httpx_client,
                     )
+                    notification_content_generator = LlmNotificationContentGenerator(
+                        model_factory=app.model_factory,
+                        timeout_seconds=app.settings.model.timeout_seconds,
+                    )
 
                     worker = RuleEvaluationWorker(
                         session=session,
@@ -99,6 +106,7 @@ def cmd_worker(_args: argparse.Namespace) -> None:
                         notification_sender=notification_sender,
                         event_service=event_service,
                         deduplicator=deduplicator,
+                        notification_content_generator=notification_content_generator,
                     )
 
                 with bound_worker_context():
