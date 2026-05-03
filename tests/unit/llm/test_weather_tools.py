@@ -294,3 +294,41 @@ class TestWeatherToolboxCharts:
         assert len(attachments) == 1
         assert attachments[0].media_type == "image/png"
         assert attachments[0].data.startswith(b"\x89PNG\r\n\x1a\n")
+
+    async def test_render_forecast_chart_tool_defaults_when_spec_missing(
+        self, session: AsyncSession
+    ) -> None:
+        await _create_user(session)
+        service = LocationService(session)
+        await _create_location(service, name="Chwarzno", aliases=["dom"])
+        forecast_provider = FakeForecastProvider()
+        attachments: list[BotAttachment] = []
+        toolbox = WeatherToolbox(
+            forecast_provider=forecast_provider,
+            observation_provider=FakeObservationProvider(),
+            geocoder=FakeGeocoder(),  # type: ignore[arg-type]
+            location_service=service,
+            user_id=1,
+            reply_attachments=attachments,
+        )
+        chart_tool = next(
+            tool for tool in toolbox.to_langchain_tools() if tool.name == "render_forecast_chart"
+        )
+
+        result = await chart_tool.ainvoke(
+            {
+                "location_name": "dom",
+                "start_date": "2026-05-04",
+                "end_date": "2026-05-04",
+                "variables": ["wind_speed_10m_ms", "wind_gusts_10m_ms"],
+            }
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("error") is None
+        assert forecast_provider.variables == [
+            [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms]
+        ]
+        assert len(attachments) == 1
+        assert attachments[0].media_type == "image/png"
+        assert attachments[0].data.startswith(b"\x89PNG\r\n\x1a\n")

@@ -31,6 +31,7 @@ from weather_agent.domain.weather import (
 from weather_agent.infrastructure.geocoder import Geocoder
 from weather_agent.llm.tools.forecast_charts import (
     ForecastChartError,
+    default_forecast_chart_spec,
     forecast_points_to_records,
     render_forecast_chart_png,
 )
@@ -160,18 +161,29 @@ class RenderForecastChartArgs(BaseModel):
             "pressure_msl_hpa, relative_humidity_2m_pct"
         ),
     )
-    vega_lite_spec: dict[str, JsonValue] = Field(
+    vega_lite_spec: dict[str, JsonValue] | None = Field(
+        default=None,
         description=(
             'Standardowa specyfikacja Vega-Lite v6. Użyj data: {"name": "forecast"}; '
             "nie dodawaj data.values, data.url, datasets ani transform. "
             "Dla wielu serii użyj layer z prawdziwymi polami pogodowymi "
-            "zamiast fold/value/variable."
+            "zamiast fold/value/variable. Jeśli pominiesz spec, narzędzie użyje "
+            "prostego domyślnego wykresu z podanych zmiennych."
         ),
     )
 
 
 class GetObservationsArgs(BaseModel):
     location_name: str = Field(description="Nazwa miejscowości")
+
+
+def _chart_spec_or_default(
+    vega_lite_spec: dict[str, JsonValue] | None,
+    variables: list[WeatherVariable],
+) -> dict[str, object]:
+    if vega_lite_spec is None:
+        return default_forecast_chart_spec(variables)
+    return dict(vega_lite_spec)
 
 
 class SaveLocationArgs(BaseModel):
@@ -366,7 +378,7 @@ class WeatherToolbox:
         start_date: str,
         end_date: str,
         variables: list[str],
-        vega_lite_spec: dict[str, JsonValue],
+        vega_lite_spec: dict[str, JsonValue] | None = None,
     ) -> ToolResult:
         with observe_tool_call("render_forecast_chart"):
             return await self._execute_render_forecast_chart(
@@ -384,7 +396,7 @@ class WeatherToolbox:
         start_date_str: str,
         end_date_str: str,
         variable_names: list[str],
-        vega_lite_spec: dict[str, JsonValue],
+        vega_lite_spec: dict[str, JsonValue] | None,
     ) -> ToolResult:
         if self._reply_attachments is None:
             return {"error": "Renderowanie wykresów jest niedostępne w tym kontekście."}
@@ -433,7 +445,7 @@ class WeatherToolbox:
                 resolution=ForecastResolution.hourly,
             )
             png = render_forecast_chart_png(
-                spec=dict(vega_lite_spec),
+                spec=_chart_spec_or_default(vega_lite_spec, variables),
                 records=forecast_points_to_records(forecast.points),
                 variables=variables,
                 time_range=time_range,
@@ -684,10 +696,12 @@ class WeatherToolbox:
                 name="render_forecast_chart",
                 description=(
                     "Wyrenderuj wykres prognozy jako PNG i dołącz go do odpowiedzi Telegrama. "
-                    'Podaj standardowy Vega-Lite v6 spec używający data: {"name": "forecast"}. '
+                    "Możesz podać standardowy Vega-Lite v6 spec używający "
+                    'data: {"name": "forecast"}. '
                     "Nie przekazuj surowych danych, data.values, data.url, datasets ani transform. "
                     "Używaj tylko pól: time oraz zmiennych podanych w variables. "
-                    "Dla wielu serii użyj layer, nie fold/value/variable."
+                    "Dla wielu serii użyj layer, nie fold/value/variable. "
+                    "Jeśli pominiesz spec, narzędzie wyrenderuje prosty wykres domyślny."
                 ),
                 args_schema=RenderForecastChartArgs,
             ),

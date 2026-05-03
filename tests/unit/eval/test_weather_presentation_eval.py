@@ -186,6 +186,30 @@ class TestWeatherPresentationToolUse:
         assert result["score"] == 0.0
         assert "missing_expected_chart_variables:temperature_2m_c" in str(result["comment"])
 
+    def test_expected_chart_allows_default_spec_when_tool_omits_spec(self) -> None:
+        result = weather_presentation_tool_use(
+            _output(
+                tool_name=None,
+                attachment_count=1,
+                tool_calls=[
+                    {
+                        "name": "render_forecast_chart",
+                        "args": {
+                            "location_name": "Chwarzno",
+                            "start_date": "2026-05-04",
+                            "end_date": "2026-05-04",
+                            "variables": ["wind_speed_10m_ms"],
+                        },
+                        "result_error": None,
+                    }
+                ],
+            ),
+            {"expect_chart": True, "expected_chart_variables": ["wind_speed_10m_ms"]},
+        )
+
+        assert result["score"] == 1.0
+        assert result["comment"] == "ok"
+
     def test_expected_chart_fails_when_variable_is_missing_from_spec_fields(self) -> None:
         result = weather_presentation_tool_use(
             _output(

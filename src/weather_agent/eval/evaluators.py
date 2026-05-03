@@ -183,13 +183,19 @@ def weather_presentation_tool_use(
             failures.append(
                 "missing_expected_chart_variables:" + ",".join(sorted(expected_chart_variables))
             )
+        successful_chart_calls_with_spec = [
+            call
+            for call in successful_chart_calls
+            if isinstance(call.args.get("vega_lite_spec"), dict)
+        ]
         if not any(
             expected_chart_variables <= _chart_call_spec_fields(call)
-            for call in successful_chart_calls
+            for call in successful_chart_calls_with_spec
         ):
-            failures.append(
-                "missing_expected_chart_fields:" + ",".join(sorted(expected_chart_variables))
-            )
+            if successful_chart_calls_with_spec:
+                failures.append(
+                    "missing_expected_chart_fields:" + ",".join(sorted(expected_chart_variables))
+                )
     if expected_chart_start_date and successful_chart_calls:
         if not any(
             call.args.get("start_date") == expected_chart_start_date
