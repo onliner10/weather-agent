@@ -4,7 +4,13 @@ import re
 import unicodedata
 from typing import Any, cast
 
-from weather_agent.eval.schemas import WEATHER_ATTRIBUTES, WeatherAttribute, WeatherFacts
+from weather_agent.eval.schemas import (
+    WEATHER_ATTRIBUTES,
+    WeatherAttribute,
+    WeatherFacts,
+    WeatherPresentationOutput,
+    WeatherToolCallRecord,
+)
 
 _TEMP_RE = re.compile(r"(?P<value>(?<!\d)-?\d+(?:[,.]\d+)?)\s*(?:°\s*)?c\b", re.IGNORECASE)
 _TEMP_RANGE_RE = re.compile(
@@ -140,3 +146,101 @@ def weather_functional_correctness(
         "score": 0.0 if failures else 1.0,
         "comment": "ok" if not failures else ";".join(failures),
     }
+
+
+def weather_presentation_tool_use(
+    outputs: dict[str, Any],
+    reference_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    run_output = WeatherPresentationOutput.model_validate(outputs)
+    expect_chart = reference_outputs.get("expect_chart")
+    expected_chart_variables = _string_set(reference_outputs.get("expected_chart_variables"))
+    expected_chart_start_date = _optional_string(reference_outputs.get("expected_chart_start_date"))
+    expected_chart_end_date = _optional_string(reference_outputs.get("expected_chart_end_date"))
+    chart_calls = [call for call in run_output.tool_calls if call.name == "render_forecast_chart"]
+    successful_chart_calls = [call for call in chart_calls if call.result_error is None]
+    failures: list[str] = []
+
+    if expect_chart is True:
+        if not chart_calls:
+            failures.append("missing_render_forecast_chart_call")
+        if run_output.attachment_count < 1:
+            failures.append("missing_chart_attachment")
+    elif expect_chart is False:
+        if chart_calls:
+            failures.append("unexpected_render_forecast_chart_call")
+    if chart_calls and run_output.attachment_count < 1:
+        failures.append("chart_call_without_attachment")
+    if len(successful_chart_calls) > 1:
+        failures.append(
+            f"repeated_successful_render_forecast_chart_calls:{len(successful_chart_calls)}"
+        )
+    if expected_chart_variables and successful_chart_calls:
+        if not any(
+            expected_chart_variables <= _chart_call_variables(call)
+            for call in successful_chart_calls
+        ):
+            failures.append(
+                "missing_expected_chart_variables:" + ",".join(sorted(expected_chart_variables))
+            )
+        if not any(
+            expected_chart_variables <= _chart_call_spec_fields(call)
+            for call in successful_chart_calls
+        ):
+            failures.append(
+                "missing_expected_chart_fields:" + ",".join(sorted(expected_chart_variables))
+            )
+    if expected_chart_start_date and successful_chart_calls:
+        if not any(
+            call.args.get("start_date") == expected_chart_start_date
+            for call in successful_chart_calls
+        ):
+            failures.append(f"chart_start_date_mismatch:{expected_chart_start_date}")
+    if expected_chart_end_date and successful_chart_calls:
+        if not any(
+            call.args.get("end_date") == expected_chart_end_date for call in successful_chart_calls
+        ):
+            failures.append(f"chart_end_date_mismatch:{expected_chart_end_date}")
+
+    return {
+        "key": "weather_presentation_tool_use",
+        "score": 0.0 if failures else 1.0,
+        "comment": "ok" if not failures else ";".join(failures),
+    }
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _string_set(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {item for item in value if isinstance(item, str)}
+
+
+def _chart_call_variables(call: WeatherToolCallRecord) -> set[str]:
+    variables = call.args.get("variables")
+    if not isinstance(variables, list):
+        return set()
+    return {variable for variable in variables if isinstance(variable, str)}
+
+
+def _chart_call_spec_fields(
+    call: WeatherToolCallRecord,
+) -> set[str]:
+    return _find_field_names(call.args.get("vega_lite_spec"))
+
+
+def _find_field_names(value: object) -> set[str]:
+    fields: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "field" and isinstance(child, str):
+                fields.add(child)
+            else:
+                fields.update(_find_field_names(child))
+    elif isinstance(value, list):
+        for child in value:
+            fields.update(_find_field_names(child))
+    return fields

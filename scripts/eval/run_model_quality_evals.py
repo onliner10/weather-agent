@@ -35,6 +35,8 @@ EVAL_STEPS = (
     ("Run location management eval", "scripts/eval/run_location_management_eval.py"),
     ("Sync weather grounding dataset", "scripts/eval/create_weather_grounding_dataset.py"),
     ("Run weather grounding eval", "scripts/eval/run_weather_grounding_eval.py"),
+    ("Sync weather presentation dataset", "scripts/eval/create_weather_presentation_dataset.py"),
+    ("Run weather presentation eval", "scripts/eval/run_weather_presentation_eval.py"),
 )
 
 

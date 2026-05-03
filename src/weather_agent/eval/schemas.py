@@ -54,3 +54,20 @@ class WeatherAnswerOutput(BaseModel):
 
     answer: str
     example_id: str
+
+
+class WeatherToolCallRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    args: dict[str, object]
+    result_error: str | None = None
+
+
+class WeatherPresentationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    example_id: str
+    tool_calls: list[WeatherToolCallRecord]
+    attachment_count: int

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from weather_agent.application.conversation_models import BotAttachment
 from weather_agent.domain.locations import LocationCreate, LocationService
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
@@ -77,6 +78,7 @@ class FakeForecastProvider(ForecastProvider):
 
     def __init__(self) -> None:
         self.locations: list[LocationRef] = []
+        self.variables: list[list[WeatherVariable]] = []
 
     async def get_forecast(
         self,
@@ -85,8 +87,9 @@ class FakeForecastProvider(ForecastProvider):
         variables: list[WeatherVariable],
         resolution: ForecastResolution,
     ) -> ForecastResult:
-        del variables, resolution
+        del resolution
         self.locations.append(location)
+        self.variables.append(variables)
         fetched_at = datetime.now(UTC)
         return ForecastResult(
             provider=self.provider,
@@ -101,6 +104,8 @@ class FakeForecastProvider(ForecastProvider):
                     model="fake",
                     location_id=location.id,
                     temperature_2m_c=12.0,
+                    wind_speed_10m_ms=4.0,
+                    wind_gusts_10m_ms=7.0,
                     raw_payload={},
                 )
             ],
@@ -236,3 +241,56 @@ class TestWeatherToolboxLocations:
             )
             == durations_before + 1
         )
+
+
+class TestWeatherToolboxCharts:
+    async def test_render_forecast_chart_adds_png_attachment(self, session: AsyncSession) -> None:
+        await _create_user(session)
+        service = LocationService(session)
+        await _create_location(service, name="Chwarzno", aliases=["dom"])
+        forecast_provider = FakeForecastProvider()
+        attachments: list[BotAttachment] = []
+        toolbox = WeatherToolbox(
+            forecast_provider=forecast_provider,
+            observation_provider=FakeObservationProvider(),
+            geocoder=FakeGeocoder(),  # type: ignore[arg-type]
+            location_service=service,
+            user_id=1,
+            reply_attachments=attachments,
+        )
+
+        result = await toolbox.render_forecast_chart(
+            "dom",
+            "2026-05-04",
+            "2026-05-04",
+            ["wind_speed_10m_ms", "wind_gusts_10m_ms"],
+            {
+                "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+                "title": "Wiatr w czasie",
+                "data": {"name": "forecast"},
+                "layer": [
+                    {
+                        "mark": "line",
+                        "encoding": {
+                            "x": {"field": "time", "type": "temporal"},
+                            "y": {"field": "wind_speed_10m_ms", "type": "quantitative"},
+                        },
+                    },
+                    {
+                        "mark": "line",
+                        "encoding": {
+                            "x": {"field": "time", "type": "temporal"},
+                            "y": {"field": "wind_gusts_10m_ms", "type": "quantitative"},
+                        },
+                    },
+                ],
+            },
+        )
+
+        assert result.get("error") is None
+        assert forecast_provider.variables == [
+            [WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms]
+        ]
+        assert len(attachments) == 1
+        assert attachments[0].media_type == "image/png"
+        assert attachments[0].data.startswith(b"\x89PNG\r\n\x1a\n")

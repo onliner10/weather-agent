@@ -26,6 +26,20 @@ class UserMessage:
         )
 
 
+@dataclass(frozen=True)
+class BotAttachment:
+    filename: str
+    media_type: str
+    data: bytes
+    caption: str | None = None
+
+
+@dataclass(frozen=True)
+class BotReply:
+    text: str
+    attachments: tuple[BotAttachment, ...] = ()
+
+
 class PendingConfirmation(BaseModel):
     action: Literal["create_rule", "edit_rule", "schedule_notification"] = "create_rule"
     rule_expression: str = ""

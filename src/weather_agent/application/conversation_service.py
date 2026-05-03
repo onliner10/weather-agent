@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from weather_agent.agent_factory import build_current_time_prompt_suffix
 from weather_agent.application.agent_invocation import invoke_agent_with_timeout
-from weather_agent.application.conversation_models import UserMessage
+from weather_agent.application.conversation_models import BotAttachment, BotReply, UserMessage
 from weather_agent.domain.locations import LocationService
 from weather_agent.domain.rules.service import NotificationRuleService
 from weather_agent.infrastructure.repositories.auth_repository import AuthRepository
@@ -31,31 +31,10 @@ from weather_agent.observability.tracing import build_graph_config
 logger = get_logger(__name__)
 
 _DIRECT_CONFIRMATIONS: frozenset[str] = frozenset(
-    {
-        "tak",
-        "Tak",
-        "TAK",
-        "ok",
-        "OK",
-        "Ok",
-        "potwierdzam",
-        "Potwierdzam",
-        "yes",
-        "Yes",
-        "YES",
-    }
+    ("tak", "Tak", "TAK", "ok", "OK", "Ok", "potwierdzam", "Potwierdzam", "yes", "Yes", "YES")
 )
 _DIRECT_CANCELLATIONS: frozenset[str] = frozenset(
-    {
-        "nie",
-        "Nie",
-        "NIE",
-        "anuluj",
-        "Anuluj",
-        "no",
-        "No",
-        "NO",
-    }
+    ("nie", "Nie", "NIE", "anuluj", "Anuluj", "no", "No", "NO")
 )
 _GENERIC_FAILURE_ANSWER = "Przepraszam, wystąpił błąd. Spróbuj ponownie za chwilę."
 
@@ -126,14 +105,22 @@ class ConversationService:
         self._agent_invoker = agent_invoker
 
     async def handle(self, request: UserMessage) -> str:
+        reply = await self.handle_reply(request)
+        return reply.text
+
+    async def handle_reply(self, request: UserMessage) -> BotReply:
         async with cast(
             AbstractAsyncContextManager[AsyncSession], self._session_factory()
         ) as session:
-            answer = await self._handle_with_session(session, request)
+            reply = await self._handle_reply_with_session(session, request)
             await session.commit()
-            return answer
+            return reply
 
-    async def _handle_with_session(self, session: AsyncSession, request: UserMessage) -> str:
+    async def _handle_reply_with_session(
+        self,
+        session: AsyncSession,
+        request: UserMessage,
+    ) -> BotReply:
         authorized_user_id = await self._auth_resolver(session, request.telegram_user_id)
         location_service = LocationService(session)
         rule_service = NotificationRuleService(
@@ -142,6 +129,7 @@ class ConversationService:
         )
         memory_service = self._memory_factory(session)
         tool_session_lock = asyncio.Lock()
+        reply_attachments: list[BotAttachment] = []
 
         weather_toolbox = self._weather_toolbox_factory(
             forecast_provider=self._forecast_provider,
@@ -150,6 +138,7 @@ class ConversationService:
             location_service=location_service,
             user_id=authorized_user_id,
             session_lock=tool_session_lock,
+            reply_attachments=reply_attachments,
         )
         rules_toolbox = self._rules_toolbox_factory(
             rule_service=rule_service,
@@ -172,7 +161,7 @@ class ConversationService:
         )
         if direct_answer is not None:
             await save_turn(memory_service, request.context_key, request.text, direct_answer)
-            return direct_answer
+            return BotReply(text=direct_answer)
 
         messages = build_conversation_messages(
             await memory_service.load_turns(request.context_key),
@@ -216,7 +205,8 @@ class ConversationService:
         CONVERSATION_TURN_DURATION_SECONDS.observe(time.perf_counter() - turn_start)
 
         await save_turn(memory_service, request.context_key, request.text, answer)
-        return answer
+        attachments = () if failed else tuple(reply_attachments)
+        return BotReply(text=answer, attachments=attachments)
 
     async def _handle_direct_confirmation(
         self,

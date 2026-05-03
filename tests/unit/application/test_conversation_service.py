@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 
-from weather_agent.application.conversation_models import UserMessage
+from weather_agent.application.conversation_models import BotAttachment, UserMessage
 from weather_agent.application.conversation_service import ConversationService, Logger
 from weather_agent.llm.model_factory import ModelFactory
 
@@ -316,6 +316,53 @@ async def test_normal_message_loads_history_invokes_agent_and_saves_turn() -> No
     assert captured["timeout_seconds"] == 3
     assert "Europe/Warsaw" in captured["system_prompt_suffix"]
     assert [turn["role"] for _key, turn in memory.saved] == ["user", "bot"]
+
+
+async def test_handle_reply_returns_tool_attachments_while_handle_returns_text() -> None:
+    session_factory = _SessionFactory()
+    memory = _Memory()
+    attachment = BotAttachment(
+        filename="prognoza.png",
+        media_type="image/png",
+        data=b"png",
+    )
+
+    async def agent_invoker(
+        _model_factory: ModelFactory,
+        _tools: list[Any],
+        _messages: Sequence[BaseMessage],
+        _config: RunnableConfig,
+        _system_prompt_suffix: str,
+        _timeout_seconds: float,
+        _logger: Logger,
+    ) -> tuple[str, bool]:
+        return "Dołączam wykres.", False
+
+    def weather_toolbox_factory(**kwargs: Any) -> _Toolbox:
+        kwargs["reply_attachments"].append(attachment)
+        return _Toolbox(["weather-tool"])
+
+    service = ConversationService(
+        session_factory=session_factory,  # type: ignore[arg-type]
+        forecast_provider=object(),
+        observation_provider=object(),
+        geocoder=object(),
+        model_factory=_ModelFactory(),  # type: ignore[arg-type]
+        rule_expression_evaluator=object(),
+        timeout_seconds=3,
+        memory_factory=lambda _session: memory,
+        auth_resolver=_auth_resolver,  # type: ignore[arg-type]
+        weather_toolbox_factory=weather_toolbox_factory,
+        rules_toolbox_factory=lambda **_kwargs: _RulesToolbox(),
+        agent_invoker=agent_invoker,
+    )
+
+    reply = await service.handle_reply(_request("Pokaż wykres wiatru"))
+    text = await service.handle(_request("Pokaż wykres wiatru"))
+
+    assert reply.text == "Dołączam wykres."
+    assert reply.attachments == (attachment,)
+    assert text == "Dołączam wykres."
 
 
 async def test_follow_up_message_uses_previous_persisted_turns() -> None:

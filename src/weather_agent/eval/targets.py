@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from weather_agent.agent_factory import build_current_time_prompt_suffix, create_weather_agent
+from weather_agent.application.conversation_models import BotAttachment
 from weather_agent.domain.providers import ForecastProvider, ObservationProvider
 from weather_agent.domain.weather import (
     ForecastPoint,
@@ -19,7 +21,12 @@ from weather_agent.domain.weather import (
     TimeRange,
     WeatherVariable,
 )
-from weather_agent.eval.schemas import WeatherAnswerOutput, WeatherFacts
+from weather_agent.eval.schemas import (
+    WeatherAnswerOutput,
+    WeatherFacts,
+    WeatherPresentationOutput,
+    WeatherToolCallRecord,
+)
 from weather_agent.llm.tools.weather_tools import WeatherToolbox
 from weather_agent.observability.logging import get_logger
 
@@ -223,6 +230,7 @@ def _build_fixture_weather_tools(
     facts: WeatherFacts,
     hourly_values: dict[int, dict[str, float]] | None = None,
     expected_target_time: datetime | None = None,
+    reply_attachments: list[BotAttachment] | None = None,
 ) -> list[Any]:
     toolbox = WeatherToolbox(
         forecast_provider=_FixtureForecastProvider(facts, hourly_values, expected_target_time),
@@ -230,8 +238,49 @@ def _build_fixture_weather_tools(
         geocoder=cast(Any, _FixtureGeocoder(facts)),
         location_service=None,
         user_id=0,
+        reply_attachments=reply_attachments,
     )
     return toolbox.to_langchain_tools()
+
+
+def _extract_weather_tool_calls(messages: list[Any]) -> list[WeatherToolCallRecord]:
+    records: list[WeatherToolCallRecord] = []
+    records_by_tool_call_id: dict[str, WeatherToolCallRecord] = {}
+    for message in messages:
+        if isinstance(message, ToolMessage):
+            tool_call_id = str(message.tool_call_id)
+            record = records_by_tool_call_id.get(tool_call_id)
+            if record is not None:
+                record.result_error = _tool_message_error(message)
+            continue
+        if not isinstance(message, AIMessage):
+            continue
+        for tool_call in message.tool_calls:
+            raw_args = tool_call.get("args", {})
+            args = raw_args if isinstance(raw_args, dict) else {}
+            record = WeatherToolCallRecord(
+                name=str(tool_call.get("name", "")),
+                args=cast(dict[str, object], args),
+            )
+            records.append(record)
+            records_by_tool_call_id[str(tool_call.get("id", ""))] = record
+    return records
+
+
+def _tool_message_error(message: ToolMessage) -> str | None:
+    if message.status == "error":
+        return str(message.content)
+    content = message.content
+    if not isinstance(content, str):
+        return None
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    error = parsed.get("error")
+    return error if isinstance(error, str) else None
 
 
 def build_weather_answer_target(
@@ -300,3 +349,46 @@ def build_weather_answer_async_target_from_factory(
         return WeatherAnswerOutput(example_id=example_id, answer=str(answer)).model_dump()
 
     return weather_answer_target
+
+
+def build_weather_presentation_async_target_from_factory(
+    model_factory: Callable[[], BaseChatModel],
+) -> Callable[[dict[str, object]], Awaitable[dict[str, Any]]]:
+    async def weather_presentation_target(inputs: dict[str, object]) -> dict[str, Any]:
+        example_id = str(inputs["id"])
+        question = str(inputs["question"])
+        facts = WeatherFacts.model_validate(inputs["frozen_facts"])
+        hourly_values = _normalize_hourly_values(inputs.get("hourly_values"))
+        expected_target_time = _parse_datetime(inputs.get("expected_target_time"))
+        current_time = _parse_datetime(inputs.get("current_time"))
+        reply_attachments: list[BotAttachment] = []
+        logger.debug("weather_presentation_eval_run", id=example_id, question=question[:80])
+        agent = create_weather_agent(
+            model=model_factory(),
+            tools=_build_fixture_weather_tools(
+                facts,
+                hourly_values,
+                expected_target_time,
+                reply_attachments,
+            ),
+            system_prompt_suffix=build_current_time_prompt_suffix(current_time),
+        )
+
+        result = cast(
+            dict[str, Any],
+            await agent.ainvoke(
+                {"messages": [HumanMessage(content=question)]},
+                config={"configurable": {"thread_id": example_id}},
+            ),
+        )
+        messages = list(result["messages"])
+        final = messages[-1]
+        answer = final.content if hasattr(final, "content") else str(final)
+        return WeatherPresentationOutput(
+            example_id=example_id,
+            answer=str(answer),
+            tool_calls=_extract_weather_tool_calls(messages),
+            attachment_count=len(reply_attachments),
+        ).model_dump()
+
+    return weather_presentation_target

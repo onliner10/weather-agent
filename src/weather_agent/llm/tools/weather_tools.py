@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 from langchain_core.tools import BaseTool, StructuredTool
 from langsmith import traceable
 from pydantic import BaseModel, Field
+from pydantic.types import JsonValue
 
+from weather_agent.application.conversation_models import BotAttachment
 from weather_agent.domain.errors import WeatherProviderError
 from weather_agent.domain.locations import (
     LocationAliasConflictError,
@@ -27,6 +29,11 @@ from weather_agent.domain.weather import (
     WeatherVariable,
 )
 from weather_agent.infrastructure.geocoder import Geocoder
+from weather_agent.llm.tools.forecast_charts import (
+    ForecastChartError,
+    forecast_points_to_records,
+    render_forecast_chart_png,
+)
 from weather_agent.observability.logging import get_logger
 from weather_agent.observability.metrics import (
     PROVIDER_REQUEST_DURATION_SECONDS,
@@ -140,6 +147,29 @@ class GetForecastArgs(BaseModel):
 ToolResult = dict[str, Any]
 
 
+class RenderForecastChartArgs(BaseModel):
+    location_name: str = Field(description="Nazwa miejscowości (np. Gdańsk, Chwarzno)")
+    start_date: str = Field(description="Data początkowa w formacie yyyy-mm-dd")
+    end_date: str = Field(description="Końcowa data yyyy-mm-dd. Dla jednego dnia powtórz.")
+    variables: list[str] = Field(
+        description=(
+            "Lista zmiennych pogodowych użytych na wykresie. Dostępne: "
+            "temperature_2m_c, apparent_temperature_c, precipitation_mm, "
+            "precipitation_probability_pct, rain_mm, snowfall_cm, cloud_cover_pct, "
+            "wind_speed_10m_ms, wind_gusts_10m_ms, wind_direction_10m_deg, "
+            "pressure_msl_hpa, relative_humidity_2m_pct"
+        ),
+    )
+    vega_lite_spec: dict[str, JsonValue] = Field(
+        description=(
+            'Standardowa specyfikacja Vega-Lite v6. Użyj data: {"name": "forecast"}; '
+            "nie dodawaj data.values, data.url, datasets ani transform. "
+            "Dla wielu serii użyj layer z prawdziwymi polami pogodowymi "
+            "zamiast fold/value/variable."
+        ),
+    )
+
+
 class GetObservationsArgs(BaseModel):
     location_name: str = Field(description="Nazwa miejscowości")
 
@@ -183,6 +213,7 @@ class WeatherToolbox:
         location_service: LocationService | None,
         user_id: int,
         session_lock: asyncio.Lock | None = None,
+        reply_attachments: list[BotAttachment] | None = None,
     ) -> None:
         self.forecast_provider = forecast_provider
         self.observation_provider = observation_provider
@@ -190,6 +221,7 @@ class WeatherToolbox:
         self.location_service = location_service
         self.user_id = user_id
         self._lock = session_lock or asyncio.Lock()
+        self._reply_attachments = reply_attachments
 
     async def _resolve_location(self, name: str) -> LocationRef | None:
         async with self._lock:
@@ -286,7 +318,7 @@ class WeatherToolbox:
         except ValueError:
             return {"error": "Nieprawidłowy format daty. Użyj yyyy-mm-dd."}
 
-        variables = []
+        variables: list[WeatherVariable] = []
         for vn in variable_names:
             try:
                 variables.append(WeatherVariable(vn))
@@ -325,6 +357,117 @@ class WeatherToolbox:
             "forecast_points": points_data,
             "provider": forecast.provider,
             "model": forecast.model,
+        }
+
+    @traceable(run_type="tool")
+    async def render_forecast_chart(
+        self,
+        location_name: str,
+        start_date: str,
+        end_date: str,
+        variables: list[str],
+        vega_lite_spec: dict[str, JsonValue],
+    ) -> ToolResult:
+        with observe_tool_call("render_forecast_chart"):
+            return await self._execute_render_forecast_chart(
+                location_name=location_name,
+                start_date_str=start_date,
+                end_date_str=end_date,
+                variable_names=variables,
+                vega_lite_spec=vega_lite_spec,
+            )
+
+    async def _execute_render_forecast_chart(
+        self,
+        *,
+        location_name: str,
+        start_date_str: str,
+        end_date_str: str,
+        variable_names: list[str],
+        vega_lite_spec: dict[str, JsonValue],
+    ) -> ToolResult:
+        if self._reply_attachments is None:
+            return {"error": "Renderowanie wykresów jest niedostępne w tym kontekście."}
+
+        location = await self._resolve_location(location_name)
+        if location is None:
+            if not location_name.strip():
+                return {"error": "Nie mam zapisanej domyślnej lokalizacji. Podaj lokalizację."}
+            return {"error": f"Nie znaleziono lokalizacji: {location_name}"}
+
+        try:
+            s = date.fromisoformat(start_date_str)
+            e = date.fromisoformat(end_date_str)
+            start_dt = datetime(s.year, s.month, s.day, tzinfo=_WARSAW)
+            end_dt = datetime(e.year, e.month, e.day, 23, 59, tzinfo=_WARSAW)
+            if start_dt > end_dt:
+                return {"error": "start_date nie może być późniejsza niż end_date"}
+            time_range = TimeRange(start=start_dt, end=end_dt)
+        except ValueError:
+            return {"error": "Nieprawidłowy format daty. Użyj yyyy-mm-dd."}
+
+        variables: list[WeatherVariable] = []
+        invalid_variables: list[str] = []
+        for variable_name in variable_names:
+            try:
+                variable = WeatherVariable(variable_name)
+            except ValueError:
+                invalid_variables.append(variable_name)
+                continue
+            if variable == WeatherVariable.weather_code:
+                invalid_variables.append(variable_name)
+                continue
+            variables.append(variable)
+        if invalid_variables:
+            return {"error": "Nieznane lub nieobsługiwane zmienne: " + ", ".join(invalid_variables)}
+        if not variables:
+            return {"error": "Podaj co najmniej jedną zmienną pogodową do wykresu."}
+
+        provider_name = getattr(self.forecast_provider, "provider", "unknown")
+        start = _time.perf_counter()
+        try:
+            forecast = await self.forecast_provider.get_forecast(
+                location=location,
+                time_range=time_range,
+                variables=variables,
+                resolution=ForecastResolution.hourly,
+            )
+            png = render_forecast_chart_png(
+                spec=dict(vega_lite_spec),
+                records=forecast_points_to_records(forecast.points),
+                variables=variables,
+                time_range=time_range,
+            )
+            PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="success").inc()
+        except ForecastChartError as exc:
+            PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
+            return {"error": str(exc)}
+        except WeatherProviderError as exc:
+            PROVIDER_REQUESTS_TOTAL.labels(
+                provider=getattr(exc, "provider", provider_name), outcome="failure"
+            ).inc()
+            return {"error": f"Błąd dostawcy prognozy ({exc.provider}): {exc.message}"}
+        except Exception:
+            PROVIDER_REQUESTS_TOTAL.labels(provider=provider_name, outcome="failure").inc()
+            logger.exception("render_forecast_chart_failed", user_id=self.user_id)
+            return {"error": "Błąd podczas renderowania wykresu. Spróbuj ponownie."}
+        finally:
+            PROVIDER_REQUEST_DURATION_SECONDS.labels(provider=provider_name).observe(
+                _time.perf_counter() - start
+            )
+
+        self._reply_attachments.append(
+            BotAttachment(
+                filename="prognoza.png",
+                media_type="image/png",
+                data=png,
+            )
+        )
+        return {
+            "success": "Wykres został przygotowany i zostanie dołączony do odpowiedzi.",
+            "location": location.name,
+            "time_range": f"{start_date_str} – {end_date_str}",
+            "variables": [variable.value for variable in variables],
         }
 
     @traceable(run_type="tool")
@@ -535,6 +678,18 @@ class WeatherToolbox:
                     " wokół lokalizacji (ostatni pomiar)."
                 ),
                 args_schema=GetObservationsArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.render_forecast_chart,
+                name="render_forecast_chart",
+                description=(
+                    "Wyrenderuj wykres prognozy jako PNG i dołącz go do odpowiedzi Telegrama. "
+                    'Podaj standardowy Vega-Lite v6 spec używający data: {"name": "forecast"}. '
+                    "Nie przekazuj surowych danych, data.values, data.url, datasets ani transform. "
+                    "Używaj tylko pól: time oraz zmiennych podanych w variables. "
+                    "Dla wielu serii użyj layer, nie fold/value/variable."
+                ),
+                args_schema=RenderForecastChartArgs,
             ),
             StructuredTool.from_function(
                 coroutine=self.save_location,

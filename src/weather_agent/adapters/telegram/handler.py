@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import time
+from io import BytesIO
 from typing import Any
 
-from telegram import Update
+from telegram import InputFile, Update
 from telegram.ext import ContextTypes
 
 from weather_agent.adapters.telegram.context import TelegramContextService
@@ -69,7 +70,7 @@ async def make_message_handler(container: AppContainer) -> Any:
             reply_to_message_id=reply_to_message_id,
             context_key=context_key,
         ):
-            answer = await conversation_service.handle(
+            reply = await conversation_service.handle_reply(
                 UserMessage(
                     telegram_user_id=user_id,
                     chat_id=chat_id,
@@ -82,7 +83,16 @@ async def make_message_handler(container: AppContainer) -> Any:
 
             reply_start = time.perf_counter()
             try:
-                await update.message.reply_text(answer)
+                await update.message.reply_text(reply.text)
+                for attachment in reply.attachments:
+                    if attachment.media_type == "image/png":
+                        await update.message.reply_photo(
+                            photo=InputFile(
+                                BytesIO(attachment.data),
+                                filename=attachment.filename,
+                            ),
+                            caption=attachment.caption,
+                        )
                 REPLY_SEND_TOTAL.labels(outcome="success").inc()
             except Exception:
                 REPLY_SEND_TOTAL.labels(outcome="failure").inc()
