@@ -80,7 +80,10 @@ class ScheduleNotificationArgs(BaseModel):
     )
     schedule_expression: str = Field(
         description=(
-            "Wyrażenie harmonogramu: ISO datetime dla 'once', 5-polowe wyrażenie cron dla 'cron'"
+            "Wyrażenie harmonogramu bez prefiksu typu: ISO datetime dla 'once', "
+            "5-polowe wyrażenie cron dla 'cron'. Cron obsługuje zakresy i dni tygodnia, "
+            "np. '0 8-18 * * 1-5' dla godzinnych sprawdzeń pon-pt w dzień albo "
+            "'0 8 * * 4' dla czwartku o 08:00."
         ),
     )
     explanation: str = Field(
@@ -95,7 +98,10 @@ class ScheduleNotificationArgs(BaseModel):
     rule_expression: str = Field(
         default="true",
         description=(
-            "Opcjonalne wyrażenie CEL warunku. Domyślnie 'true' (natychmiastowe przypomnienie)."
+            "Opcjonalne wyrażenie CEL warunku. Domyślnie 'true' (natychmiastowe przypomnienie). "
+            "Dla cyklicznych alertów pogodowych harmonogram cron opisuje kiedy sprawdzać, "
+            "a warunek powinien używać zakresu prognozy względnego do sprawdzenia, np. "
+            "next_hours(1), today() albo tomorrow(), nie stałego date_range dla bieżącego tygodnia."
         ),
     )
 
@@ -590,8 +596,10 @@ class RulesToolbox:
                 description=(
                     "Zaplanuj powiadomienie z opcjonalnym warunkiem wyrażenie reguły. "
                     "Przyjmuje typ harmonogramu (once/cron), wyrażenie harmonogramu "
-                    "(ISO datetime lub 5-polowe cron), opis, lokalizację "
-                    "i opcjonalne wyrażenie reguły. Waliduje harmonogram i wyrażenie reguły, "
+                    "(ISO datetime lub 5-polowe cron bez prefiksu cron:), opis, lokalizację "
+                    "i opcjonalne wyrażenie reguły. Użyj cron dla powtarzalnych próśb typu "
+                    "'pon-pt', 'w każdy czwartek', 'codziennie' albo 'co godzinę'. "
+                    "Waliduje harmonogram i wyrażenie reguły, "
                     "a następnie zapisuje propozycję do potwierdzenia przez użytkownika."
                 ),
                 args_schema=ScheduleNotificationArgs,

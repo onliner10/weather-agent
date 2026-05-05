@@ -95,12 +95,12 @@ def _schedule_call(
 
 class TestNotificationRuleDataset:
     def test_dataset_name_is_versioned(self) -> None:
-        assert DATASET_NAME == "weather-agent-notification-rule-proposal-v1"
+        assert DATASET_NAME == "weather-agent-notification-rule-proposal-v2"
 
-    def test_generates_eight_unambiguous_cases(self) -> None:
+    def test_generates_ten_unambiguous_cases(self) -> None:
         cases = generate_notification_rule_cases()
 
-        assert len(cases) == 8
+        assert len(cases) == 10
         assert len({case.id for case in cases}) == len(cases)
         assert all("pogorszenie" not in case.question.casefold() for case in cases)
 
@@ -310,6 +310,69 @@ class TestNotificationRuleEvaluator:
         comment = str(result["comment"])
         assert "location_mismatch" in comment
         assert "schedule_type_mismatch" in comment
+
+    def test_recurring_rc_request_requires_weekday_cron_schedule(self) -> None:
+        expected = _case_expected("rule-proposal-009")
+        result = notification_rule_proposal_fidelity(
+            _output(
+                case_id="rule-proposal-009",
+                call=_schedule_call(
+                    rule_expression=expected.expected_rule_expression,
+                    location="Chwarzno",
+                    schedule_type="cron",
+                    schedule_expression="0 8-18 * * *",
+                ),
+            ),
+            _reference("rule-proposal-009"),
+        )
+
+        assert result["score"] == 0.0
+        assert "cron_mismatch:expected=0 8-18 * * 1-5" in str(result["comment"])
+
+    def test_recurring_rc_request_rejects_static_date_range_expression(self) -> None:
+        result = notification_rule_proposal_fidelity(
+            _output(
+                case_id="rule-proposal-009",
+                call=_schedule_call(
+                    rule_expression=(
+                        'max_metric("wind_gusts_10m_ms", '
+                        'date_range("2026-05-04T08:00:00+02:00", '
+                        '"2026-05-08T18:00:00+02:00")) <= 6.0 && '
+                        'max_metric("wind_speed_10m_ms", '
+                        'date_range("2026-05-04T08:00:00+02:00", '
+                        '"2026-05-08T18:00:00+02:00")) <= 4.0 && '
+                        'sum_metric("precipitation_mm", '
+                        'date_range("2026-05-04T08:00:00+02:00", '
+                        '"2026-05-08T18:00:00+02:00")) == 0.0'
+                    ),
+                    location="Chwarzno",
+                    schedule_type="cron",
+                    schedule_expression="0 8-18 * * 1-5",
+                ),
+            ),
+            _reference("rule-proposal-009"),
+        )
+
+        assert result["score"] == 0.0
+        assert "rule_expression_profile_error" in str(result["comment"])
+
+    def test_each_thursday_request_requires_day_of_week_cron(self) -> None:
+        expected = _case_expected("rule-proposal-010")
+        result = notification_rule_proposal_fidelity(
+            _output(
+                case_id="rule-proposal-010",
+                call=_schedule_call(
+                    rule_expression=expected.expected_rule_expression,
+                    location="Gdańsk",
+                    schedule_type="cron",
+                    schedule_expression="0 8 * * *",
+                ),
+            ),
+            _reference("rule-proposal-010"),
+        )
+
+        assert result["score"] == 0.0
+        assert "cron_mismatch:expected=0 8 * * 4" in str(result["comment"])
 
     def test_missing_confirmation_surface_fails(self) -> None:
         expected = _case_expected("rule-proposal-001")

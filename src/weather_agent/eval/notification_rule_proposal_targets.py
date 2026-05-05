@@ -243,7 +243,9 @@ class RecordingRulesToolbox:
                 name="schedule_notification",
                 description=(
                     "Zaplanuj powiadomienie z opcjonalnym warunkiem wyrażenie reguły. "
-                    "Waliduje harmonogram i zapisuje propozycję do potwierdzenia."
+                    "Użyj cron dla powtarzalnych próśb typu pon-pt, codziennie, "
+                    "co godzinę lub w każdy czwartek. Waliduje harmonogram i zapisuje "
+                    "propozycję do potwierdzenia."
                 ),
                 args_schema=ScheduleNotificationArgs,
             ),

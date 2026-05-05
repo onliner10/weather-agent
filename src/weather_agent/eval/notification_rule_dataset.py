@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from weather_agent.eval.notification_rule_recurring_dataset import (
+    generate_recurring_notification_rule_cases,
+)
 from weather_agent.eval.notification_rule_schemas import (
     ExpectedRuleProposal,
     ExpectedRuleTool,
@@ -11,7 +14,7 @@ from weather_agent.eval.notification_rule_schemas import (
     RuleExpressionDiscriminatorProfile,
 )
 
-DATASET_NAME = "weather-agent-notification-rule-proposal-v1"
+DATASET_NAME = "weather-agent-notification-rule-proposal-v2"
 EVAL_TIMEZONE = ZoneInfo("Europe/Warsaw")
 EVAL_CURRENT_TIME = datetime(2026, 5, 1, 12, 0, tzinfo=EVAL_TIMEZONE)
 
@@ -239,4 +242,5 @@ def generate_notification_rule_cases() -> list[NotificationRuleEvalCase]:
             ),
         ),
     ]
+    cases.extend(generate_recurring_notification_rule_cases(EVAL_CURRENT_TIME))
     return cases

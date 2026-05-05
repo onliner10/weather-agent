@@ -104,7 +104,7 @@ async def _create_rule(
     rule_service: NotificationRuleService,
     user_id: int = 1,
     location_id: int = 1,
-    expression: str = 'max_metric("wind_gusts_10m_ms", weekend()) >= 12',
+    expression: str = 'max_metric("wind_gusts_10m_ms", next_hours(24)) >= 12',
     schedule: str | None = None,
     enabled: bool = True,
 ) -> Any:

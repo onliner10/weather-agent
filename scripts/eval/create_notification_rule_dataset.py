@@ -1,4 +1,4 @@
-"""Create the weather-agent-notification-rule-proposal-v1 LangSmith dataset.
+"""Create the weather-agent-notification-rule-proposal-v2 LangSmith dataset.
 
 Usage:
     uv run python scripts/eval/create_notification_rule_dataset.py
