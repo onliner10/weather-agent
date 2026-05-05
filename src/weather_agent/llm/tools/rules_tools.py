@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -27,6 +28,16 @@ from weather_agent.observability.metrics import observe_tool_call
 
 logger = get_logger(__name__)
 _SCHEDULE_CONTEXT_TURNS = 6
+_DATE_RANGE_FUNCTION_RE = re.compile(r"\bdate_range\s*\(")
+CRON_FIXED_DATE_RANGE_ERROR = (
+    "Dla cyklicznych harmonogramów cron nie używaj stałego date_range(...). "
+    'Użyj zakresu względnego do każdego uruchomienia, np. between(today(), "1800", "2100") '
+    "albo next_hours(1)."
+)
+
+
+def cron_schedule_uses_fixed_date_range(schedule_type: str, rule_expression: str) -> bool:
+    return schedule_type == "cron" and _DATE_RANGE_FUNCTION_RE.search(rule_expression) is not None
 
 
 class ListNotificationRulesArgs(BaseModel):
@@ -101,7 +112,8 @@ class ScheduleNotificationArgs(BaseModel):
             "Opcjonalne wyrażenie CEL warunku. Domyślnie 'true' (natychmiastowe przypomnienie). "
             "Dla cyklicznych alertów pogodowych harmonogram cron opisuje kiedy sprawdzać, "
             "a warunek powinien używać zakresu prognozy względnego do sprawdzenia, np. "
-            "next_hours(1), today() albo tomorrow(), nie stałego date_range dla bieżącego tygodnia."
+            'next_hours(1), today(), tomorrow() albo between(today(), "1800", "2100"), '
+            "nie stałego date_range dla bieżącego tygodnia lub dnia."
         ),
     )
 
@@ -494,6 +506,8 @@ class RulesToolbox:
                 parsed = parse_schedule(schedule_str)
                 if not parsed.valid:
                     return {"error": f"Nieprawidłowy harmonogram: {parsed.error}"}
+                if cron_schedule_uses_fixed_date_range(schedule_type, validation.expression):
+                    return {"error": CRON_FIXED_DATE_RANGE_ERROR}
 
                 location_id, resolved_location_name = await self._resolve_location(location_name)
                 if location_id is None and location_name.strip():

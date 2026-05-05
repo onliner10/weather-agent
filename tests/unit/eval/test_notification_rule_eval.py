@@ -97,10 +97,10 @@ class TestNotificationRuleDataset:
     def test_dataset_name_is_versioned(self) -> None:
         assert DATASET_NAME == "weather-agent-notification-rule-proposal-v2"
 
-    def test_generates_ten_unambiguous_cases(self) -> None:
+    def test_generates_eleven_unambiguous_cases(self) -> None:
         cases = generate_notification_rule_cases()
 
-        assert len(cases) == 10
+        assert len(cases) == 11
         assert len({case.id for case in cases}) == len(cases)
         assert all("pogorszenie" not in case.question.casefold() for case in cases)
 
@@ -356,6 +356,31 @@ class TestNotificationRuleEvaluator:
         assert result["score"] == 0.0
         assert "rule_expression_profile_error" in str(result["comment"])
 
+    def test_scheduled_rc_evening_slot_rejects_static_date_range_expression(self) -> None:
+        result = notification_rule_proposal_fidelity(
+            _output(
+                case_id="rule-proposal-011",
+                call=_schedule_call(
+                    rule_expression=(
+                        'points_between(date_range("2026-05-05T18:00:00+02:00", '
+                        '"2026-05-05T21:00:00+02:00")).exists(p, '
+                        "p.wind_speed_10m_ms <= 4.0 && "
+                        "p.wind_gusts_10m_ms <= 6.0 && "
+                        "p.precipitation_mm == 0.0)"
+                    ),
+                    location="Chwarzno",
+                    schedule_type="cron",
+                    schedule_expression="0 10 * * 1-5",
+                ),
+            ),
+            _reference("rule-proposal-011"),
+        )
+
+        assert result["score"] == 0.0
+        assert "rule_expression_profile_mismatch:one_good_evening_hour_is_enough" in str(
+            result["comment"]
+        )
+
     def test_each_thursday_request_requires_day_of_week_cron(self) -> None:
         expected = _case_expected("rule-proposal-010")
         result = notification_rule_proposal_fidelity(
@@ -469,3 +494,25 @@ class TestNotificationRuleTarget:
         } == set(by_name)
         assert by_name["propose_notification_rule"].args_schema is not None
         assert by_name["schedule_notification"].args_schema is not None
+
+    async def test_recording_schedule_rejects_fixed_date_range_for_cron(self) -> None:
+        toolbox = RecordingRulesToolbox()
+
+        result = await toolbox.schedule_notification(
+            schedule_type="cron",
+            schedule_expression="0 10 * * 1-5",
+            explanation="Wieczorne warunki do latania RC",
+            location_name="Chwarzno",
+            rule_expression=(
+                'points_between(date_range("2026-05-05T18:00:00+02:00", '
+                '"2026-05-05T21:00:00+02:00")).exists(p, '
+                "p.wind_speed_10m_ms <= 4.0 && "
+                "p.wind_gusts_10m_ms <= 6.0 && "
+                "p.precipitation_mm == 0.0)"
+            ),
+        )
+
+        assert result["error"] is not None
+        assert "date_range" in result["error"]
+        assert toolbox.tool_calls[-1].result_pending is None
+        assert toolbox.tool_calls[-1].result_error == result["error"]

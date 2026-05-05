@@ -171,4 +171,113 @@ def generate_recurring_notification_rule_cases(
                 ],
             ),
         ),
+        NotificationRuleEvalCase(
+            id="rule-proposal-011",
+            question=(
+                "Powiadom mnie pon-pt o 10:00, jeśli w Chwarznie w godzinach 18-21 będą "
+                "dobre warunki do latania RC modelem Bigfoot 1.3m."
+            ),
+            current_time=current_time,
+            expected=_expected(
+                tool="schedule_notification",
+                rule_expression=(
+                    'points_between(between(today(), "1800", "2100")).exists(p, '
+                    "p.wind_speed_10m_ms <= 4.0 && "
+                    "p.wind_gusts_10m_ms <= 6.0 && "
+                    "p.precipitation_mm == 0.0)"
+                ),
+                location="Chwarzno",
+                schedule_type="cron",
+                schedule_expression="0 10 * * 1-5",
+                profiles=[
+                    _profile(
+                        "one_good_evening_hour_is_enough",
+                        True,
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=3.0,
+                            wind_gusts_10m_ms=5.0,
+                            precipitation_mm=0.0,
+                        ),
+                        _point(
+                            1,
+                            20,
+                            wind_speed_10m_ms=7.0,
+                            wind_gusts_10m_ms=9.0,
+                            precipitation_mm=0.4,
+                        ),
+                    ),
+                    _profile(
+                        "outside_evening_slot_guard",
+                        False,
+                        _point(
+                            1,
+                            17,
+                            wind_speed_10m_ms=3.0,
+                            wind_gusts_10m_ms=5.0,
+                            precipitation_mm=0.0,
+                        ),
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=7.0,
+                            wind_gusts_10m_ms=9.0,
+                            precipitation_mm=0.4,
+                        ),
+                    ),
+                    _profile(
+                        "different_day_guard",
+                        False,
+                        _point(
+                            2,
+                            19,
+                            wind_speed_10m_ms=3.0,
+                            wind_gusts_10m_ms=5.0,
+                            precipitation_mm=0.0,
+                        ),
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=7.0,
+                            wind_gusts_10m_ms=9.0,
+                            precipitation_mm=0.4,
+                        ),
+                    ),
+                    _profile(
+                        "wind_too_strong",
+                        False,
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=4.1,
+                            wind_gusts_10m_ms=5.0,
+                            precipitation_mm=0.0,
+                        ),
+                    ),
+                    _profile(
+                        "gusts_too_strong",
+                        False,
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=3.0,
+                            wind_gusts_10m_ms=6.1,
+                            precipitation_mm=0.0,
+                        ),
+                    ),
+                    _profile(
+                        "precipitation_blocks_flying",
+                        False,
+                        _point(
+                            1,
+                            19,
+                            wind_speed_10m_ms=3.0,
+                            wind_gusts_10m_ms=5.0,
+                            precipitation_mm=0.1,
+                        ),
+                    ),
+                ],
+            ),
+        ),
     ]

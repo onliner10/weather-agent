@@ -19,7 +19,8 @@ CEL_RULES: list[str] = [
     "Aggregation functions always use a quoted metric first, "
     'e.g. max_metric("wind_gusts_10m_ms", weekend()).',
     "Aggregation functions always include a time range as the second argument.",
-    "Use today(), tomorrow(), weekend(), next_hours(n), or date_range(...) "
+    "Use today(), tomorrow(), weekend(), next_hours(n), between(time_range, HHMM, HHMM), "
+    "or date_range(...) "
     "to scope weather conditions.",
     "Use CEL boolean operators &&, ||, ! and null.",
     "Use CEL collection macros for point-level conditions, e.g. "
@@ -28,6 +29,8 @@ CEL_RULES: list[str] = [
     "the CEL expression still needs the forecast time range being checked.",
     "For recurring weekday or named-day checks, use schedule_notification with cron; "
     "keep the CEL expression weather-focused and use a rolling range such as next_hours(1).",
+    "For cron checks delivered at one time but evaluating another same-day slot, use a relative "
+    'slot such as between(today(), "1800", "2100"), not a fixed date_range(...).',
     "Do not write max(weekend, metric), min(metric), sum(metric, range), "
     "or a naked metric for future forecast checks.",
 ]
@@ -39,6 +42,11 @@ CEL_EXAMPLES: list[str] = [
     (
         "points_between(next_hours(1)).exists(p, p.wind_speed_10m_ms <= 4.0 && "
         "p.wind_gusts_10m_ms <= 6.0 && p.precipitation_mm == 0.0)"
+    ),
+    (
+        'points_between(between(today(), "1800", "2100")).exists(p, '
+        "p.wind_speed_10m_ms <= 4.0 && p.wind_gusts_10m_ms <= 6.0 && "
+        "p.precipitation_mm == 0.0)"
     ),
     'max_metric("wind_speed_10m_ms", tomorrow()) > 10.0',
     'max_metric("relative_humidity_2m_pct", today()) > 90.0',

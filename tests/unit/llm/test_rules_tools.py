@@ -142,6 +142,37 @@ class TestScheduleNotificationValidation:
         assert "harmonogram" in result["error"]
 
     @pytest.mark.asyncio()
+    async def test_cron_schedule_rejects_fixed_date_range_expression(
+        self,
+        toolbox: RulesToolbox,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        expression = (
+            'points_between(date_range("2026-05-05T18:00:00+02:00", '
+            '"2026-05-05T21:00:00+02:00")).exists(p, '
+            "p.wind_speed_10m_ms <= 4.0 && "
+            "p.wind_gusts_10m_ms <= 6.0 && "
+            "p.precipitation_mm == 0.0)"
+        )
+        toolbox.rule_expression_evaluator.validate.return_value = RuleExpressionEvaluationResult(
+            expression=expression,
+        )
+
+        result = await toolbox.schedule_notification(
+            schedule_type="cron",
+            schedule_expression="0 10 * * 1-5",
+            explanation="Wieczorne warunki do latania RC",
+            location_name="Chwarzno",
+            rule_expression=expression,
+        )
+
+        assert result["error"] is not None
+        assert "date_range" in result["error"]
+        assert "between(today()" in result["error"]
+        assert result.get("pending", False) is False
+        mock_memory_service.store_pending_confirmation.assert_not_awaited()
+
+    @pytest.mark.asyncio()
     async def test_unknown_schedule_type_returns_error(self, toolbox: RulesToolbox) -> None:
         result = await toolbox.schedule_notification(
             schedule_type="invalid_type",
@@ -222,6 +253,35 @@ class TestScheduleNotificationStoresPending:
         stored = call_args[1]
         assert stored["schedule"] == "cron:0 8 * * *"
         assert stored["rule_expression"] == "temperature_2m_c < 0"
+
+    @pytest.mark.asyncio()
+    async def test_stores_pending_with_relative_evening_slot_cron_expression(
+        self,
+        toolbox: RulesToolbox,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        expression = (
+            'points_between(between(today(), "1800", "2100")).exists(p, '
+            "p.wind_speed_10m_ms <= 4.0 && "
+            "p.wind_gusts_10m_ms <= 6.0 && "
+            "p.precipitation_mm == 0.0)"
+        )
+        toolbox.rule_expression_evaluator.validate.return_value = RuleExpressionEvaluationResult(
+            expression=expression,
+        )
+
+        result = await toolbox.schedule_notification(
+            schedule_type="cron",
+            schedule_expression="0 10 * * 1-5",
+            explanation="Wieczorne warunki do latania RC",
+            rule_expression=expression,
+        )
+
+        assert result["pending"] is True
+        mock_memory_service.store_pending_confirmation.assert_awaited_once()
+        stored = mock_memory_service.store_pending_confirmation.call_args[0][1]
+        assert stored["schedule"] == "cron:0 10 * * 1-5"
+        assert stored["rule_expression"] == expression
 
 
 class TestScheduleNotificationAutoSaveLocation:

@@ -17,6 +17,7 @@ from weather_agent.eval.notification_rule_schemas import (
     RuleToolCallRecord,
 )
 from weather_agent.llm.tools.rules_tools import (
+    CRON_FIXED_DATE_RANGE_ERROR,
     CancelPendingActionArgs,
     ConfirmPendingActionArgs,
     GetRuleExpressionCapabilitiesArgs,
@@ -24,6 +25,7 @@ from weather_agent.llm.tools.rules_tools import (
     ProposeNotificationRuleArgs,
     ScheduleNotificationArgs,
     ToolResult,
+    cron_schedule_uses_fixed_date_range,
 )
 from weather_agent.observability.logging import get_logger
 
@@ -171,6 +173,8 @@ class RecordingRulesToolbox:
             parsed = parse_schedule(f"{schedule_type}:{schedule_expression}")
             if not parsed.valid:
                 result = {"error": f"Nieprawidłowy harmonogram: {parsed.error}"}
+            elif cron_schedule_uses_fixed_date_range(schedule_type, validation.expression):
+                result = {"error": CRON_FIXED_DATE_RANGE_ERROR}
             else:
                 result = {
                     "proposal": (
