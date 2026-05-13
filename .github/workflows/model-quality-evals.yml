@@ -2,8 +2,6 @@ name: Model Quality Evals
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "20 4 * * *"
 
 env:
   LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT || 'weather-agent-preprod' }}
