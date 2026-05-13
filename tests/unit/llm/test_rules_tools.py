@@ -20,6 +20,7 @@ def mock_rule_service() -> MagicMock:
     svc.get_rule_for_user = AsyncMock()
     svc.find_matching_scheduled_rule = AsyncMock(return_value=None)
     svc.update_rule = AsyncMock()
+    svc.delete_rule = AsyncMock(return_value=True)
     svc.list_rules = AsyncMock()
     return svc
 
@@ -83,11 +84,17 @@ class TestToolRegistration:
         tools = toolbox.to_langchain_tools()
         names = [t.name for t in tools]
         assert "schedule_notification" in names
+        assert "delete_notification" in names
 
     def test_schedule_notification_tool_has_schema(self, toolbox: RulesToolbox) -> None:
         tools = toolbox.to_langchain_tools()
         sn = next(t for t in tools if t.name == "schedule_notification")
         assert sn.args_schema is not None
+
+    def test_delete_notification_tool_has_schema(self, toolbox: RulesToolbox) -> None:
+        tools = toolbox.to_langchain_tools()
+        delete_tool = next(t for t in tools if t.name == "delete_notification")
+        assert delete_tool.args_schema is not None
 
 
 class TestCELCapabilities:
@@ -514,6 +521,110 @@ class TestConfirmScheduleNotification:
         assert result["short_id"] == "R2222"
         assert "już zapisane" in result["answer"]
         mock_rule_service.create_rule.assert_not_awaited()
+        mock_memory_service.clear_pending_confirmation.assert_awaited_once()
+
+
+class TestDeleteNotification:
+    @pytest.mark.asyncio()
+    async def test_delete_notification_stores_pending_confirmation(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        existing_rule = NotificationRule(
+            id=10,
+            short_id="R1A2B3",
+            user_id=100,
+            telegram_chat_id=200,
+            telegram_message_thread_id=1,
+            location_id=42,
+            expression="true",
+            description="Testowe powiadomienie",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        mock_rule_service.get_rule_for_user.return_value = existing_rule
+
+        result = await toolbox.delete_notification("#R1A2B3")
+
+        assert result["pending"] is True
+        assert "Czy na pewno usunąć" in result["proposal"]
+        assert "#R1A2B3" in result["proposal"]
+        mock_rule_service.get_rule_for_user.assert_awaited_once_with(100, short_id="R1A2B3")
+        mock_memory_service.store_pending_confirmation.assert_awaited_once()
+        stored = mock_memory_service.store_pending_confirmation.call_args[0][1]
+        assert stored["action"] == "delete_notification"
+        assert stored["delete_short_id"] == "R1A2B3"
+        mock_rule_service.delete_rule.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_delete_notification_unknown_rule_returns_error(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        mock_rule_service.get_rule_for_user.return_value = None
+
+        result = await toolbox.delete_notification("#XYZ")
+
+        assert result["error"] == "Nie znaleziono powiadomienia #XYZ"
+        assert result.get("pending", False) is False
+        mock_memory_service.store_pending_confirmation.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_confirm_delete_notification_deletes_rule(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        mock_memory_service.get_pending_confirmation.return_value = {
+            "action": "delete_notification",
+            "stored_at": datetime.now(UTC).isoformat(),
+            "delete_short_id": "R1A2B3",
+        }
+        existing_rule = NotificationRule(
+            id=10,
+            short_id="R1A2B3",
+            user_id=100,
+            telegram_chat_id=200,
+            telegram_message_thread_id=1,
+            location_id=42,
+            expression="true",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        mock_rule_service.get_rule_for_user.return_value = existing_rule
+
+        result = await toolbox.confirm_pending_action()
+
+        assert result.get("error") is None
+        assert result["answer"] == "Powiadomienie #R1A2B3 zostało usunięte."
+        assert result["short_id"] == "R1A2B3"
+        mock_rule_service.get_rule_for_user.assert_awaited_once_with(100, short_id="R1A2B3")
+        mock_rule_service.delete_rule.assert_awaited_once_with(10)
+        mock_memory_service.clear_pending_confirmation.assert_awaited_once()
+
+    @pytest.mark.asyncio()
+    async def test_confirm_delete_notification_treats_other_users_rule_as_not_found(
+        self,
+        toolbox: RulesToolbox,
+        mock_rule_service: MagicMock,
+        mock_memory_service: MagicMock,
+    ) -> None:
+        mock_memory_service.get_pending_confirmation.return_value = {
+            "action": "delete_notification",
+            "stored_at": datetime.now(UTC).isoformat(),
+            "delete_short_id": "R1A2B3",
+        }
+        mock_rule_service.get_rule_for_user.return_value = None
+
+        result = await toolbox.confirm_pending_action()
+
+        assert result["error"] == "Nie znaleziono powiadomienia #R1A2B3"
+        mock_rule_service.delete_rule.assert_not_awaited()
         mock_memory_service.clear_pending_confirmation.assert_awaited_once()
 
 

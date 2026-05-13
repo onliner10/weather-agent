@@ -83,6 +83,12 @@ class CancelPendingActionArgs(BaseModel):
 ToolResult = dict[str, Any]
 
 
+class DeleteNotificationArgs(BaseModel):
+    short_id: str = Field(
+        description="ID powiadomienia/reguły do usunięcia, np. '#R1A2B3' albo 'R1A2B3'.",
+    )
+
+
 class ScheduleNotificationArgs(BaseModel):
     schedule_type: Literal["once", "cron"] = Field(
         description=(
@@ -361,6 +367,26 @@ class RulesToolbox:
         if pending.rule_expression == "" and pending.action == "create_rule":
             return {"error": "Brak oczekującej reguły do potwierdzenia."}
 
+        if pending.action == "delete_notification":
+            if pending.delete_short_id is None:
+                await self.memory_service.clear_pending_confirmation(self.context_key)
+                return {"error": "Brak ID powiadomienia do usunięcia."}
+            existing = await self.rule_service.get_rule_for_user(
+                self.user_id,
+                short_id=pending.delete_short_id,
+            )
+            if existing is None:
+                await self.memory_service.clear_pending_confirmation(self.context_key)
+                return {"error": f"Nie znaleziono powiadomienia #{pending.delete_short_id}"}
+            deleted = await self.rule_service.delete_rule(existing.id)
+            await self.memory_service.clear_pending_confirmation(self.context_key)
+            if not deleted:
+                return {"error": f"Nie udało się usunąć powiadomienia #{pending.delete_short_id}"}
+            return {
+                "answer": f"Powiadomienie #{existing.short_id} zostało usunięte.",
+                "short_id": existing.short_id,
+            }
+
         location_id = pending.location_id
         if location_id is None:
             default = await self.location_service.get_default_location(self.user_id)
@@ -485,7 +511,47 @@ class RulesToolbox:
 
         if action == "edit_rule" and pending.edit_short_id:
             return {"answer": f"Edycja reguły #{pending.edit_short_id} została anulowana."}
+        if action == "delete_notification" and pending.delete_short_id:
+            return {
+                "answer": f"Usunięcie powiadomienia #{pending.delete_short_id} zostało anulowane."
+            }
         return {"answer": "Reguła została anulowana."}
+
+    @traceable(run_type="tool")
+    async def delete_notification(self, short_id: str) -> ToolResult:
+        async with self._lock:
+            with observe_tool_call("delete_notification"):
+                clean_id = strip_hash_prefix(short_id.strip().upper().replace("#", ""))
+                if not clean_id:
+                    return {"error": "Podaj ID powiadomienia do usunięcia, np. #R1A2B3."}
+
+                existing = await self.rule_service.get_rule_for_user(
+                    self.user_id,
+                    short_id=clean_id,
+                )
+                if existing is None:
+                    return {"error": f"Nie znaleziono powiadomienia #{clean_id}"}
+
+                pending = PendingConfirmation(
+                    action="delete_notification",
+                    chat_id=self.chat_id,
+                    message_thread_id=self.message_thread_id,
+                    stored_at=datetime.now(UTC).isoformat(),
+                    delete_short_id=existing.short_id,
+                )
+                await self.memory_service.store_pending_confirmation(
+                    self.context_key,
+                    pending.to_dict(),
+                )
+
+                description = f"\nOpis: {existing.description}" if existing.description else ""
+                return {
+                    "proposal": (
+                        f"Czy na pewno usunąć powiadomienie #{existing.short_id}?{description}\n"
+                        "Odpowiedz: tak/nie."
+                    ),
+                    "pending": True,
+                }
 
     @traceable(run_type="tool")
     async def schedule_notification(
@@ -603,6 +669,16 @@ class RulesToolbox:
                     "(np. odpowiada 'nie')."
                 ),
                 args_schema=CancelPendingActionArgs,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.delete_notification,
+                name="delete_notification",
+                description=(
+                    "Przygotuj usunięcie powiadomienia/reguły po ID, np. gdy użytkownik mówi "
+                    "'usuń powiadomienie #R1A2B3'. Narzędzie NIE usuwa natychmiast; "
+                    "zapisuje oczekującą akcję i wymaga potwierdzenia przez confirm_pending_action."
+                ),
+                args_schema=DeleteNotificationArgs,
             ),
             StructuredTool.from_function(
                 coroutine=self.schedule_notification,

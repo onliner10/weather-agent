@@ -41,7 +41,9 @@ class BotReply:
 
 
 class PendingConfirmation(BaseModel):
-    action: Literal["create_rule", "edit_rule", "schedule_notification"] = "create_rule"
+    action: Literal["create_rule", "edit_rule", "schedule_notification", "delete_notification"] = (
+        "create_rule"
+    )
     rule_expression: str = ""
     explanation: str = ""
     validated: bool = False
@@ -50,6 +52,7 @@ class PendingConfirmation(BaseModel):
     message_thread_id: int | None = None
     stored_at: str | None = None
     edit_short_id: str | None = None
+    delete_short_id: str | None = None
     schedule: str | None = None
     lead_time_minutes: int | None = None
     notification_context: ScheduledNotificationContext | None = None
