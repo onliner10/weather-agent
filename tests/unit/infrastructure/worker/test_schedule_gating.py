@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from freezegun import freeze_time
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -293,6 +294,64 @@ class TestScheduleGating:
 
         assert len(results) == 1
         assert results[0].evaluated is True
+
+    async def test_cron_rule_is_evaluated_once_for_false_slot(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        with freeze_time("2026-05-13 10:01:00+00:00"):
+            await _create_user(session)
+            await _create_location(session)
+            await _seed_forecast_data(session)
+            await _create_rule(
+                rule_service,
+                expression='max_metric("temperature_2m_c", next_hours(24)) >= 100',
+                schedule="cron:0 12 * * 1-5",
+            )
+
+            worker = _make_worker(
+                session,
+                forecast_repo,
+                rule_service,
+                rule_expression_evaluator,
+                scheduler_settings,
+            )
+            first_results = await worker.evaluate_rules()
+            second_results = await worker.evaluate_rules()
+
+        assert len(first_results) == 1
+        assert first_results[0].evaluated is True
+        assert first_results[0].result is False
+        assert second_results == []
+
+    async def test_cron_rule_outside_evaluation_window_is_skipped(
+        self,
+        session: AsyncSession,
+        forecast_repo: ForecastRepository,
+        rule_service: NotificationRuleService,
+        rule_expression_evaluator: RuleExpressionEvaluator,
+        scheduler_settings: SchedulerSettings,
+    ) -> None:
+        with freeze_time("2026-05-13 12:01:00+00:00"):
+            await _create_user(session)
+            await _create_location(session)
+            await _seed_forecast_data(session)
+            await _create_rule(rule_service, schedule="cron:0 12 * * 1-5")
+
+            worker = _make_worker(
+                session,
+                forecast_repo,
+                rule_service,
+                rule_expression_evaluator,
+                scheduler_settings,
+            )
+            results = await worker.evaluate_rules()
+
+        assert results == []
 
     async def test_cron_rule_with_recent_event_is_skipped(
         self,

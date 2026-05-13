@@ -74,7 +74,6 @@ def last_cron_slot(schedule: str, now: datetime | None = None) -> datetime | Non
         now = datetime.now(_WARSAW)
     else:
         now = ensure_aware(now, _WARSAW)
-    offset = _WARSAW.utcoffset(now) or timedelta()
-    cron = croniter(expr, now - offset)
+    cron = croniter(expr, now + timedelta(microseconds=1))
     prev = cast("datetime", cron.get_prev(datetime))
-    return prev
+    return ensure_aware(prev, _WARSAW)

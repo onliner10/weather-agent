@@ -202,13 +202,27 @@ class RuleEvaluationWorker:
         if rule.schedule is not None and rule.schedule.startswith("cron:"):
             slot = last_cron_slot(rule.schedule, now)
             if slot is not None:
-                stmt = select(NotificationEventORM).where(
-                    NotificationEventORM.rule_id == rule.id,
-                    NotificationEventORM.created_at >= slot,
-                    NotificationEventORM.delivery_status.in_(("sent", "suppressed")),
+                slot_utc = ensure_utc(slot)
+                now_utc = ensure_utc(now)
+                evaluation_window = timedelta(minutes=self._settings.rule_evaluation_minutes)
+                if now_utc - slot_utc > evaluation_window:
+                    return False
+
+                stmt = select(RuleEvaluationRunORM).where(
+                    RuleEvaluationRunORM.rule_id == rule.id,
+                    RuleEvaluationRunORM.evaluated_at >= slot_utc,
                 )
                 result = await self._session.execute(stmt)
                 if result.scalar_one_or_none() is not None:
+                    return False
+
+                event_stmt = select(NotificationEventORM).where(
+                    NotificationEventORM.rule_id == rule.id,
+                    NotificationEventORM.created_at >= slot_utc,
+                    NotificationEventORM.delivery_status.in_(("sent", "suppressed")),
+                )
+                event_result = await self._session.execute(event_stmt)
+                if event_result.scalar_one_or_none() is not None:
                     return False
         return True
 

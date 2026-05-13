@@ -98,6 +98,26 @@ class TestLastCronSlot:
         assert slot.hour == 8
         assert slot.minute == 0
 
+    def test_cron_slot_uses_warsaw_timezone_during_dst(self) -> None:
+        now = datetime(2026, 5, 13, 10, 1, 0, tzinfo=UTC)
+        slot = last_cron_slot("cron:0 12 * * 1-5", now)
+        assert slot is not None
+        assert slot.year == 2026
+        assert slot.month == 5
+        assert slot.day == 13
+        assert slot.hour == 12
+        assert slot.minute == 0
+
+    def test_cron_slot_before_local_noon_uses_previous_weekday(self) -> None:
+        now = datetime(2026, 5, 13, 9, 59, 0, tzinfo=UTC)
+        slot = last_cron_slot("cron:0 12 * * 1-5", now)
+        assert slot is not None
+        assert slot.year == 2026
+        assert slot.month == 5
+        assert slot.day == 12
+        assert slot.hour == 12
+        assert slot.minute == 0
+
     def test_returns_none_for_once(self) -> None:
         assert last_cron_slot("once:2026-05-01T08:00:00+02:00") is None
 
