@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -21,6 +22,11 @@ from weather_agent.llm.tools.forecast_charts import (
 def _time_range(days: int = 1) -> TimeRange:
     start = datetime(2026, 5, 4, tzinfo=UTC)
     return TimeRange(start=start, end=start + timedelta(days=days))
+
+
+def _hour_range(hours: int) -> TimeRange:
+    start = datetime(2026, 5, 4, tzinfo=UTC)
+    return TimeRange(start=start, end=start + timedelta(hours=hours))
 
 
 def _points() -> list[ForecastPoint]:
@@ -107,6 +113,159 @@ def test_default_forecast_chart_spec_builds_valid_layered_wind_spec() -> None:
     assert prepared["data"] == {"name": "forecast"}
     assert prepared["datasets"] == {"forecast": records}
     assert prepared["title"] == "Wiatr w czasie"
+
+
+def test_prepare_vega_lite_spec_adds_readable_hourly_time_axis() -> None:
+    spec = default_forecast_chart_spec([WeatherVariable.wind_speed_10m_ms])
+
+    prepared = prepare_vega_lite_spec(
+        spec=spec,
+        records=forecast_points_to_records(_points()),
+        variables=[WeatherVariable.wind_speed_10m_ms],
+        time_range=_hour_range(hours=12),
+    )
+
+    encoding = cast(dict[str, object], prepared["encoding"])
+    x = cast(dict[str, object], encoding["x"])
+    axis = cast(dict[str, object], x["axis"])
+    assert axis["format"] == "%H:%M"
+    assert axis["labelAngle"] == 0
+    assert axis["labelOverlap"] == "greedy"
+    assert axis["labelBound"] is True
+    assert axis["labelFlush"] is True
+    assert axis["labelPadding"] == 4
+    assert axis["values"] == [
+        "2026-05-04T02:00:00",
+        "2026-05-04T03:00:00",
+        "2026-05-04T04:00:00",
+        "2026-05-04T05:00:00",
+        "2026-05-04T06:00:00",
+        "2026-05-04T07:00:00",
+        "2026-05-04T08:00:00",
+        "2026-05-04T09:00:00",
+        "2026-05-04T10:00:00",
+        "2026-05-04T11:00:00",
+        "2026-05-04T12:00:00",
+        "2026-05-04T13:00:00",
+        "2026-05-04T14:00:00",
+    ]
+
+
+def test_prepare_vega_lite_spec_uses_coarser_one_day_time_axis() -> None:
+    spec = default_forecast_chart_spec([WeatherVariable.wind_speed_10m_ms])
+
+    prepared = prepare_vega_lite_spec(
+        spec=spec,
+        records=forecast_points_to_records(_points()),
+        variables=[WeatherVariable.wind_speed_10m_ms],
+        time_range=_hour_range(hours=24),
+    )
+
+    encoding = cast(dict[str, object], prepared["encoding"])
+    x = cast(dict[str, object], encoding["x"])
+    axis = cast(dict[str, object], x["axis"])
+    assert axis["format"] == "%H:%M"
+    assert axis["labelAngle"] == 0
+    assert axis["values"] == [
+        "2026-05-04T02:00:00",
+        "2026-05-04T04:00:00",
+        "2026-05-04T06:00:00",
+        "2026-05-04T08:00:00",
+        "2026-05-04T10:00:00",
+        "2026-05-04T12:00:00",
+        "2026-05-04T14:00:00",
+        "2026-05-04T16:00:00",
+        "2026-05-04T18:00:00",
+        "2026-05-04T20:00:00",
+        "2026-05-04T22:00:00",
+        "2026-05-05T00:00:00",
+        "2026-05-05T02:00:00",
+    ]
+
+
+def test_prepare_vega_lite_spec_angles_multi_day_time_axis_labels() -> None:
+    spec = default_forecast_chart_spec([WeatherVariable.wind_speed_10m_ms])
+
+    prepared = prepare_vega_lite_spec(
+        spec=spec,
+        records=forecast_points_to_records(_points()),
+        variables=[WeatherVariable.wind_speed_10m_ms],
+        time_range=_time_range(days=2),
+    )
+
+    encoding = cast(dict[str, object], prepared["encoding"])
+    x = cast(dict[str, object], encoding["x"])
+    axis = cast(dict[str, object], x["axis"])
+    assert axis["format"] == "%d.%m %H:%M"
+    assert axis["labelAngle"] == -35
+    values = cast(list[str], axis["values"])
+    assert values[:3] == [
+        "2026-05-04T02:00:00",
+        "2026-05-04T05:00:00",
+        "2026-05-04T08:00:00",
+    ]
+    assert values[-1] == "2026-05-06T02:00:00"
+
+
+def test_prepare_vega_lite_spec_adds_time_axes_to_layered_custom_specs() -> None:
+    prepared = prepare_vega_lite_spec(
+        spec=_wind_spec(),
+        records=forecast_points_to_records(_points()),
+        variables=[WeatherVariable.wind_speed_10m_ms, WeatherVariable.wind_gusts_10m_ms],
+        time_range=_time_range(days=3),
+    )
+
+    layers = cast(list[dict[str, object]], prepared["layer"])
+    for layer in layers:
+        encoding = cast(dict[str, object], layer["encoding"])
+        x = cast(dict[str, object], encoding["x"])
+        axis = cast(dict[str, object], x["axis"])
+        assert axis["format"] == "%d.%m %H:%M"
+        assert axis["labelAngle"] == -35
+        assert axis["labelOverlap"] == "greedy"
+        values = cast(list[str], axis["values"])
+        assert values[:3] == [
+            "2026-05-04T02:00:00",
+            "2026-05-04T08:00:00",
+            "2026-05-04T14:00:00",
+        ]
+        assert values[-1] == "2026-05-07T02:00:00"
+
+
+def test_prepare_vega_lite_spec_preserves_explicit_time_axis_values() -> None:
+    spec = default_forecast_chart_spec([WeatherVariable.wind_speed_10m_ms])
+    encoding = cast(dict[str, object], spec["encoding"])
+    x = cast(dict[str, object], encoding["x"])
+    x["axis"] = {"labelAngle": -90, "format": "%H"}
+
+    prepared = prepare_vega_lite_spec(
+        spec=spec,
+        records=forecast_points_to_records(_points()),
+        variables=[WeatherVariable.wind_speed_10m_ms],
+        time_range=_hour_range(hours=24),
+    )
+
+    prepared_encoding = cast(dict[str, object], prepared["encoding"])
+    prepared_x = cast(dict[str, object], prepared_encoding["x"])
+    axis = cast(dict[str, object], prepared_x["axis"])
+    assert axis["format"] == "%H"
+    assert axis["labelAngle"] == -90
+    assert axis["labelOverlap"] == "greedy"
+    assert axis["values"] == [
+        "2026-05-04T02:00:00",
+        "2026-05-04T04:00:00",
+        "2026-05-04T06:00:00",
+        "2026-05-04T08:00:00",
+        "2026-05-04T10:00:00",
+        "2026-05-04T12:00:00",
+        "2026-05-04T14:00:00",
+        "2026-05-04T16:00:00",
+        "2026-05-04T18:00:00",
+        "2026-05-04T20:00:00",
+        "2026-05-04T22:00:00",
+        "2026-05-05T00:00:00",
+        "2026-05-05T02:00:00",
+    ]
 
 
 def test_render_forecast_chart_png_returns_png_bytes() -> None:
