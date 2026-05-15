@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from copy import deepcopy
 from datetime import timedelta
-from typing import Any, TypeGuard, cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import altair as alt
 import vl_convert as vlc
 
 from weather_agent.domain.weather import ForecastPoint, TimeRange, WeatherVariable
+from weather_agent.llm.tools.chart_time_axes import normalize_time_axes
 
 _MAX_DAYS = 7
 _DEFAULT_WIDTH = 720
@@ -19,7 +20,6 @@ _MAX_HEIGHT = 500
 _DATASET_NAME = "forecast"
 _PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 _CHART_TIMEZONE = ZoneInfo("Europe/Warsaw")
-_MULTI_DAY_TIME_AXIS_LABEL_ANGLE = -35
 _DISALLOWED_TOP_LEVEL_KEYS = frozenset(
     {"datasets", "facet", "concat", "hconcat", "vconcat", "repeat", "params"}
 )
@@ -197,7 +197,7 @@ def prepare_vega_lite_spec(
     _validate_data_sources(prepared)
     _validate_fields(prepared, allowed_fields)
     _normalize_dimensions(prepared)
-    _normalize_time_axes(prepared, time_range)
+    normalize_time_axes(prepared, time_range)
     prepared["background"] = prepared.get("background", "white")
     prepared["data"] = {"name": _DATASET_NAME}
     prepared["datasets"] = {_DATASET_NAME: records}
@@ -262,88 +262,6 @@ def _validate_fields(spec: dict[str, object], allowed_fields: set[str]) -> None:
 def _normalize_dimensions(spec: dict[str, object]) -> None:
     spec["width"] = _bounded_dimension(spec.get("width"), _DEFAULT_WIDTH, _MAX_WIDTH)
     spec["height"] = _bounded_dimension(spec.get("height"), _DEFAULT_HEIGHT, _MAX_HEIGHT)
-
-
-def _normalize_time_axes(spec: dict[str, object], time_range: TimeRange) -> None:
-    axis_defaults = _time_axis_defaults(time_range)
-
-    def visit(value: object) -> None:
-        if isinstance(value, dict):
-            encoding = value.get("encoding")
-            if isinstance(encoding, dict):
-                x = encoding.get("x")
-                if _is_time_x_encoding(x):
-                    axis = x.get("axis")
-                    if isinstance(axis, dict):
-                        for key, axis_value in axis_defaults.items():
-                            axis.setdefault(key, axis_value)
-                    elif axis is None:
-                        x["axis"] = dict(axis_defaults)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(spec)
-
-
-def _is_time_x_encoding(value: object) -> TypeGuard[dict[str, object]]:
-    return (
-        isinstance(value, dict) and value.get("field") == "time" and value.get("type") == "temporal"
-    )
-
-
-def _time_axis_defaults(time_range: TimeRange) -> dict[str, object]:
-    interval_hours: int
-    duration = time_range.end - time_range.start
-    if duration <= timedelta(hours=12):
-        interval_hours = 1
-        label_format = "%H:%M"
-        label_angle = 0
-    elif duration <= timedelta(days=1):
-        interval_hours = 2
-        label_format = "%H:%M"
-        label_angle = 0
-    elif duration <= timedelta(days=2):
-        interval_hours = 3
-        label_format = "%d.%m %H:%M"
-        label_angle = _MULTI_DAY_TIME_AXIS_LABEL_ANGLE
-    elif duration <= timedelta(days=3):
-        interval_hours = 6
-        label_format = "%d.%m %H:%M"
-        label_angle = _MULTI_DAY_TIME_AXIS_LABEL_ANGLE
-    else:
-        interval_hours = 12
-        label_format = "%d.%m %H:%M"
-        label_angle = _MULTI_DAY_TIME_AXIS_LABEL_ANGLE
-
-    return {
-        "format": label_format,
-        "labelAngle": label_angle,
-        "labelBound": True,
-        "labelFlush": True,
-        "labelOverlap": "greedy",
-        "labelPadding": 4,
-        "values": _time_axis_values(time_range, interval_hours=interval_hours),
-    }
-
-
-def _time_axis_values(time_range: TimeRange, *, interval_hours: int) -> list[str]:
-    current = time_range.start.astimezone(_CHART_TIMEZONE).replace(
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    end = time_range.end.astimezone(_CHART_TIMEZONE)
-    if current < time_range.start.astimezone(_CHART_TIMEZONE):
-        current += timedelta(hours=1)
-
-    values: list[str] = []
-    while current <= end:
-        values.append(current.replace(tzinfo=None).isoformat())
-        current += timedelta(hours=interval_hours)
-    return values
 
 
 def _bounded_dimension(value: object, default: int, maximum: int) -> int:
