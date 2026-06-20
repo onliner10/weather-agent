@@ -15,7 +15,7 @@ class ForecastRepository(BaseRepository):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
 
-    async def save_snapshot(self, result: ForecastResult) -> int:
+    async def save_snapshot(self, result: ForecastResult, *, persist_points: bool = True) -> int:
         snapshot = ForecastSnapshotORM(
             provider=result.provider,
             model=result.model,
@@ -27,27 +27,28 @@ class ForecastRepository(BaseRepository):
         await self._session.flush()
         snapshot_id = snapshot.id
 
-        for point in result.points:
-            orm_point = ForecastPointORM(
-                snapshot_id=snapshot_id,
-                target_time=point.target_time,
-                location_id=int(point.location_id),
-                temperature_2m_c=point.temperature_2m_c,
-                apparent_temperature_c=point.apparent_temperature_c,
-                precipitation_mm=point.precipitation_mm,
-                precipitation_probability_pct=point.precipitation_probability_pct,
-                rain_mm=point.rain_mm,
-                snowfall_cm=point.snowfall_cm,
-                cloud_cover_pct=point.cloud_cover_pct,
-                wind_speed_10m_ms=point.wind_speed_10m_ms,
-                wind_gusts_10m_ms=point.wind_gusts_10m_ms,
-                wind_direction_10m_deg=point.wind_direction_10m_deg,
-                pressure_msl_hpa=point.pressure_msl_hpa,
-                relative_humidity_2m_pct=point.relative_humidity_2m_pct,
-                weather_code=point.weather_code,
-                raw_payload=point.raw_payload,
-            )
-            self._session.add(orm_point)
+        if persist_points:
+            for point in result.points:
+                orm_point = ForecastPointORM(
+                    snapshot_id=snapshot_id,
+                    target_time=point.target_time,
+                    location_id=int(point.location_id),
+                    temperature_2m_c=point.temperature_2m_c,
+                    apparent_temperature_c=point.apparent_temperature_c,
+                    precipitation_mm=point.precipitation_mm,
+                    precipitation_probability_pct=point.precipitation_probability_pct,
+                    rain_mm=point.rain_mm,
+                    snowfall_cm=point.snowfall_cm,
+                    cloud_cover_pct=point.cloud_cover_pct,
+                    wind_speed_10m_ms=point.wind_speed_10m_ms,
+                    wind_gusts_10m_ms=point.wind_gusts_10m_ms,
+                    wind_direction_10m_deg=point.wind_direction_10m_deg,
+                    pressure_msl_hpa=point.pressure_msl_hpa,
+                    relative_humidity_2m_pct=point.relative_humidity_2m_pct,
+                    weather_code=point.weather_code,
+                    raw_payload=point.raw_payload,
+                )
+                self._session.add(orm_point)
 
         await self._session.flush()
         return snapshot_id

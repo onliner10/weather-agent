@@ -21,6 +21,7 @@ from weather_agent.infrastructure.db.base import NotificationEvent as Notificati
 from weather_agent.infrastructure.db.base import RuleEvaluationRun as RuleEvaluationRunORM
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
 from weather_agent.infrastructure.worker.coordination import WorkerCoordinator
+from weather_agent.infrastructure.worker.forecast_fetcher import ForecastFetchResult
 from weather_agent.observability.logging import (
     bound_worker_context,
     generate_correlation_id,
@@ -65,7 +66,7 @@ class EvaluationResult(BaseModel):
 
 @runtime_checkable
 class ForecastFetcher(Protocol):
-    async def fetch_fresh_forecast(self, location_id: int) -> int | None: ...
+    async def fetch_fresh_forecast(self, location_id: int) -> ForecastFetchResult | None: ...
 
 
 @runtime_checkable
@@ -249,7 +250,9 @@ class RuleEvaluationWorker:
             )
             try:
                 fresh_snapshot_id: int | None = None
+                fresh_point_dicts: list[dict[str, Any]] | None = None
                 if self._forecast_fetcher is not None:
+                    fetch_result: ForecastFetchResult | None = None
                     refresh_failed = False
                     refresh_start = time.perf_counter()
                     try:
@@ -258,7 +261,7 @@ class RuleEvaluationWorker:
                             run_type="tool",
                             metadata={"location_id": rule.location_id},
                         ):
-                            fresh_snapshot_id = await self._forecast_fetcher.fetch_fresh_forecast(
+                            fetch_result = await self._forecast_fetcher.fetch_fresh_forecast(
                                 rule.location_id
                             )
                     except Exception as exc:
@@ -273,7 +276,7 @@ class RuleEvaluationWorker:
                         FORECAST_REFRESH_DURATION_SECONDS.observe(
                             time.perf_counter() - refresh_start
                         )
-                    if fresh_snapshot_id is None:
+                    if fetch_result is None or fetch_result.snapshot_id is None:
                         if not refresh_failed:
                             FORECAST_REFRESH_TOTAL.labels(outcome="failure").inc()
                             logger.warning(
@@ -282,10 +285,16 @@ class RuleEvaluationWorker:
                                 error_class="NoSnapshot",
                             )
                         return await self._finish_forecast_refresh_failed(rule, dry_run)
+                    fresh_snapshot_id = fetch_result.snapshot_id
+                    fresh_point_dicts = fetch_result.point_dicts
                     FORECAST_REFRESH_TOTAL.labels(outcome="success").inc()
                     LAST_SUCCESSFUL_FORECAST_REFRESH_TIMESTAMP_SECONDS.set(time.time())
 
-                data = await self._build_evaluation_data(rule.location_id, fresh_snapshot_id)
+                data = await self._build_evaluation_data(
+                    rule.location_id,
+                    fresh_snapshot_id,
+                    fresh_point_dicts=fresh_point_dicts,
+                )
                 return await self._finish_evaluation(rule, dry_run, data)
             finally:
                 RULE_EVALUATION_DURATION_SECONDS.observe(time.perf_counter() - eval_start)
@@ -443,6 +452,7 @@ class RuleEvaluationWorker:
         self,
         location_id: int,
         snapshot_id: int | None = None,
+        fresh_point_dicts: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if snapshot_id is None:
             snapshot = await self._forecast_repo.get_latest_snapshot(str(location_id))
@@ -457,15 +467,17 @@ class RuleEvaluationWorker:
         time_start = now - timedelta(hours=1)
         time_end = now + timedelta(days=7)
 
-        points = await self._forecast_repo.get_points_for_snapshot(
-            snapshot.id,
-            start=time_start,
-            end=time_end,
-        )
-
-        point_dicts: list[dict[str, Any]] = []
-        for p in points:
-            point_dicts.append(self._orm_point_to_dict(p))
+        if fresh_point_dicts is not None:
+            # Use in-memory points passed from the forecast fetcher.
+            # The points are no longer persisted to forecast_points.
+            point_dicts = fresh_point_dicts
+        else:
+            points = await self._forecast_repo.get_points_for_snapshot(
+                snapshot.id,
+                start=time_start,
+                end=time_end,
+            )
+            point_dicts = [self._orm_point_to_dict(p) for p in points]
 
         previous_points: list[dict[str, Any]] = []
         if snapshot.fetched_at is not None:

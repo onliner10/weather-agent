@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from weather_agent.domain.locations import _orm_to_domain
 from weather_agent.domain.weather import (
+    ForecastPoint,
     ForecastResolution,
     LocationRef,
     TimeRange,
@@ -20,6 +22,19 @@ from weather_agent.observability.logging import get_logger
 logger = get_logger(__name__)
 
 _ALL_VARIABLES = list(WeatherVariable)
+
+
+@dataclass(frozen=True)
+class ForecastFetchResult:
+    """Result of a fresh forecast fetch for rule evaluation.
+
+    Carries *in-memory* point dicts so the evaluator does not need to
+    read forecast_points back from the database -- the points are no longer
+    persisted at all.
+    """
+
+    snapshot_id: int | None
+    point_dicts: list[dict[str, Any]]
 
 
 class ForecastRefreshError(Exception):
@@ -37,7 +52,7 @@ class WorkerForecastFetcher:
         self._provider = forecast_provider
         self._repo = forecast_repo
 
-    async def fetch_fresh_forecast(self, location_id: int) -> int | None:
+    async def fetch_fresh_forecast(self, location_id: int) -> ForecastFetchResult | None:
         stmt = select(LocationORM).where(
             LocationORM.id == location_id,
             LocationORM.enabled.is_(True),
@@ -72,6 +87,47 @@ class WorkerForecastFetcher:
             resolution=ForecastResolution.hourly,
         )
 
-        snapshot_id = await self._repo.save_snapshot(forecast_result)
+        point_dicts = _domain_points_to_dicts(forecast_result.points)
+
+        # Save only the snapshot header, NOT the individual forecast points.
+        # This keeps the DB small while still allowing us to track when
+        # forecasts were fetched. Points are passed in-memory via the result.
+        snapshot_id = await self._repo.save_snapshot(forecast_result, persist_points=False)
         await self._session.flush()
-        return snapshot_id
+        return ForecastFetchResult(snapshot_id=snapshot_id, point_dicts=point_dicts)
+
+
+_EVAL_FIELDS: tuple[str, ...] = (
+    "temperature_2m_c",
+    "apparent_temperature_c",
+    "precipitation_mm",
+    "precipitation_probability_pct",
+    "rain_mm",
+    "snowfall_cm",
+    "cloud_cover_pct",
+    "wind_speed_10m_ms",
+    "wind_gusts_10m_ms",
+    "wind_direction_10m_deg",
+    "pressure_msl_hpa",
+    "relative_humidity_2m_pct",
+    "weather_code",
+)
+
+
+def _domain_points_to_dicts(
+    points: list[ForecastPoint],
+) -> list[dict[str, Any]]:
+    """Convert domain ForecastPoint list to evaluation-ready dicts."""
+    result: list[dict[str, Any]] = []
+    for point in points:
+        d: dict[str, Any] = {
+            "target_time": point.target_time,
+            "fetched_at": point.fetched_at,
+            "raw_payload": point.raw_payload,
+        }
+        for field_name in _EVAL_FIELDS:
+            val = getattr(point, field_name, None)
+            if val is not None:
+                d[field_name] = val
+        result.append(d)
+    return result

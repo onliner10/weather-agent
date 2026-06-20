@@ -31,6 +31,7 @@ from weather_agent.infrastructure.db.base import (
     NotificationRule as NotificationRuleORM,
 )
 from weather_agent.infrastructure.repositories.forecast_repository import ForecastRepository
+from weather_agent.infrastructure.worker.forecast_fetcher import ForecastFetchResult
 from weather_agent.infrastructure.worker.rule_evaluator import (
     EvaluationResult,
     RuleEvaluationWorker,
@@ -131,6 +132,57 @@ async def _create_rule(
         notification_context=notification_context,
     )
     return await rule_service.create_rule(user_id, data)
+
+
+_EVAL_FIELDS: tuple[str, ...] = (
+    "temperature_2m_c",
+    "apparent_temperature_c",
+    "precipitation_mm",
+    "precipitation_probability_pct",
+    "rain_mm",
+    "snowfall_cm",
+    "cloud_cover_pct",
+    "wind_speed_10m_ms",
+    "wind_gusts_10m_ms",
+    "wind_direction_10m_deg",
+    "pressure_msl_hpa",
+    "relative_humidity_2m_pct",
+    "weather_code",
+)
+
+
+def _orm_point_to_dict_static(p: Any) -> dict[str, Any]:
+    """Convert ForecastPointORM to evaluation dict (mirrors rule_evaluator version)."""
+    from weather_agent.domain.time import ensure_utc
+
+    target_time = p.target_time
+    if target_time is not None:
+        target_time = ensure_utc(target_time)
+    d: dict[str, Any] = {
+        "target_time": target_time,
+        "fetched_at": None,
+        "raw_payload": p.raw_payload,
+    }
+    for field_name in _EVAL_FIELDS:
+        val = getattr(p, field_name, None)
+        if val is not None:
+            d[field_name] = val
+    return d
+
+
+async def _make_fetch_result_from_db(
+    session: AsyncSession, snapshot_id: int
+) -> ForecastFetchResult:
+    """Build a ForecastFetchResult from persisted forecast points."""
+    stmt = (
+        select(ForecastPointORM)
+        .where(ForecastPointORM.snapshot_id == snapshot_id)
+        .order_by(ForecastPointORM.target_time)
+    )
+    result = await session.execute(stmt)
+    points = result.scalars().all()
+    point_dicts = [_orm_point_to_dict_static(p) for p in points]
+    return ForecastFetchResult(snapshot_id=snapshot_id, point_dicts=point_dicts)
 
 
 async def _seed_forecast_data(
@@ -680,8 +732,9 @@ class TestRuleEvaluationWorker:
         snapshot_id = await _seed_forecast_data(session, wind_gusts_base=14.0)
         rule = await _create_rule(rule_service)
 
+        fetch_result = await _make_fetch_result_from_db(session, snapshot_id)
         fetcher = AsyncMock()
-        fetcher.fetch_fresh_forecast = AsyncMock(return_value=snapshot_id)
+        fetcher.fetch_fresh_forecast = AsyncMock(return_value=fetch_result)
 
         worker = _make_worker(
             session,
@@ -896,8 +949,9 @@ class TestRuleEvaluationWorker:
             notification_context=context,
         )
 
+        fetch_result = await _make_fetch_result_from_db(session, fresh_snapshot_id)
         fetcher = AsyncMock()
-        fetcher.fetch_fresh_forecast = AsyncMock(return_value=fresh_snapshot_id)
+        fetcher.fetch_fresh_forecast = AsyncMock(return_value=fetch_result)
 
         class Sender:
             async def send(self, chat_id: int, thread_id: int | None, text: str) -> bool:
@@ -1441,12 +1495,13 @@ class TestRuleEvaluationWorker:
         snapshot_id = await _seed_forecast_data(session, wind_gusts_base=14.0)
         await _create_rule(rule_service)
 
+        fetch_result = await _make_fetch_result_from_db(session, snapshot_id)
         fetcher_calls: list[int] = []
 
         class CountingFetcher:
-            async def fetch_fresh_forecast(self, location_id: int) -> int | None:
+            async def fetch_fresh_forecast(self, location_id: int) -> ForecastFetchResult | None:
                 fetcher_calls.append(location_id)
-                return snapshot_id
+                return fetch_result
 
         worker = _make_worker(
             session,
@@ -1470,10 +1525,11 @@ class _FakeForecastFetcher:
         self._session = session
         self._repo = forecast_repo
 
-    async def fetch_fresh_forecast(self, location_id: int) -> int | None:
-        return await _seed_forecast_data(
+    async def fetch_fresh_forecast(self, location_id: int) -> ForecastFetchResult | None:
+        snapshot_id = await _seed_forecast_data(
             self._session,
             location_id=location_id if location_id else 1,
             wind_gusts_base=14.0,
             num_points=3,
         )
+        return await _make_fetch_result_from_db(self._session, snapshot_id)
